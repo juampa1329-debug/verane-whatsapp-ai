@@ -28,8 +28,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "18000:8000"
+    expose:
+      - "8000"
 
   frontend:
     build: ./frontend

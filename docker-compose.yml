@@ -31,10 +31,15 @@ services:
     expose:
       - "8000"
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.verane_api.rule=Host(`backend.perfumesverane.com`)"
-      - "traefik.http.routers.verane_api.entrypoints=http"
-      - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
+    - "traefik.enable=true"
+    - "traefik.http.routers.verane_api.rule=Host(`backend.perfumesverane.com`)"
+    - "traefik.http.routers.verane_api.entrypoints=http"
+    - "traefik.http.routers.verane_api_https.rule=Host(`backend.perfumesverane.com`)"
+    - "traefik.http.routers.verane_api_https.entrypoints=https"
+    - "traefik.http.routers.verane_api_https.tls=true"
+    - "traefik.http.routers.verane_api_https.tls.certresolver=letsencrypt"
+    - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
+
 
   frontend:
     build: ./frontend

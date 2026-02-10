@@ -21,7 +21,7 @@ services:
       timeout: 3s
       retries: 20
 
-  api:
+    api:
     build: ./backend
     depends_on:
       db:
@@ -30,6 +30,12 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.verane_api.rule=Host(`backend.perfumesverane.com`)"
+      - "traefik.http.routers.verane_api.entrypoints=web"
+      - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
+
 
   frontend:
     build: ./frontend

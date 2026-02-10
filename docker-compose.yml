@@ -32,13 +32,22 @@ services:
       - "8000"
     labels:
     - "traefik.enable=true"
-    - "traefik.http.routers.verane_api.rule=Host(`backend.perfumesverane.com`)"
-    - "traefik.http.routers.verane_api.entrypoints=http"
+
+    # HTTP router (solo para redirigir a HTTPS)
+    - "traefik.http.routers.verane_api_http.rule=Host(`backend.perfumesverane.com`)"
+    - "traefik.http.routers.verane_api_http.entrypoints=http"
+    - "traefik.http.routers.verane_api_http.middlewares=verane_redirect_https"
+    - "traefik.http.middlewares.verane_redirect_https.redirectscheme.scheme=https"
+
+    # HTTPS router (aquí se emite el certificado)
     - "traefik.http.routers.verane_api_https.rule=Host(`backend.perfumesverane.com`)"
     - "traefik.http.routers.verane_api_https.entrypoints=https"
     - "traefik.http.routers.verane_api_https.tls=true"
     - "traefik.http.routers.verane_api_https.tls.certresolver=letsencrypt"
+
+    # Service port
     - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
+
 
 
   frontend:

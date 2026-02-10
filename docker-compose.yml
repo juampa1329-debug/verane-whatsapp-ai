@@ -33,7 +33,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.verane_api.rule=Host(`backend.perfumesverane.com`)"
-      - "traefik.http.routers.verane_api.entrypoints=web"
+      - "traefik.http.routers.verane_api.entrypoints=http"
       - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
 
   frontend:

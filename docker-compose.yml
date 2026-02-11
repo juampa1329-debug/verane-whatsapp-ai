@@ -34,13 +34,20 @@ services:
       - traefik.enable=true
       - traefik.http.routers.verane_api_http.rule=Host(`backend.perfumesverane.com`)
       - traefik.http.routers.verane_api_http.entrypoints=http
-      - traefik.http.routers.verane_api_http.middlewares=verane_redirect_https
+      - traefik.http.routers.verane_api_http.middlewares=verane_redirect_https,verane_api_cors
       - traefik.http.middlewares.verane_redirect_https.redirectscheme.scheme=https
       - traefik.http.routers.verane_api_https.rule=Host(`backend.perfumesverane.com`)
       - traefik.http.routers.verane_api_https.entrypoints=https
       - traefik.http.routers.verane_api_https.tls=true
       - traefik.http.routers.verane_api_https.tls.certresolver=letsencrypt
+      - traefik.http.routers.verane_api_https.middlewares=verane_api_cors
       - traefik.http.services.verane_api.loadbalancer.server.port=8000
+      - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowOriginList=https://app.perfumesverane.com
+      - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowMethods=GET,POST,PUT,PATCH,DELETE,OPTIONS
+      - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowHeaders=*
+      - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowCredentials=false
+      - traefik.http.middlewares.verane_api_cors.headers.addVaryHeader=true
+
 
   frontend:
     build: ./frontend

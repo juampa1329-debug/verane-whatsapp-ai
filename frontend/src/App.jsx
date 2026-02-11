@@ -301,9 +301,13 @@ export default function App() {
   const fileInputRef = useRef(null);
   const [filePickKind, setFilePickKind] = useState("image"); // image|video|audio|document
 
-  // Productos (demo)
+  // Productos (WooCommerce)
   const [showProductModal, setShowProductModal] = useState(false);
   const [prodQ, setProdQ] = useState("");
+  const [products, setProducts] = useState([]);
+  const [prodLoading, setProdLoading] = useState(false);
+  const [prodError, setProdError] = useState("");
+
 
   const bottomRef = useRef(null);
 
@@ -324,6 +328,57 @@ export default function App() {
       setMessages(data.messages || []);
     } catch (e) { console.error(e); }
   };
+
+  const loadWCProducts = async (search = "") => {
+  setProdLoading(true);
+  setProdError("");
+  try {
+    const url = `${API_BASE}/api/wc/products?q=${encodeURIComponent(search)}&page=1&per_page=12`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Woo products failed: ${r.status}`);
+    const data = await r.json();
+    setProducts(data.products || []);
+  } catch (e) {
+    console.error(e);
+    setProdError("No se pudo cargar el catálogo (WooCommerce).");
+    setProducts([]);
+  } finally {
+    setProdLoading(false);
+  }
+};
+
+const sendWCProduct = async (product) => {
+  if (!selectedPhone) return;
+
+  try {
+    const r = await fetch(`${API_BASE}/api/wc/send-product`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: selectedPhone,
+        product_id: product.id,
+        // caption opcional: si lo mandas vacío, backend arma uno bonito
+        caption: ""
+      }),
+    });
+
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`send-product failed ${r.status}: ${t}`);
+    }
+
+    // refrescar UI
+    await loadMessages(selectedPhone);
+    await loadConversations();
+
+    setShowProductModal(false);
+    setProdQ("");
+    setProducts([]);
+  } catch (e) {
+    console.error(e);
+    alert("Error enviando producto por WhatsApp");
+  }
+};
 
   const sendMessage = async () => {
     if (!selectedPhone) return;
@@ -414,24 +469,7 @@ export default function App() {
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
 
-  const demoProducts = useMemo(() => ([
-    {
-      id: 1,
-      name: "Art of Universe",
-      price: "$185.000",
-      featured_image: "https://picsum.photos/seed/artofuniverse/600/400",
-      real_image: "https://picsum.photos/seed/artofuniverse-real/900/700",
-      permalink: "https://app.perfumesverane.com/producto/art-of-universe"
-    },
-    {
-      id: 2,
-      name: "Lattafa Asad Elixir",
-      price: "$135.000",
-      featured_image: "https://picsum.photos/seed/asadelixir/600/400",
-      real_image: "https://picsum.photos/seed/asadelixir-real/900/700",
-      permalink: "https://app.perfumesverane.com/producto/lattafa-asad-elixir"
-    }
-  ]).filter(p => (p.name || "").toLowerCase().includes((prodQ || "").toLowerCase())), [prodQ]);
+  
 
   return (
     <div className="app-layout">
@@ -580,9 +618,14 @@ export default function App() {
                   <button onClick={() => { setFilePickKind("audio"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
                     🎙️ Audio
                   </button>
-                  <button onClick={() => { setShowProductModal(true); setShowAttachMenu(false); }}>
+                  <button onClick={() => {
+                    setShowProductModal(true);
+                    setShowAttachMenu(false);
+                    loadWCProducts(prodQ);
+                  }}>
                     🛍️ Producto (Catálogo)
                   </button>
+
                 </div>
               )}
 
@@ -643,43 +686,47 @@ export default function App() {
                   <div className="modal-body">
                     <div className="modal-search">
                       <input
-                        placeholder="Buscar perfume..."
-                        value={prodQ}
-                        onChange={(e) => setProdQ(e.target.value)}
-                        autoFocus
-                      />
+                          placeholder="Buscar perfume..."
+                          value={prodQ}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setProdQ(v);
+                            // búsqueda en vivo (simple)
+                            loadWCProducts(v);
+                          }}
+                          autoFocus
+                        />
+
                     </div>
 
                     <div className="product-grid">
-                      {demoProducts.map(p => (
-                        <div key={p.id} className="product-card">
-                          <img src={p.featured_image} alt="" />
-                          <div>
-                            <h5>{p.name}</h5>
-                            <p>{p.price}</p>
-                          </div>
-                          <div className="pc-actions">
-                            <button onClick={() => {
-                              const baseText = `${p.name}: Disponible. Precio ${p.price}. ✨ ¿Te gusta más dulce, fresco o amaderado?`;
+                        {prodLoading && <div style={{ color: "#94a3b8" }}>Cargando catálogo...</div>}
+                        {prodError && <div style={{ color: "#e74c3c" }}>{prodError}</div>}
 
-                              setAttachment({
-                                kind: "product",
-                                msg_type: "product",
-                                text: baseText,
-                                featured_image: p.featured_image,
-                                real_image: p.real_image,
-                                permalink: p.permalink
-                              });
+                        {!prodLoading && !prodError && (products || []).map(p => (
+                          <div key={p.id} className="product-card">
+                            <img src={p.featured_image} alt="" />
+                            <div style={{ minWidth: 0 }}>
+                              <h5 style={{ margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {p.name}
+                              </h5>
+                              <p style={{ margin: "4px 0 0" }}>{p.price ? `$${p.price}` : ""}</p>
+                              {p.brand && <p style={{ margin: "4px 0 0", fontSize: 11, opacity: 0.8 }}>{p.brand}</p>}
+                            </div>
 
-                              setShowProductModal(false);
-                              setProdQ("");
-                            }}>
-                              Adjuntar
-                            </button>
+                            <div className="pc-actions">
+                              <button onClick={() => sendWCProduct(p)}>
+                                Enviar
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+
+                        {!prodLoading && !prodError && (!products || products.length === 0) && (
+                          <div style={{ color: "#94a3b8" }}>No hay productos para esa búsqueda.</div>
+                        )}
+                      </div>
+
 
                   </div>
                 </div>

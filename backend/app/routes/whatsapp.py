@@ -21,6 +21,33 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
 
+async def send_whatsapp_text(to_phone: str, text_msg: str):
+    # Si no está configurado WhatsApp, no explotes: responde "sent=false"
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text_msg},
+    }
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    # Si WhatsApp responde error, devuelve detalle (pero no 500 “ciego”)
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    return {"saved": True, "sent": True, "whatsapp": r.json()}
 
 @router.get("/api/whatsapp/webhook")
 async def whatsapp_verify(request: Request):
@@ -65,29 +92,6 @@ def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str):
             "text": text_msg or "",
             "created_at": datetime.utcnow(),
         })
-
-
-async def send_whatsapp_text(to_phone: str, body_text: str):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
-        raise HTTPException(status_code=500, detail="WhatsApp env vars missing")
-
-    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_phone,
-        "type": "text",
-        "text": {"body": body_text},
-    }
-
-    async with httpx.AsyncClient(timeout=12) as client:
-        r = await client.post(url, headers=headers, json=payload)
-        if r.status_code >= 300:
-            raise HTTPException(status_code=502, detail=r.text)
-        return r.json()
 
 
 

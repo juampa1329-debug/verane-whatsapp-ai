@@ -226,6 +226,16 @@ async def whatsapp_receive(request: Request):
         entry = (data.get("entry") or [])[0]
         change = (entry.get("changes") or [])[0]
         value = change.get("value") or {}
+                # ✅ 0) Status updates (DELIVERED / FAILED / READ)
+        statuses = value.get("statuses") or []
+        if statuses:
+            s = statuses[0]
+            print("WA_STATUS:", json.dumps(s, ensure_ascii=False))
+
+            # Opcional: si falla, imprime el error completo
+            if s.get("status") == "failed":
+                print("WA_STATUS_FAILED:", json.dumps(s, ensure_ascii=False))
+
 
         # WhatsApp messages
         messages = value.get("messages") or []

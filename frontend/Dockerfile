@@ -1,16 +1,16 @@
-# Build (usar Debian/glibc para evitar el bug de bindings en Alpine/musl)
+# Build Stage (Debian/glibc para evitar bindings musl)
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 
-COPY package*.json ./
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Importante: asegurar optional deps (rolldown bindings) en Linux
-RUN npm ci --include=optional
+COPY package*.json ./
+RUN npm ci
 
 COPY . .
 RUN npm run build
 
-# Serve
+# Serve Stage
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 

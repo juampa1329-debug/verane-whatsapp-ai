@@ -10,9 +10,9 @@ from sqlalchemy import create_engine, text
 router = APIRouter()
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
-FORWARD_URL = os.getenv("WHATSAPP_FORWARD_URL", "")
+FORWARD_URLS = os.getenv("WHATSAPP_FORWARD_URLS", "")
 FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"
-FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "4"))
+FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "3"))
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
@@ -176,12 +176,40 @@ async def whatsapp_verify(request: Request):
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
-async def _forward_to_sellerchat(raw_body: bytes):
-    if not (FORWARD_ENABLED and FORWARD_URL):
+def _parse_forward_urls() -> list[str]:
+    # Permite separar por coma y limpiar espacios
+    urls = []
+    for part in (FORWARD_URLS or "").split(","):
+        u = (part or "").strip()
+        if u:
+            urls.append(u)
+    return urls
+
+
+async def _forward_to_targets(raw_body: bytes):
+    """
+    Fanout múltiple: reenvía el webhook a N destinos en background.
+    No bloquea el ACK a WhatsApp.
+    """
+    if not FORWARD_ENABLED:
         return
+
+    urls = _parse_forward_urls()
+    if not urls:
+        return
+
     headers = {"Content-Type": "application/json", "X-Verane-Forwarded": "1"}
+
+    async def _post_one(client: httpx.AsyncClient, url: str):
+        try:
+            await client.post(url, content=raw_body, headers=headers)
+        except Exception:
+            # Silencioso: no queremos romper el webhook por un destino caído
+            return
+
     async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
-        await client.post(FORWARD_URL, content=raw_body, headers=headers)
+        await asyncio.gather(*[_post_one(client, u) for u in urls])
+
 
 
 def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str):
@@ -214,7 +242,8 @@ async def whatsapp_receive(request: Request):
     raw = await request.body()
 
     # 1) ACK rápido + forward en background
-    asyncio.create_task(_forward_to_sellerchat(raw))
+    asyncio.create_task(_forward_to_targets(raw))
+
 
     # 2) Parse + store (sin romper si cambia el payload)
     try:

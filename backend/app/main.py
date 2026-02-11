@@ -354,8 +354,8 @@ def save_crm(payload: CRMIn):
 def get_crm(phone: str):
     with engine.begin() as conn:
         r = conn.execute(text("""
-            SELECT phone, first_name, last_name, city,
-                   customer_type, interests, tags, notes
+            SSELECT phone, takeover, first_name, last_name, city,
+                    customer_type, interests, tags, notes
             FROM conversations
             WHERE phone = :phone
         """), {"phone": phone}).mappings().first()

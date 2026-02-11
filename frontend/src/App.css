@@ -1,7 +1,3 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-
-// --- ESTILOS CSS (Integrados para evitar errores de importación) ---
-const styles = `
 /* --- Global Reset & Variables --- */
 :root {
   --bg-dark: #0b1217;
@@ -381,11 +377,10 @@ body {
 }
 
 .msg-image-container img {
-  width: 100%;
-  height: auto;
-  display: block;
-  max-height: 250px;
-  object-fit: cover;
+  max-width: 220px;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 12px;
 }
 
 .msg-text {
@@ -629,480 +624,163 @@ body {
 
 .spacer { height: 1px; }
 .placeholder-view { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
-`;
 
-// --- CONFIGURACIÓN ---
-const API_BASE = "";
-
-// --- ICONOS SVG (Nativos) ---
-const IconMessage = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
-const IconUsers = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
-const IconZap = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>;
-const IconSettings = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
-const IconSearch = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
-const IconSend = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>;
-const IconBot = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>;
-const IconUser = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
-const IconImage = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
-const IconTag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>;
-const IconBag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>;
-
-function fmtDateTime(s) {
-  if (!s) return '';
-  try { return new Date(s).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }); }
-  catch { return s; }
+/* --- Attachments UI --- */
+.btn-attach {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.btn-attach:hover { background: rgba(255,255,255,0.06); color: #fff; }
 
-// --- 1. Barra de Navegación Lateral ---
-const MainNav = ({ activeTab, setActiveTab }) => {
-  const navItems = [
-    { id: 'inbox', icon: IconMessage, label: 'Inbox' },
-    { id: 'crm', icon: IconUsers, label: 'Clientes' },
-    { id: 'marketing', icon: IconZap, label: 'Campañas' },
-    { id: 'settings', icon: IconSettings, label: 'Ajustes' },
-  ];
-
-  return (
-    <div className="main-nav">
-      <div className="nav-logo">V.</div>
-      <nav className="nav-items">
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setActiveTab(item.id)}
-            className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
-          >
-            <item.icon />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-      <div className="nav-footer">
-        <div className="avatar-placeholder">A</div>
-      </div>
-    </div>
-  );
-};
-
-// --- 2. Lista de Conversaciones ---
-const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return conversations;
-    return conversations.filter(c =>
-      (c.phone || "").toLowerCase().includes(term) ||
-      (c.text || "").toLowerCase().includes(term)
-    );
-  }, [conversations, q]);
-
-  return (
-    <div className="chat-list-panel">
-      <div className="chat-list-header">
-        <div className="header-row">
-          <h2>Inbox</h2>
-          <span className="badge">Local</span>
-        </div>
-        <div className="search-box">
-          <div className="search-icon"><IconSearch /></div>
-          <input
-            placeholder="Buscar..."
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="chat-list-items custom-scrollbar">
-        {filtered.map(c => (
-          <button
-            key={c.phone}
-            onClick={() => onSelect(c.phone)}
-            className={`chat-item ${selectedPhone === c.phone ? 'selected' : ''}`}
-          >
-            <div className="chat-item-top">
-              <span className="chat-phone">{c.phone}</span>
-              <span className="chat-date">{fmtDateTime(c.created_at).split(',')[0]}</span>
-            </div>
-
-            <div className="chat-tags">
-              <span className={`pill ${c.takeover ? 'pill-human' : 'pill-bot'}`}>
-                {c.takeover ? 'Humano' : 'Bot'}
-              </span>
-            </div>
-
-            <p className="chat-preview">
-              {c.text}
-            </p>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// --- 3. Panel de CRM (Datos del cliente) ---
-const CustomerCardCRM = ({ phone, takeover }) => {
-  const [form, setForm] = useState({
-    first_name: "", last_name: "", city: "", customer_type: "",
-    interests: "", tags: "", notes: ""
-  });
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
-
-  const load = async () => {
-    if (!phone) return;
-    try {
-      const r = await fetch(`${API_BASE}/api/crm/${encodeURIComponent(phone)}`);
-      const data = await r.json();
-      setForm({
-        first_name: data.first_name || "",
-        last_name: data.last_name || "",
-        city: data.city || "",
-        customer_type: data.customer_type || "",
-        interests: data.interests || "",
-        tags: data.tags || "",
-        notes: data.notes || "",
-      });
-      setDirty(false);
-      setStatus("");
-    } catch (e) { console.error(e); }
-  };
-
-  useEffect(() => { load(); }, [phone]);
-
-  const save = async () => {
-    if (!phone) return;
-    setSaving(true);
-    setStatus("");
-    try {
-      const r = await fetch(`${API_BASE}/api/crm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, ...form }),
-      });
-      if (!r.ok) throw new Error("Error");
-      setDirty(false);
-      setStatus("Guardado ✅");
-    } catch {
-      setStatus("Error al guardar ❌");
-    } finally {
-      setSaving(false);
-      setTimeout(() => setStatus(""), 2500);
-    }
-  };
-
-  const handleChange = (field, value) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-    setDirty(true);
-  };
-
-  if (!phone) return <div className="crm-panel empty" />;
-
-  return (
-    <div className="crm-panel">
-      <div className="crm-header">
-        <h3><span className="icon-green"><IconUsers /></span> CRM – Cliente</h3>
-      </div>
-
-      <div className="crm-content custom-scrollbar">
-        <div className="crm-card-info">
-            <div className="crm-row">
-                <span className="crm-label">Teléfono</span>
-                <span className="crm-value mono">{phone}</span>
-            </div>
-            <div className="crm-row">
-                <span className="crm-label">Modo</span>
-                <span className={`pill ${takeover ? "pill-human" : "pill-bot"}`}>
-                    {takeover ? "Humano" : "Bot"}
-                </span>
-            </div>
-        </div>
-
-        <div className="form-group-row">
-          <div className="form-group">
-            <label>Nombre</label>
-            <input
-              value={form.first_name}
-              onChange={e => handleChange('first_name', e.target.value)}
-              placeholder="Ej: Juan"
-            />
-          </div>
-          <div className="form-group">
-            <label>Apellido</label>
-            <input
-               value={form.last_name}
-               onChange={e => handleChange('last_name', e.target.value)}
-               placeholder="Ej: Pérez"
-            />
-          </div>
-        </div>
-
-        <div className="form-group-row">
-          <div className="form-group">
-            <label>Ciudad</label>
-            <input
-                value={form.city}
-                onChange={e => handleChange('city', e.target.value)}
-            />
-          </div>
-          <div className="form-group">
-            <label>Tipo</label>
-            <select
-              value={form.customer_type}
-              onChange={e => handleChange('customer_type', e.target.value)}
-            >
-              <option value="">Sin definir</option>
-              <option value="minorista">Minorista</option>
-              <option value="mayorista">Mayorista</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="separator" />
-
-        <div className="form-group">
-          <label>Intereses</label>
-          <input
-              value={form.interests}
-              onChange={e => handleChange('interests', e.target.value)}
-              placeholder="dulces, frescos..."
-          />
-        </div>
-
-        <div className="form-group">
-          <label className="flex-label"><IconTag /> Etiquetas</label>
-          <input
-              value={form.tags}
-              onChange={e => handleChange('tags', e.target.value)}
-              placeholder="Separadas por comas..."
-          />
-        </div>
-
-        <div className="separator" />
-
-        <div className="form-group">
-           <label className="flex-label"><IconBag /> Notas Internas</label>
-          <textarea
-            className="notes-area"
-            value={form.notes}
-            onChange={e => handleChange('notes', e.target.value)}
-            placeholder="Escribe notas aquí..."
-          />
-        </div>
-      </div>
-
-      <div className="crm-footer">
-        <button
-          onClick={save}
-          disabled={!dirty || saving}
-          className={`btn-save ${dirty ? 'dirty' : ''}`}
-        >
-          {saving ? 'Guardando...' : dirty ? 'Guardar CRM' : 'Guardado'}
-        </button>
-        {status && <div className="status-msg">{status}</div>}
-      </div>
-    </div>
-  );
-};
-
-// --- COMPONENTE PRINCIPAL ---
-export default function App() {
-  const [activeTab, setActiveTab] = useState('inbox');
-  const [conversations, setConversations] = useState([]);
-  const [selectedPhone, setSelectedPhone] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState("");
-  const [q, setQ] = useState("");
-
-  const bottomRef = useRef(null);
-
-  const loadConversations = async () => {
-    try {
-      const r = await fetch(`${API_BASE}/api/conversations`);
-      const data = await r.json();
-      const list = data.conversations || [];
-      setConversations(list);
-      if (!selectedPhone && list.length > 0) { /* Opcional: setSelectedPhone(list[0].phone); */ }
-    } catch (e) { console.error("Error cargando conversaciones", e); }
-  };
-
-  const loadMessages = async (phone) => {
-    if (!phone) return;
-    try {
-      const r = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(phone)}/messages`);
-      const data = await r.json();
-      setMessages(data.messages || []);
-    } catch (e) { console.error(e); }
-  };
-
-  const sendMessage = async () => {
-    if (!text.trim() || !selectedPhone) return;
-
-    try {
-      await fetch(`${API_BASE}/api/messages/ingest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: selectedPhone, direction: "in", text: text })
-      });
-
-      await fetch(`${API_BASE}/api/bot/reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: selectedPhone, text: text })
-      });
-
-      await loadMessages(selectedPhone);
-      setText("");
-      loadConversations();
-    } catch (e) { console.error(e); }
-  };
-
-  const toggleTakeover = async () => {
-    if (!selectedPhone) return;
-    const current = conversations.find(c => c.phone === selectedPhone)?.takeover || false;
-    await fetch(`${API_BASE}/api/conversations/takeover`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: selectedPhone, takeover: !current }),
-    });
-    loadConversations();
-  };
-
-  useEffect(() => {
-    loadConversations();
-    const interval = setInterval(loadConversations, 2500);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (selectedPhone) {
-      loadMessages(selectedPhone);
-      const interval = setInterval(() => loadMessages(selectedPhone), 2500);
-      return () => clearInterval(interval);
-    }
-  }, [selectedPhone]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
-  const selectedConversation = conversations.find(c => c.phone === selectedPhone);
-
-  return (
-    <div className="app-layout">
-        <style>{styles}</style>
-      <MainNav activeTab={activeTab} setActiveTab={setActiveTab} />
-
-      {activeTab === 'inbox' ? (
-        <>
-          <ChatList
-             conversations={conversations}
-             selectedPhone={selectedPhone}
-             onSelect={setSelectedPhone}
-             q={q}
-             setQ={setQ}
-          />
-
-          <div className="chat-window">
-            <header className="chat-header">
-              <div className="header-info">
-                {selectedPhone && (
-                  <>
-                    <div className="avatar-circle">
-                      {selectedPhone.slice(-2)}
-                    </div>
-                    <div>
-                      <h3 className="chat-title">{selectedPhone}</h3>
-                      <div className="chat-subtitle">
-                        {selectedConversation?.created_at ? `Último: ${fmtDateTime(selectedConversation.created_at)}` : ''}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {selectedPhone && (
-                <button
-                  onClick={toggleTakeover}
-                  className={`takeover-btn ${selectedConversation?.takeover ? 'active' : ''}`}
-                >
-                  {selectedConversation?.takeover ? <IconUser /> : <IconBot />}
-                  <span>Takeover: {selectedConversation?.takeover ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
-            </header>
-
-            <div className="messages-area custom-scrollbar">
-              {messages.map((m) => (
-                <div key={m.id} className={`message-row ${m.direction === 'out' ? 'out' : 'in'}`}>
-                  <div className={`message-bubble ${m.direction === 'out' ? 'out' : 'in'}`}>
-
-                    {m.featured_image && (
-                      <div className="msg-image-container">
-                        <img
-                            src={m.featured_image}
-                            alt="Product"
-                            onError={(e) => e.target.style.display = 'none'}
-                        />
-                      </div>
-                    )}
-
-                    <div className="msg-text">{m.text}</div>
-
-                    {m.real_image && m.real_image !== m.featured_image && (
-                      <div className="msg-actions">
-                          <button
-                            onClick={() => window.open(m.real_image, '_blank')}
-                            className="btn-action"
-                          >
-                            <IconImage /> Ver foto real
-                          </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="msg-meta">
-                      <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
-                      <span>•</span>
-                      <span>{fmtDateTime(m.created_at)}</span>
-                  </div>
-                </div>
-              ))}
-              <div ref={bottomRef} className="spacer" />
-            </div>
-
-            <div className="composer-area">
-              <div className="composer-input-wrapper">
-                <input
-                  className="composer-input"
-                  placeholder="Escribe un mensaje..."
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  disabled={!selectedPhone}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={!text.trim()}
-                  className="btn-send"
-                >
-                  <IconSend />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <CustomerCardCRM
-            phone={selectedPhone}
-            takeover={selectedConversation?.takeover}
-          />
-        </>
-      ) : (
-        <div className="placeholder-view">
-           Módulo en construcción
-        </div>
-      )}
-    </div>
-  );
+.attach-menu {
+  position: absolute;
+  bottom: 74px;
+  left: 16px;
+  background: #0b1217;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 8px;
+  width: 220px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+  z-index: 50;
 }
+.attach-menu button {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #fff;
+  padding: 10px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.attach-menu button:hover { background: rgba(255,255,255,0.06); }
+
+.attach-preview {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  margin: 10px 0 0;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+}
+.attach-preview .ap-meta { flex: 1; min-width: 0; }
+.attach-preview .ap-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0;
+}
+.attach-preview .ap-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 3px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-preview .ap-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+}
+.attach-preview .ap-remove:hover { color: #fff; }
+
+/* Product modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal {
+  width: min(720px, 100%);
+  background: #0b1217;
+  border: 1px solid var(--border-color);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.modal-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-header h4 { margin: 0; font-size: 14px; color: #fff; }
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.modal-body { padding: 16px 18px; }
+.modal-search {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.modal-search input {
+  flex: 1;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #fff;
+  outline: none;
+}
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.product-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.product-card img {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(0,0,0,0.2);
+}
+.product-card h5 { margin: 0; font-size: 13px; color: #fff; }
+.product-card p { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
+.product-card .pc-actions { margin-left: auto; }
+.product-card .pc-actions button {
+  background: rgba(46,204,113,0.15);
+  border: 1px solid rgba(46,204,113,0.25);
+  color: var(--primary-green);
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+.product-card .pc-actions button:hover { background: rgba(46,204,113,0.25); }

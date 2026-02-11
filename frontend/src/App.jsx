@@ -435,7 +435,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <style>{styles}</style>
+      
 
       <MainNav activeTab={activeTab} setActiveTab={setActiveTab} />
 

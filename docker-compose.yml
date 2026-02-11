@@ -50,12 +50,24 @@ services:
 
 
 
-  frontend:
+    frontend:
     build: ./frontend
     depends_on:
       - api
     expose:
-      - "80"
+      - '80'
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.verane_front_http.rule=Host(`app.perfumesverane.com`)
+      - traefik.http.routers.verane_front_http.entrypoints=http
+      - traefik.http.routers.verane_front_http.middlewares=verane_front_redirect_https
+      - traefik.http.middlewares.verane_front_redirect_https.redirectscheme.scheme=https
+      - traefik.http.routers.verane_front_https.rule=Host(`app.perfumesverane.com`)
+      - traefik.http.routers.verane_front_https.entrypoints=https
+      - traefik.http.routers.verane_front_https.tls=true
+      - traefik.http.routers.verane_front_https.tls.certresolver=letsencrypt
+      - traefik.http.services.verane_front.loadbalancer.server.port=80
+
 
 volumes:
   pgdata: {}

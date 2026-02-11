@@ -369,4 +369,251 @@ def send_message(phone: str = Query(...), text_msg: str = Query(...)):
 
 
 
+# =========================================================
+# WOOCOMMERCE (CATÁLOGO + ENVÍO COMO ADJUNTO REAL)
+# =========================================================
+
+WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
+WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
+WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
+
+def _wc_enabled() -> bool:
+    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
+
+def _wc_get(path: str, params: dict | None = None):
+    """
+    WooCommerce REST API v3 helper.
+    Usa query auth (ck/cs) por simplicidad.
+    """
+    if not _wc_enabled():
+        raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
+
+    url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
+    params = params or {}
+    params["consumer_key"] = WC_CONSUMER_KEY
+    params["consumer_secret"] = WC_CONSUMER_SECRET
+
+    try:
+        r = requests.get(url, params=params, timeout=20)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text}")
+
+    return r.json()
+
+def _pick_first_image(product: dict) -> str | None:
+    # WC v3 trae lista `images`
+    imgs = product.get("images") or []
+    if imgs and isinstance(imgs, list):
+        src = (imgs[0] or {}).get("src")
+        return src
+    return None
+
+def _extract_aromas(product: dict) -> list[str]:
+    """
+    En tu JSON ejemplo, Aromas está en attributes name="Aromas" con options.
+    En WC real, suele venir en product["attributes"] con name y options.
+    """
+    out: list[str] = []
+    attrs = product.get("attributes") or []
+    for a in attrs:
+        if not isinstance(a, dict):
+            continue
+        name = (a.get("name") or "").strip().lower()
+        if name == "aromas":
+            opts = a.get("options") or []
+            if isinstance(opts, list):
+                out = [str(x).strip() for x in opts if str(x).strip()]
+    return out
+
+def _extract_brand(product: dict) -> str:
+    """
+    Marca puede venir como:
+    - metadata / brands plugin
+    - attributes
+    - tags
+    Como no tenemos el JSON real de WC v3 de tu tienda aquí,
+    usamos una estrategia conservadora:
+    1) meta_data con keys comunes
+    2) atributo llamado "brand" o "marca"
+    3) tags (si manejas marca como tag)
+    """
+    # 1) meta_data
+    for md in (product.get("meta_data") or []):
+        if not isinstance(md, dict):
+            continue
+        k = (md.get("key") or "").lower().strip()
+        if k in ("brand", "_brand", "pa_brand", "product_brand", "yith_wcbm_brand"):
+            v = md.get("value")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    # 2) attributes
+    for a in (product.get("attributes") or []):
+        if not isinstance(a, dict):
+            continue
+        nm = (a.get("name") or "").lower().strip()
+        if nm in ("brand", "marca"):
+            opts = a.get("options") or []
+            if isinstance(opts, list) and opts:
+                return str(opts[0]).strip()
+
+    # 3) tags
+    tags = product.get("tags") or []
+    if isinstance(tags, list) and tags:
+        # si tags trae objetos {name}
+        t0 = tags[0]
+        if isinstance(t0, dict) and (t0.get("name") or "").strip():
+            return (t0.get("name") or "").strip()
+
+    return ""
+
+def _extract_gender(product: dict) -> str:
+    """
+    Si manejas Hombre/Mujer como categories:
+    product["categories"] -> [{name: "Hombre"}]
+    """
+    cats = product.get("categories") or []
+    names = []
+    for c in cats:
+        if isinstance(c, dict) and c.get("name"):
+            names.append(str(c["name"]).lower())
+
+    if any("hombre" in n for n in names):
+        return "hombre"
+    if any("mujer" in n for n in names):
+        return "mujer"
+    if any("unisex" in n for n in names):
+        return "unisex"
+    return ""
+
+def _map_product_for_ui(product: dict) -> dict:
+    price = product.get("price") or product.get("regular_price") or ""
+    return {
+        "id": product.get("id"),
+        "name": product.get("name") or "",
+        "price": str(price),
+        "permalink": product.get("permalink") or "",
+        "featured_image": _pick_first_image(product),
+        "short_description": (product.get("short_description") or "").strip(),
+        "aromas": _extract_aromas(product),
+        "brand": _extract_brand(product),
+        "gender": _extract_gender(product),
+        "stock_status": product.get("stock_status") or "",
+    }
+
+@app.get("/api/wc/products")
+def wc_products(
+    q: str = Query("", description="texto de búsqueda"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(12, ge=1, le=50),
+):
+    """
+    Para el modal del frontend y para la IA.
+    """
+    params = {
+        "search": q or "",
+        "page": page,
+        "per_page": per_page,
+        "status": "publish",
+    }
+    data = _wc_get("/products", params=params)
+    items = [_map_product_for_ui(p) for p in (data or [])]
+    return {"products": items}
+
+class SendWCProductIn(BaseModel):
+    phone: str
+    product_id: int
+    caption: str = ""  # opcional: si viene vacío, armamos uno
+
+@app.post("/api/wc/send-product")
+async def send_wc_product(payload: dict):
+    """
+    Envía un producto WooCommerce como imagen adjunta real + caption.
+    """
+    phone = payload.get("phone")
+    product_id = payload.get("product_id")
+    custom_caption = payload.get("caption", "")
+
+    if not phone or not product_id:
+        raise HTTPException(status_code=400, detail="phone and product_id required")
+
+    # --- Woo credentials ---
+    WC_BASE_URL = os.getenv("WC_BASE_URL")
+    WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY")
+    WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
+
+    if not WC_BASE_URL:
+        raise HTTPException(status_code=500, detail="WC_BASE_URL not configured")
+
+    # --- Obtener producto desde Woo ---
+    url = f"{WC_BASE_URL}/wp-json/wc/v3/products/{product_id}"
+    params = {
+        "consumer_key": WC_CONSUMER_KEY,
+        "consumer_secret": WC_CONSUMER_SECRET
+    }
+
+    r = requests.get(url, params=params)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail="WooCommerce product fetch failed")
+
+    product = r.json()
+
+    # --- Imagen destacada ---
+    images = product.get("images") or []
+    if not images:
+        raise HTTPException(status_code=400, detail="Product has no image")
+
+    featured_image = images[0].get("src")
+
+    # --- Descargar imagen ---
+    img_response = requests.get(featured_image)
+    if img_response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Image download failed")
+
+    image_bytes = img_response.content
+    mime_type = img_response.headers.get("Content-Type", "image/jpeg")
+
+    # --- Subir a WhatsApp ---
+    from app.routes.whatsapp import upload_whatsapp_media, send_whatsapp_media_id
+
+    media_id = await upload_whatsapp_media(image_bytes, mime_type)
+
+    # --- Construir caption ---
+    name = product.get("name", "")
+    price = product.get("price", "")
+    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "")
+    permalink = product.get("permalink", "")
+
+    caption_lines = [f"✨ {name}"]
+    if price:
+        caption_lines.append(f"💰 Precio: ${price}")
+    if short_description:
+        caption_lines.append(f"\n{short_description}")
+    if permalink:
+        caption_lines.append(f"\n🛒 Ver producto: {permalink}")
+
+    caption = custom_caption if custom_caption else "\n".join(caption_lines)
+
+    # --- Guardar en DB ---
+    with engine.begin() as conn:
+        save_message(
+            conn,
+            phone=phone,
+            direction="out",
+            msg_type="product",
+            text_msg=caption,
+            featured_image=featured_image,
+            permalink=permalink
+        )
+
+    # --- Enviar imagen real ---
+    return await send_whatsapp_media_id(
+        to_phone=phone,
+        media_type="image",
+        media_id=media_id,
+        caption=caption
+    )
 

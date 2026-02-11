@@ -309,6 +309,14 @@ export default function App() {
   const [prodError, setProdError] = useState("");
   const [sendingProductId, setSendingProductId] = useState(null);
 
+  // 🎤 Audio recorder (WhatsApp-style)
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const recorderRef = useRef(null);
+  const recChunksRef = useRef([]);
+  const recTimerRef = useRef(null);
+
+
 
 
   const bottomRef = useRef(null);
@@ -322,14 +330,23 @@ export default function App() {
     } catch (e) { console.error("Error cargando conversaciones", e); }
   };
 
+  const scrollToBottom = (smooth = false) => {
+  requestAnimationFrame(() => {
+    bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+  });
+};
+
   const loadMessages = async (phone) => {
-    if (!phone) return;
-    try {
-      const r = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(phone)}/messages`);
-      const data = await r.json();
-      setMessages(data.messages || []);
-    } catch (e) { console.error(e); }
-  };
+  if (!phone) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(phone)}/messages`);
+    const data = await r.json();
+    setMessages(data.messages || []);
+    // 👇 fuerza scroll al final al cargar historial
+    scrollToBottom(false);
+  } catch (e) { console.error(e); }
+};
+
 
   const loadWCProducts = async (search = "") => {
   setProdLoading(true);
@@ -454,6 +471,96 @@ export default function App() {
     }
   };
 
+  const fmtTimer = (sec) => {
+  const m = String(Math.floor(sec / 60)).padStart(2, "0");
+  const s = String(sec % 60).padStart(2, "0");
+  return `${m}:${s}`;
+};
+
+const startRecording = async () => {
+  if (!selectedPhone) return;
+
+  // Si ya hay un adjunto, lo quitamos para evitar mezcla
+  setAttachment(null);
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    const mr = new MediaRecorder(stream);
+    recorderRef.current = mr;
+    recChunksRef.current = [];
+
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recChunksRef.current.push(e.data);
+    };
+
+    mr.onstop = async () => {
+      // detener tracks del mic (importante)
+      stream.getTracks().forEach(t => t.stop());
+
+      const blob = new Blob(recChunksRef.current, { type: mr.mimeType || "audio/webm" });
+      const file = new File([blob], `audio_${Date.now()}.webm`, { type: blob.type });
+
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("kind", "audio");
+
+        const r = await fetch(`${API_BASE}/api/media/upload`, {
+          method: "POST",
+          body: fd
+        });
+
+        if (!r.ok) throw new Error("upload failed");
+        const data = await r.json();
+
+        setAttachment({
+          kind: "media",
+          msg_type: "audio",
+          media_id: data.media_id,
+          filename: data.filename || file.name,
+          mime_type: data.mime_type || blob.type,
+        });
+      } catch (err) {
+        console.error(err);
+        alert("Error subiendo el audio grabado");
+      }
+    };
+
+    mr.start();
+    setIsRecording(true);
+    setRecordSeconds(0);
+
+    recTimerRef.current = setInterval(() => {
+      setRecordSeconds(s => s + 1);
+    }, 1000);
+
+  } catch (e) {
+    console.error(e);
+    alert("No se pudo acceder al micrófono. Revisa permisos del navegador.");
+  }
+};
+
+const stopRecording = async () => {
+  try {
+    if (recTimerRef.current) {
+      clearInterval(recTimerRef.current);
+      recTimerRef.current = null;
+    }
+    setIsRecording(false);
+
+    const mr = recorderRef.current;
+    recorderRef.current = null;
+
+    if (mr && mr.state !== "inactive") {
+      mr.stop();
+    }
+  } catch (e) {
+    console.error(e);
+  }
+};
+
+
   const toggleTakeover = async () => {
     if (!selectedPhone) return;
     const current = conversations.find(c => c.phone === selectedPhone)?.takeover || false;
@@ -480,8 +587,10 @@ export default function App() {
   }, [selectedPhone]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  // cuando llega un mensaje nuevo, sí puede ser smooth
+  scrollToBottom(true);
   }, [messages.length]);
+
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
 
@@ -655,9 +764,19 @@ export default function App() {
                   <IconPaperclip />
                 </button>
 
+              <button
+                  className={`btn-attach ${isRecording ? "recording" : ""}`}
+                  onClick={() => (isRecording ? stopRecording() : startRecording())}
+                  disabled={!selectedPhone}
+                  title={isRecording ? "Detener grabación" : "Grabar audio"}
+                >
+                  🎤
+                </button>
+
+
                 <input
                   className="composer-input"
-                  placeholder="Escribe un mensaje..."
+                  placeholder={isRecording ? `Grabando... ${fmtTimer(recordSeconds)} (clic en 🎤 para detener)` : "Escribe un mensaje..."}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && sendMessage()}

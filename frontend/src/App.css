@@ -784,3 +784,8 @@ body {
   font-size: 12px;
 }
 .product-card .pc-actions button:hover { background: rgba(46,204,113,0.25); }
+
+.btn-attach.recording {
+  background: #e74c3c;
+  color: white;
+}

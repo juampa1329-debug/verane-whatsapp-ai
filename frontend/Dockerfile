@@ -2,26 +2,27 @@
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 
-# Aumentamos la memoria para evitar fallos
+# Necesario para que se instalen devDependencies (vite) durante el build
+ENV NODE_ENV=development
+# Evita que npm omita optional deps (rolldown bindings)
+ENV npm_config_optional=true
+# Memoria extra por si el bundle crece
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# IMPORTANTE: Forzamos entorno de desarrollo para instalar devDependencies (Vite)
-ENV NODE_ENV=development
-
 COPY package*.json ./
-RUN npm ci
 
-# Copiamos el código fuente (el .dockerignore evitará copiar node_modules)
+# Fuerza dev + optional (bindings nativos)
+RUN npm ci --include=dev --include=optional
+
 COPY . .
 
-# Construimos la aplicación
 RUN npm run build
 
 # Serve Stage
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Configuración Nginx para SPA
+# SPA fallback
 RUN printf '%s\n' \
 'server {' \
 '  listen 80;' \

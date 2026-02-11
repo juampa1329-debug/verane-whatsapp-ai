@@ -189,17 +189,51 @@ def health():
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     """
-    Recibe archivo desde el frontend (PC local), lo sube a WhatsApp y devuelve media_id.
+    Recibe archivo desde el frontend, lo sube a WhatsApp y devuelve media_id.
     kind: image | video | audio | document
     """
-    kind = (kind or "image").lower().strip()
+    import tempfile
+    import subprocess
+    import os
 
+    kind = (kind or "image").lower().strip()
     if kind not in ("image", "video", "audio", "document"):
         raise HTTPException(status_code=400, detail="Invalid kind")
 
     content = await file.read()
-    mime = file.content_type or "application/octet-stream"
+    mime = (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    filename = file.filename or "upload"
 
+    # ✅ Si es audio grabado desde navegador (audio/webm) -> convertir a audio/ogg (opus)
+    if kind == "audio" and mime == "audio/webm":
+        with tempfile.TemporaryDirectory() as tmp:
+            in_path = os.path.join(tmp, "in.webm")
+            out_path = os.path.join(tmp, "out.ogg")
+
+            with open(in_path, "wb") as f:
+                f.write(content)
+
+            # Convertir a OGG/OPUS (formato aceptado por WhatsApp)
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", in_path,
+                "-c:a", "libopus",
+                "-b:a", "24k",
+                "-vn",
+                out_path
+            ]
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if p.returncode != 0:
+                err = p.stderr.decode("utf-8", errors="ignore")
+                raise HTTPException(status_code=500, detail=f"ffmpeg convert failed: {err[:900]}")
+
+            with open(out_path, "rb") as f:
+                content = f.read()
+
+        mime = "audio/ogg"
+        filename = "audio.ogg"
+
+    # ✅ Subir a WhatsApp y devolver media_id
     from app.routes.whatsapp import upload_whatsapp_media
     media_id = await upload_whatsapp_media(content, mime)
 
@@ -207,9 +241,10 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
         "ok": True,
         "media_id": media_id,
         "mime_type": mime,
-        "filename": file.filename,
+        "filename": filename,
         "kind": kind
     }
+
 
 
 @app.get("/api/conversations")

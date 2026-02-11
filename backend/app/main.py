@@ -83,7 +83,20 @@ ensure_schema()
 class IngestMessage(BaseModel):
     phone: str
     direction: str
-    text: str
+    msg_type: str = "text"  # text | image | video | document | product
+
+    # texto normal (o caption / descripción del producto)
+    text: str = ""
+
+    # media (imagen / video / documento)
+    media_url: Optional[str] = None
+    media_caption: Optional[str] = None
+
+    # producto (tarjeta como tu screenshot)
+    featured_image: Optional[str] = None   # imagen bonita (catálogo)
+    real_image: Optional[str] = None       # foto real (galería)
+    permalink: Optional[str] = None        # link del producto
+
 
 class BotReplyIn(BaseModel):
     phone: str
@@ -113,6 +126,8 @@ def save_message(
     direction: str,
     text_msg: str = "",
     msg_type: str = "text",
+    media_url: Optional[str] = None,
+    media_caption: Optional[str] = None,
     featured_image: Optional[str] = None,
     real_image: Optional[str] = None,
     permalink: Optional[str] = None,
@@ -120,10 +135,12 @@ def save_message(
     conn.execute(text("""
         INSERT INTO messages (
             phone, direction, msg_type, text,
+            media_url, media_caption,
             featured_image, real_image, permalink, created_at
         )
         VALUES (
             :phone, :direction, :msg_type, :text,
+            :media_url, :media_caption,
             :featured_image, :real_image, :permalink, :created_at
         )
     """), {
@@ -131,6 +148,8 @@ def save_message(
         "direction": direction,
         "msg_type": msg_type,
         "text": text_msg,
+        "media_url": media_url,
+        "media_caption": media_caption,
         "featured_image": featured_image,
         "real_image": real_image,
         "permalink": permalink,
@@ -145,6 +164,7 @@ def save_message(
         "phone": phone,
         "updated_at": datetime.utcnow()
     })
+
 
 # =========================================================
 # ENDPOINTS
@@ -180,6 +200,9 @@ def get_messages(phone: str):
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
+    direction = msg.direction if msg.direction in ("in", "out") else "in"
+    msg_type = (msg.msg_type or "text").strip().lower()
+
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO conversations (phone, takeover, updated_at)
@@ -187,13 +210,51 @@ async def ingest(msg: IngestMessage):
             ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
         """), {"phone": msg.phone, "updated_at": datetime.utcnow()})
 
-        direction = msg.direction if msg.direction in ("in", "out") else "in"
-        save_message(conn, msg.phone, direction, text_msg=msg.text)
+        save_message(
+            conn,
+            phone=msg.phone,
+            direction=direction,
+            msg_type=msg_type,
+            text_msg=msg.text or "",
+            media_url=msg.media_url,
+            media_caption=msg.media_caption,
+            featured_image=msg.featured_image,
+            real_image=msg.real_image,
+            permalink=msg.permalink,
+        )
 
+    # Si es salida, enviar a WhatsApp según tipo
     if direction == "out":
-        return await send_whatsapp_text(msg.phone, msg.text)
+        if msg_type in ("image", "video", "document"):
+            from app.routes.whatsapp import send_whatsapp_media
+            return await send_whatsapp_media(
+                to_phone=msg.phone,
+                media_type=msg_type,
+                media_url=msg.media_url or "",
+                caption=msg.media_caption or msg.text or ""
+            )
+
+        if msg_type == "product":
+            # MVP: mandamos texto + links (simple y efectivo)
+            body = (msg.text or "").strip()
+
+            # agregamos links útiles (si existen)
+            extra_lines = []
+            if msg.permalink:
+                extra_lines.append(f"🛒 Ver producto: {msg.permalink}")
+            if msg.real_image:
+                extra_lines.append(f"📸 Ver foto real: {msg.real_image}")
+
+            if extra_lines:
+                body = (body + "\n\n" + "\n".join(extra_lines)).strip()
+
+            return await send_whatsapp_text(msg.phone, body)
+
+        # default: text
+        return await send_whatsapp_text(msg.phone, msg.text or "")
 
     return {"saved": True}
+
 
 
 

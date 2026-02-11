@@ -49,6 +49,46 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
 
     return {"saved": True, "sent": True, "whatsapp": r.json()}
 
+async def send_whatsapp_media(to_phone: str, media_type: str, media_url: str, caption: str = ""):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    media_type = (media_type or "").strip().lower()
+    if media_type not in ("image", "video", "document"):
+        return {"saved": True, "sent": False, "reason": f"Unsupported media_type: {media_type}"}
+
+    if not media_url:
+        return {"saved": True, "sent": False, "reason": "media_url is required"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+
+    # WhatsApp descarga el archivo desde este link (debe ser URL pública https)
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": media_type,
+        media_type: {
+            "link": media_url
+        }
+    }
+
+    if caption and media_type in ("image", "video", "document"):
+        payload[media_type]["caption"] = caption
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    return {"saved": True, "sent": True, "whatsapp": r.json()}
+
+
 @router.get("/api/whatsapp/webhook")
 async def whatsapp_verify(request: Request):
     qp = request.query_params

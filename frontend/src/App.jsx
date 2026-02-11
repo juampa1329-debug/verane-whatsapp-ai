@@ -620,6 +620,175 @@ body {
   color: var(--primary-green);
 }
 
+/* --- Attachments UI (clip + menu + modal + preview chip) --- */
+.btn-attach {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-attach:hover { background: rgba(255,255,255,0.06); color: #fff; }
+
+.attach-menu {
+  position: absolute;
+  bottom: 74px;
+  left: 16px;
+  background: #0b1217;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 8px;
+  width: 220px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+  z-index: 50;
+}
+.attach-menu button {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #fff;
+  padding: 10px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.attach-menu button:hover { background: rgba(255,255,255,0.06); }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal {
+  width: min(720px, 100%);
+  background: #0b1217;
+  border: 1px solid var(--border-color);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.modal-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal-header h4 { margin: 0; font-size: 14px; color: #fff; }
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.modal-body { padding: 16px 18px; }
+.modal-search {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.modal-search input {
+  flex: 1;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #fff;
+  outline: none;
+}
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.product-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.product-card img {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(0,0,0,0.2);
+}
+.product-card h5 { margin: 0; font-size: 13px; color: #fff; }
+.product-card p { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
+.product-card .pc-actions { margin-left: auto; }
+.product-card .pc-actions button {
+  background: rgba(46,204,113,0.15);
+  border: 1px solid rgba(46,204,113,0.25);
+  color: var(--primary-green);
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+.product-card .pc-actions button:hover { background: rgba(46,204,113,0.25); }
+
+.attach-preview {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  margin: 10px 0 0;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+}
+.attach-preview img {
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: rgba(0,0,0,0.2);
+}
+.attach-preview .ap-meta { flex: 1; min-width: 0; }
+.attach-preview .ap-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-preview .ap-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 3px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-preview .ap-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+}
+.attach-preview .ap-remove:hover { color: #fff; }
+
 
 /* Scrollbars */
 .custom-scrollbar::-webkit-scrollbar { width: 6px; }
@@ -652,6 +821,12 @@ const IconUser = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="non
 const IconImage = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
 const IconTag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>;
 const IconBag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>;
+const IconPaperclip = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.5 8.5a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+  </svg>
+);
 
 function fmtDateTime(s) {
   if (!s) return '';
@@ -920,6 +1095,21 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
+  // Attach UI
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [showProductModal, setShowProductModal] = useState(false);
+
+  // attachment seleccionado (uno a la vez para mantenerlo simple)
+  const [attachment, setAttachment] = useState(null);
+  /*
+  attachment ejemplos:
+  { kind:"media", msg_type:"image|video|document", media_url:"https://...", media_caption:"" }
+  { kind:"product", msg_type:"product", text:"...", featured_image:"...", real_image:"...", permalink:"..." }
+  */
+
+  // búsqueda de productos (por ahora local; luego lo conectamos a Woo)
+  const [prodQ, setProdQ] = useState("");
+
 
   const bottomRef = useRef(null);
 
@@ -943,32 +1133,66 @@ export default function App() {
   };
 
      const sendMessage = async () => {
-      if (!text.trim() || !selectedPhone) return;
+  if (!selectedPhone) return;
 
-      try {
-        // 1) Guardar el mensaje como SALIENTE (Asesor/Humano)
-        const r = await fetch(`${API_BASE}/api/messages/ingest`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phone: selectedPhone,
-            direction: "out",     // <- CLAVE: esto lo manda al lado del asesor
-            text: text
-          }),
-        });
+  const hasText = !!text.trim();
+  const hasAttachment = !!attachment;
 
-        if (!r.ok) throw new Error("No se pudo guardar el mensaje");
+  if (!hasText && !hasAttachment) return;
 
-        // 2) NO llamamos al bot aquí, porque esto es un mensaje humano hacia el cliente
-        // (El bot debe responder solo cuando llegue un mensaje entrante real del cliente)
+  // Payload base
+  let payload = {
+    phone: selectedPhone,
+    direction: "out",
+    msg_type: "text",
+    text: text.trim()
+  };
 
-        await loadMessages(selectedPhone);
-        setText("");
-        loadConversations();
-      } catch (e) {
-        console.error(e);
-      }
-    };
+  // Si hay attachment, cambia payload según tipo
+  if (hasAttachment) {
+    if (attachment.kind === "media") {
+      payload = {
+        phone: selectedPhone,
+        direction: "out",
+        msg_type: attachment.msg_type,     // image|video|document
+        text: "",                          // dejamos vacío
+        media_url: attachment.media_url,
+        media_caption: (attachment.media_caption || text.trim() || "")
+      };
+    }
+
+    if (attachment.kind === "product") {
+      payload = {
+        phone: selectedPhone,
+        direction: "out",
+        msg_type: "product",
+        text: attachment.text || text.trim() || "",
+        featured_image: attachment.featured_image,
+        real_image: attachment.real_image,
+        permalink: attachment.permalink
+      };
+    }
+  }
+
+  try {
+    const r = await fetch(`${API_BASE}/api/messages/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!r.ok) throw new Error("No se pudo enviar/guardar el mensaje");
+
+    await loadMessages(selectedPhone);
+    setText("");
+    setAttachment(null);
+    setShowAttachMenu(false);
+    loadConversations();
+  } catch (e) {
+    console.error(e);
+  }
+};
+
 
 
   const toggleTakeover = async () => {
@@ -1001,6 +1225,25 @@ export default function App() {
   }, [messages.length]);
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
+  const demoProducts = useMemo(() => ([
+  {
+    id: 1,
+    name: "Art of Universe",
+    price: "$185.000",
+    featured_image: "https://picsum.photos/seed/artofuniverse/600/400",
+    real_image: "https://picsum.photos/seed/artofuniverse-real/900/700",
+    permalink: "https://app.perfumesverane.com/producto/art-of-universe"
+  },
+  {
+    id: 2,
+    name: "Lattafa Asad Elixir",
+    price: "$135.000",
+    featured_image: "https://picsum.photos/seed/asadelixir/600/400",
+    real_image: "https://picsum.photos/seed/asadelixir-real/900/700",
+    permalink: "https://app.perfumesverane.com/producto/lattafa-asad-elixir"
+  }
+]).filter(p => (p.name || "").toLowerCase().includes((prodQ || "").toLowerCase())), [prodQ]);
+
 
   return (
     <div className="app-layout">
@@ -1095,25 +1338,148 @@ export default function App() {
               <div ref={bottomRef} className="spacer" />
             </div>
 
-            <div className="composer-area">
-              <div className="composer-input-wrapper">
-                <input
-                  className="composer-input"
-                  placeholder="Escribe un mensaje..."
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  disabled={!selectedPhone}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={!text.trim()}
-                  className="btn-send"
-                >
-                  <IconSend />
-                </button>
+            <div className="composer-area" style={{ position: "relative" }}>
+  {/* Menú de adjuntos */}
+  {showAttachMenu && (
+    <div className="attach-menu">
+      <button onClick={() => {
+        const url = prompt("Pega la URL pública de la IMAGEN (https):");
+        if (url) setAttachment({ kind: "media", msg_type: "image", media_url: url, media_caption: "" });
+        setShowAttachMenu(false);
+      }}>
+        <IconImage /> Imagen (URL)
+      </button>
+
+      <button onClick={() => {
+        const url = prompt("Pega la URL pública del VIDEO (https):");
+        if (url) setAttachment({ kind: "media", msg_type: "video", media_url: url, media_caption: "" });
+        setShowAttachMenu(false);
+      }}>
+        🎥 Video (URL)
+      </button>
+
+      <button onClick={() => {
+        const url = prompt("Pega la URL pública del DOCUMENTO (https):");
+        if (url) setAttachment({ kind: "media", msg_type: "document", media_url: url, media_caption: "" });
+        setShowAttachMenu(false);
+      }}>
+        📄 Documento (URL)
+      </button>
+
+      <button onClick={() => {
+        setShowProductModal(true);
+        setShowAttachMenu(false);
+      }}>
+        🛍️ Producto (Catálogo)
+      </button>
+    </div>
+  )}
+
+  {/* Modal productos */}
+  {showProductModal && (
+    <div className="modal-backdrop" onClick={() => setShowProductModal(false)}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h4>Adjuntar producto</h4>
+          <button className="modal-close" onClick={() => setShowProductModal(false)}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="modal-search">
+            <input
+              placeholder="Buscar perfume..."
+              value={prodQ}
+              onChange={(e) => setProdQ(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="product-grid">
+            {demoProducts.map(p => (
+              <div key={p.id} className="product-card">
+                <img src={p.featured_image} alt="" />
+                <div>
+                  <h5>{p.name}</h5>
+                  <p>{p.price}</p>
+                </div>
+                <div className="pc-actions">
+                  <button onClick={() => {
+                    // Texto “tipo IA” base (luego lo reemplazamos por el resumen real del backend/woo)
+                    const baseText = `**${p.name}**: Disponible. Precio ${p.price}. ✨ ¿Te gusta más dulce, fresco o amaderado?`;
+
+                    setAttachment({
+                      kind: "product",
+                      msg_type: "product",
+                      text: baseText.replace(/\*\*/g, ""), // tu UI no renderiza markdown
+                      featured_image: p.featured_image,
+                      real_image: p.real_image,
+                      permalink: p.permalink
+                    });
+
+                    setShowProductModal(false);
+                    setProdQ("");
+                  }}>
+                    Adjuntar
+                  </button>
+                </div>
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )}
+
+  <div className="composer-input-wrapper">
+    <button
+      className="btn-attach"
+      onClick={() => setShowAttachMenu(v => !v)}
+      disabled={!selectedPhone}
+      title="Adjuntar"
+    >
+      <IconPaperclip />
+    </button>
+
+    <input
+      className="composer-input"
+      placeholder="Escribe un mensaje..."
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+      disabled={!selectedPhone}
+    />
+
+    <button
+      onClick={sendMessage}
+      disabled={!text.trim() && !attachment}
+      className="btn-send"
+    >
+      <IconSend />
+    </button>
+  </div>
+
+  {/* Preview del adjunto antes de enviar */}
+  {attachment && (
+    <div className="attach-preview">
+      <img
+        src={attachment.featured_image || attachment.media_url}
+        alt=""
+      />
+      <div className="ap-meta">
+        <p className="ap-title">
+          {attachment.kind === "product" ? "Producto adjunto" : "Archivo adjunto"}
+        </p>
+        <p className="ap-sub">
+          {attachment.kind === "product"
+            ? (attachment.permalink || "")
+            : (attachment.media_url || "")
+          }
+        </p>
+      </div>
+      <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">✕</button>
+    </div>
+  )}
+</div>
+
           </div>
 
           <CustomerCardCRM

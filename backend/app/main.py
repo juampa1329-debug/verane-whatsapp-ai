@@ -531,8 +531,13 @@ class SendWCProductIn(BaseModel):
 @app.post("/api/wc/send-product")
 async def send_wc_product(payload: dict):
     """
-    Envía un producto WooCommerce como imagen adjunta real + caption.
+    Envía un producto WooCommerce como imagen adjunta real (JPG) + caption.
+    Convierte AVIF -> JPG en backend para compatibilidad con WhatsApp.
     """
+    import io
+    from PIL import Image
+    import pillow_avif  # noqa: F401  (activa soporte AVIF en Pillow)
+
     phone = payload.get("phone")
     product_id = payload.get("product_id")
     custom_caption = payload.get("caption", "")
@@ -563,35 +568,58 @@ async def send_wc_product(payload: dict):
     featured_image = (images[0] or {}).get("src") or ""
     real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
 
-    # --- Resolver URL compatible (evitar AVIF para WhatsApp) ---
-    def _resolve_compatible_image_url(u: str) -> str:
-        if not u:
-            return u
-        lower = u.lower()
-        if lower.endswith(".avif"):
-            for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                cand = u[:-5] + ext
-                try:
-                    rr = requests.get(cand, timeout=15)
-                    if rr.status_code == 200 and rr.content:
-                        return cand
-                except Exception:
-                    pass
-        return u
-
-    featured_image_compatible = _resolve_compatible_image_url(featured_image)
-
-    # --- Descargar imagen ---
-    img_response = requests.get(featured_image_compatible, timeout=25)
-    if img_response.status_code != 200:
+    # --- Descargar imagen destacada (puede ser AVIF) ---
+    img_response = requests.get(featured_image, timeout=25)
+    if img_response.status_code != 200 or not img_response.content:
         raise HTTPException(status_code=502, detail=f"Image download failed: {img_response.status_code}")
 
     image_bytes = img_response.content
-    mime_type = img_response.headers.get("Content-Type", "image/jpeg")
+    content_type = (img_response.headers.get("Content-Type") or "").lower()
 
-    # Si el server devuelve algo raro (avif), forzamos mime seguro para WhatsApp
-    if "avif" in (mime_type or "").lower():
-        mime_type = "image/jpeg"
+    def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
+        """
+        Convierte bytes de imagen (AVIF/WEBP/PNG/JPG) a JPG bytes.
+        """
+        im = Image.open(io.BytesIO(src_bytes))
+        # WhatsApp suele ir mejor con RGB (no alpha)
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGB")
+        else:
+            im = im.convert("RGB")
+
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+
+    # --- Forzar JPG si:
+    # 1) Content-Type dice avif/webp o
+    # 2) URL termina en .avif/.webp
+    lower_url = featured_image.lower()
+    needs_convert = (
+        ("image/avif" in content_type) or ("image/webp" in content_type) or
+        lower_url.endswith(".avif") or lower_url.endswith(".webp")
+    )
+
+    try:
+        if needs_convert:
+            image_bytes = _to_jpeg_bytes(image_bytes)
+            mime_type = "image/jpeg"
+        else:
+            # Aun si dice jpeg/png, WhatsApp acepta, pero preferimos enviar jpg siempre:
+            # si quieres SIEMPRE JPG, descomenta:
+            # image_bytes = _to_jpeg_bytes(image_bytes); mime_type = "image/jpeg"
+            mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
+            # si viene png, WhatsApp ok, pero si quieres unificar:
+            if mime_type not in ("image/jpeg", "image/png"):
+                image_bytes = _to_jpeg_bytes(image_bytes)
+                mime_type = "image/jpeg"
+    except Exception as e:
+        # fallback duro: intenta convertir sí o sí
+        try:
+            image_bytes = _to_jpeg_bytes(image_bytes)
+            mime_type = "image/jpeg"
+        except Exception:
+            raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
 
     # --- Subir a WhatsApp ---
     from app.routes.whatsapp import upload_whatsapp_media, send_whatsapp_media_id
@@ -607,7 +635,6 @@ async def send_wc_product(payload: dict):
     brands = product.get("brands") or []
     brand = (brands[0].get("name") if brands else "") or ""
     if not brand:
-        # fallback: tu helper actual (meta/attr/tags)
         brand = _extract_brand(product)
 
     # Hombre/Mujer desde categorías
@@ -644,7 +671,7 @@ async def send_wc_product(payload: dict):
             direction="out",
             msg_type="product",
             text_msg=caption,
-            featured_image=featured_image,   # guardamos la original para la tarjeta
+            featured_image=featured_image,   # guardamos la original (AVIF) para la tarjeta en dashboard
             real_image=real_image or None,
             permalink=permalink
         )
@@ -656,4 +683,5 @@ async def send_wc_product(payload: dict):
         media_id=media_id,
         caption=caption
     )
+
 

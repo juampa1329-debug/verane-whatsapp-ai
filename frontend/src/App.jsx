@@ -307,6 +307,8 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [prodLoading, setProdLoading] = useState(false);
   const [prodError, setProdError] = useState("");
+  const [sendingProductId, setSendingProductId] = useState(null);
+
 
 
   const bottomRef = useRef(null);
@@ -347,41 +349,52 @@ export default function App() {
   }
 };
 
-const sendWCProduct = async (product) => {
-  if (!selectedPhone) return;
+  const sendWCProduct = async (product) => {
+    if (!selectedPhone) return;
+    if (sendingProductId === product.id) return; // evita doble click
 
-  try {
-    const r = await fetch(`${API_BASE}/api/wc/send-product`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phone: selectedPhone,
-        product_id: product.id,
-        // caption opcional: si lo mandas vacío, backend arma uno bonito
-        caption: ""
-      }),
-    });
+    setSendingProductId(product.id);
 
-    const out = await r.json();
-    if (out && out.sent === false) {
-      console.error("WhatsApp send failed:", out);
-      alert("El producto se guardó, pero WhatsApp no lo envió (revisa logs del backend).");
-      return;
+    try {
+      const r = await fetch(`${API_BASE}/api/wc/send-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: selectedPhone,
+          product_id: product.id,
+          caption: ""
+        }),
+      });
+
+      // si backend devolvió error, muéstralo
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(`send-product failed ${r.status}: ${t}`);
+      }
+
+      const out = await r.json();
+
+      // si WhatsApp falló, el backend debería devolver sent:false + detalle
+      if (out && out.sent === false) {
+        console.error("WhatsApp send failed:", out);
+        alert("Se guardó en la plataforma, pero WhatsApp NO lo envió. Revisa el error en consola/network.");
+        return;
+      }
+
+      await loadMessages(selectedPhone);
+      await loadConversations();
+
+      setShowProductModal(false);
+      setProdQ("");
+      setProducts([]);
+    } catch (e) {
+      console.error(e);
+      alert("Error enviando producto por WhatsApp");
+    } finally {
+      setSendingProductId(null);
     }
-
-
-    // refrescar UI
-    await loadMessages(selectedPhone);
-    await loadConversations();
-
-    setShowProductModal(false);
-    setProdQ("");
-    setProducts([]);
-  } catch (e) {
-    console.error(e);
-    alert("Error enviando producto por WhatsApp");
-  }
-};
+  };
+  ;
 
   const sendMessage = async () => {
     if (!selectedPhone) return;
@@ -718,9 +731,13 @@ const sendWCProduct = async (product) => {
                             </div>
 
                             <div className="pc-actions">
-                              <button onClick={() => sendWCProduct(p)}>
-                                Enviar
+                              <button
+                                onClick={() => sendWCProduct(p)}
+                                disabled={sendingProductId === p.id}
+                              >
+                                {sendingProductId === p.id ? "Enviando..." : "Enviar"}
                               </button>
+
                             </div>
                           </div>
                         ))}

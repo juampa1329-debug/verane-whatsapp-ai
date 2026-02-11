@@ -7,3 +7,5 @@ pydantic-settings==2.4.0
 requests
 httpx
 python-multipart
+Pillow==10.4.0
+pillow-avif-plugin==1.4.6

@@ -177,10 +177,24 @@ def get_messages(phone: str):
     return {"messages": [dict(r) for r in rows]}
 
 @app.post("/api/messages/ingest")
-def ingest(msg: IngestMessage):
+async def ingest(msg: IngestMessage):
     with engine.begin() as conn:
-        save_message(conn, msg.phone, msg.direction, msg.text)
+        conn.execute(text("""
+            INSERT INTO conversations (phone, takeover, updated_at)
+            VALUES (:phone, FALSE, :updated_at)
+            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
+        """), {"phone": msg.phone, "updated_at": datetime.utcnow()})
+
+        direction = msg.direction if msg.direction in ("in", "out") else "in"
+
+        save_message(conn, msg.phone, direction, text_msg=msg.text)
+
+    if direction == "out":
+        # ✅ envía a WhatsApp real
+        return await send_whatsapp_text(msg.phone, msg.text)
+
     return {"saved": True}
+
 
 @app.post("/api/conversations/takeover")
 def set_takeover(payload: TakeoverPayload):
@@ -248,3 +262,23 @@ def send_message(phone: str = Query(...), text_msg: str = Query(...)):
     with engine.begin() as conn:
         save_message(conn, phone, "out", text_msg)
     return {"ok": True}
+
+
+async def send_whatsapp_text(to_phone: str, text_msg: str):
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text_msg},
+    }
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code >= 300:
+            raise HTTPException(status_code=502, detail=r.text)
+        return r.json()

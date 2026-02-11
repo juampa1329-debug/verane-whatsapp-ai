@@ -1,8 +1,10 @@
-# Build
+# Build (Debian / glibc para evitar bindings musl de rolldown)
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
+
 COPY package*.json ./
 RUN npm ci
+
 COPY . .
 RUN npm run build
 

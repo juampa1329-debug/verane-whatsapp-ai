@@ -2,6 +2,8 @@ import os
 import re
 from datetime import datetime
 from typing import Optional
+from app.routes.whatsapp import send_whatsapp_text
+
 
 import requests
 from fastapi import FastAPI, Request, HTTPException, Query

@@ -13,6 +13,10 @@ VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 FORWARD_URL = os.getenv("WHATSAPP_FORWARD_URL", "")
 FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"
 FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "4"))
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
+
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
@@ -61,6 +65,30 @@ def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str):
             "text": text_msg or "",
             "created_at": datetime.utcnow(),
         })
+
+
+async def send_whatsapp_text(to_phone: str, body_text: str):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        raise HTTPException(status_code=500, detail="WhatsApp env vars missing")
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": body_text},
+    }
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code >= 300:
+            raise HTTPException(status_code=502, detail=r.text)
+        return r.json()
+
 
 
 @router.post("/api/whatsapp/webhook")

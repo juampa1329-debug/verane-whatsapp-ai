@@ -352,20 +352,43 @@ def save_crm(payload: CRMIn):
 
 @app.get("/api/crm/{phone}")
 def get_crm(phone: str):
-    with engine.begin() as conn:
-        r = conn.execute(text("""
-            SSELECT phone, takeover, first_name, last_name, city,
-                    customer_type, interests, tags, notes
-            FROM conversations
-            WHERE phone = :phone
-        """), {"phone": phone}).mappings().first()
-    return dict(r) if r else {"phone": phone}
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    phone,
+                    takeover,
+                    first_name,
+                    last_name,
+                    city,
+                    customer_type,
+                    interests,
+                    tags,
+                    notes
+                FROM conversations
+                WHERE phone = :phone
+            """), {"phone": phone}).mappings().first()
 
-@app.post("/api/messages/send")
-def send_message(phone: str = Query(...), text_msg: str = Query(...)):
-    with engine.begin() as conn:
-        save_message(conn, phone, "out", text_msg)
-    return {"ok": True}
+        if not r:
+            # si no existe aún, devolvemos estructura completa por defecto
+            return {
+                "phone": phone,
+                "takeover": False,
+                "first_name": "",
+                "last_name": "",
+                "city": "",
+                "customer_type": "",
+                "interests": "",
+                "tags": "",
+                "notes": "",
+            }
+
+        return dict(r)
+
+    except Exception as e:
+        # devuelve JSON (para que el frontend no explote) + ayuda para debug
+        return {"ok": False, "error": str(e), "phone": phone}
+
 
 
 

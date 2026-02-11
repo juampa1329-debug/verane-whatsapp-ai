@@ -511,8 +511,12 @@ const startRecording = async () => {
           body: fd
         });
 
-        if (!r.ok) throw new Error("upload failed");
+        if (!r.ok) {
+          const t = await r.text();
+          throw new Error(`upload failed ${r.status}: ${t}`);
+      }
         const data = await r.json();
+
 
         setAttachment({
           kind: "media",
@@ -709,8 +713,12 @@ const stopRecording = async () => {
                       body: fd
                     });
 
-                    if (!r.ok) throw new Error("upload failed");
-                    const data = await r.json();
+                    if (!r.ok) {
+                  const t = await r.text();
+                  throw new Error(`upload failed ${r.status}: ${t}`);
+                   }
+                  const data = await r.json();
+
 
                     setAttachment({
                       kind: "media",
@@ -780,7 +788,7 @@ const stopRecording = async () => {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  disabled={!selectedPhone}
+                  disabled={!selectedPhone || isRecording}
                 />
 
                 <button

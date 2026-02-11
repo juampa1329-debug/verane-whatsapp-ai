@@ -668,7 +668,8 @@ const stopRecording = async () => {
                       </div>
                     )}
 
-                    <div className="msg-text">{m.text}</div>
+                    <div className="msg-text">{m.text || m.media_caption || ""}</div>
+
 
                     {m.real_image && m.real_image !== m.featured_image && (
                       <div className="msg-actions">

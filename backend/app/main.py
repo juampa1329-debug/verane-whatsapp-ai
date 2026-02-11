@@ -263,11 +263,13 @@ def get_messages(phone: str):
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT id, phone, direction, msg_type, text,
-                   featured_image, real_image, permalink, created_at
+                media_url, media_caption,
+                featured_image, real_image, permalink, created_at
             FROM messages
             WHERE phone = :phone
             ORDER BY created_at ASC
             LIMIT 500
+
         """), {"phone": phone}).mappings().all()
     return {"messages": [dict(r) for r in rows]}
 

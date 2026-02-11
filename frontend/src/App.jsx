@@ -620,6 +620,7 @@ body {
   color: var(--primary-green);
 }
 
+
 /* Scrollbars */
 .custom-scrollbar::-webkit-scrollbar { width: 6px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
@@ -631,7 +632,13 @@ body {
 `;
 
 // --- CONFIGURACIÓN ---
-const API_BASE = "";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://backend.perfumesverane.com";
+window.__API_BASE__ = API_BASE;
+<div style={{fontSize: 12, opacity: 0.7}}>
+  API_BASE: {API_BASE}
+</div>
+
+
 
 // --- ICONOS SVG (Nativos) ---
 const IconMessage = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;

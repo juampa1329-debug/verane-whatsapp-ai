@@ -31,43 +31,34 @@ services:
     expose:
       - "8000"
     labels:
-    - "traefik.enable=true"
+      - traefik.enable=true
+      - traefik.http.routers.verane_api_http.rule=Host(`backend.perfumesverane.com`)
+      - traefik.http.routers.verane_api_http.entrypoints=http
+      - traefik.http.routers.verane_api_http.middlewares=verane_redirect_https
+      - traefik.http.middlewares.verane_redirect_https.redirectscheme.scheme=https
+      - traefik.http.routers.verane_api_https.rule=Host(`backend.perfumesverane.com`)
+      - traefik.http.routers.verane_api_https.entrypoints=https
+      - traefik.http.routers.verane_api_https.tls=true
+      - traefik.http.routers.verane_api_https.tls.certresolver=letsencrypt
+      - traefik.http.services.verane_api.loadbalancer.server.port=8000
 
-    # HTTP router (solo para redirigir a HTTPS)
-    - "traefik.http.routers.verane_api_http.rule=Host(`backend.perfumesverane.com`)"
-    - "traefik.http.routers.verane_api_http.entrypoints=http"
-    - "traefik.http.routers.verane_api_http.middlewares=verane_redirect_https"
-    - "traefik.http.middlewares.verane_redirect_https.redirectscheme.scheme=https"
-
-    # HTTPS router (aquí se emite el certificado)
-    - "traefik.http.routers.verane_api_https.rule=Host(`backend.perfumesverane.com`)"
-    - "traefik.http.routers.verane_api_https.entrypoints=https"
-    - "traefik.http.routers.verane_api_https.tls=true"
-    - "traefik.http.routers.verane_api_https.tls.certresolver=letsencrypt"
-
-    # Service port
-    - "traefik.http.services.verane_api.loadbalancer.server.port=8000"
-
-
-
-    frontend:
-      build: ./frontend
-      depends_on:
-        - api
-      expose:
-        - '80'
-      labels:
-        - traefik.enable=true
-        - traefik.http.routers.verane_front_http.rule=Host(`app.perfumesverane.com`)
-        - traefik.http.routers.verane_front_http.entrypoints=http
-        - traefik.http.routers.verane_front_http.middlewares=verane_front_redirect_https
-        - traefik.http.middlewares.verane_front_redirect_https.redirectscheme.scheme=https
-        - traefik.http.routers.verane_front_https.rule=Host(`app.perfumesverane.com`)
-        - traefik.http.routers.verane_front_https.entrypoints=https
-        - traefik.http.routers.verane_front_https.tls=true
-        - traefik.http.routers.verane_front_https.tls.certresolver=letsencrypt
-        - traefik.http.services.verane_front.loadbalancer.server.port=80
-
+  frontend:
+    build: ./frontend
+    depends_on:
+      - api
+    expose:
+      - "80"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.verane_front_http.rule=Host(`app.perfumesverane.com`)
+      - traefik.http.routers.verane_front_http.entrypoints=http
+      - traefik.http.routers.verane_front_http.middlewares=verane_front_redirect_https
+      - traefik.http.middlewares.verane_front_redirect_https.redirectscheme.scheme=https
+      - traefik.http.routers.verane_front_https.rule=Host(`app.perfumesverane.com`)
+      - traefik.http.routers.verane_front_https.entrypoints=https
+      - traefik.http.routers.verane_front_https.tls=true
+      - traefik.http.routers.verane_front_https.tls.certresolver=letsencrypt
+      - traefik.http.services.verane_front.loadbalancer.server.port=80
 
 volumes:
   pgdata: {}

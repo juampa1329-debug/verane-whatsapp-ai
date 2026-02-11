@@ -540,64 +540,103 @@ async def send_wc_product(payload: dict):
     if not phone or not product_id:
         raise HTTPException(status_code=400, detail="phone and product_id required")
 
-    # --- Woo credentials ---
-    WC_BASE_URL = os.getenv("WC_BASE_URL")
-    WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY")
-    WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
-
-    if not WC_BASE_URL:
-        raise HTTPException(status_code=500, detail="WC_BASE_URL not configured")
+    WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
+    WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
+    WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
+    if not WC_BASE_URL or not WC_CONSUMER_KEY or not WC_CONSUMER_SECRET:
+        raise HTTPException(status_code=500, detail="WC env vars not configured")
 
     # --- Obtener producto desde Woo ---
     url = f"{WC_BASE_URL}/wp-json/wc/v3/products/{product_id}"
-    params = {
-        "consumer_key": WC_CONSUMER_KEY,
-        "consumer_secret": WC_CONSUMER_SECRET
-    }
+    params = {"consumer_key": WC_CONSUMER_KEY, "consumer_secret": WC_CONSUMER_SECRET}
 
-    r = requests.get(url, params=params)
+    r = requests.get(url, params=params, timeout=25)
     if r.status_code != 200:
-        raise HTTPException(status_code=500, detail="WooCommerce product fetch failed")
+        raise HTTPException(status_code=502, detail=f"WooCommerce product fetch failed: {r.status_code} {r.text}")
 
     product = r.json()
 
-    # --- Imagen destacada ---
     images = product.get("images") or []
     if not images:
         raise HTTPException(status_code=400, detail="Product has no image")
 
-    featured_image = images[0].get("src")
+    featured_image = (images[0] or {}).get("src") or ""
+    real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
+
+    # --- Resolver URL compatible (evitar AVIF para WhatsApp) ---
+    def _resolve_compatible_image_url(u: str) -> str:
+        if not u:
+            return u
+        lower = u.lower()
+        if lower.endswith(".avif"):
+            for ext in (".jpg", ".jpeg", ".png", ".webp"):
+                cand = u[:-5] + ext
+                try:
+                    rr = requests.get(cand, timeout=15)
+                    if rr.status_code == 200 and rr.content:
+                        return cand
+                except Exception:
+                    pass
+        return u
+
+    featured_image_compatible = _resolve_compatible_image_url(featured_image)
 
     # --- Descargar imagen ---
-    img_response = requests.get(featured_image)
+    img_response = requests.get(featured_image_compatible, timeout=25)
     if img_response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Image download failed")
+        raise HTTPException(status_code=502, detail=f"Image download failed: {img_response.status_code}")
 
     image_bytes = img_response.content
     mime_type = img_response.headers.get("Content-Type", "image/jpeg")
 
+    # Si el server devuelve algo raro (avif), forzamos mime seguro para WhatsApp
+    if "avif" in (mime_type or "").lower():
+        mime_type = "image/jpeg"
+
     # --- Subir a WhatsApp ---
     from app.routes.whatsapp import upload_whatsapp_media, send_whatsapp_media_id
-
     media_id = await upload_whatsapp_media(image_bytes, mime_type)
 
-    # --- Construir caption ---
-    name = product.get("name", "")
-    price = product.get("price", "")
-    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "")
-    permalink = product.get("permalink", "")
+    # --- Construir caption enriquecido ---
+    name = product.get("name", "") or ""
+    price = product.get("price") or product.get("regular_price") or ""
+    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "").strip()
+    permalink = product.get("permalink", "") or ""
+
+    # Marca (si existe en brands)
+    brands = product.get("brands") or []
+    brand = (brands[0].get("name") if brands else "") or ""
+    if not brand:
+        # fallback: tu helper actual (meta/attr/tags)
+        brand = _extract_brand(product)
+
+    # Hombre/Mujer desde categorías
+    gender = _extract_gender(product)
+    gender_label = "Hombre" if gender == "hombre" else "Mujer" if gender == "mujer" else "Unisex" if gender == "unisex" else ""
+
+    # Aromas
+    aromas_list = _extract_aromas(product)
+    aromas = ", ".join(aromas_list) if aromas_list else ""
 
     caption_lines = [f"✨ {name}"]
+    if gender_label:
+        caption_lines.append(f"👤 Para: {gender_label}")
+    if brand:
+        caption_lines.append(f"🏷️ Marca: {brand}")
+    if aromas:
+        caption_lines.append(f"🌿 Aromas: {aromas}")
     if price:
         caption_lines.append(f"💰 Precio: ${price}")
     if short_description:
         caption_lines.append(f"\n{short_description}")
     if permalink:
         caption_lines.append(f"\n🛒 Ver producto: {permalink}")
+    if real_image:
+        caption_lines.append(f"📸 Ver foto real: {real_image}")
 
-    caption = custom_caption if custom_caption else "\n".join(caption_lines)
+    caption = (custom_caption or "").strip() or "\n".join(caption_lines)
 
-    # --- Guardar en DB ---
+    # --- Guardar en DB (para que tu UI muestre tarjeta + botón foto real) ---
     with engine.begin() as conn:
         save_message(
             conn,
@@ -605,11 +644,12 @@ async def send_wc_product(payload: dict):
             direction="out",
             msg_type="product",
             text_msg=caption,
-            featured_image=featured_image,
+            featured_image=featured_image,   # guardamos la original para la tarjeta
+            real_image=real_image or None,
             permalink=permalink
         )
 
-    # --- Enviar imagen real ---
+    # --- Enviar imagen real por WhatsApp como adjunto ---
     return await send_whatsapp_media_id(
         to_phone=phone,
         media_type="image",

@@ -362,10 +362,13 @@ const sendWCProduct = async (product) => {
       }),
     });
 
-    if (!r.ok) {
-      const t = await r.text();
-      throw new Error(`send-product failed ${r.status}: ${t}`);
+    const out = await r.json();
+    if (out && out.sent === false) {
+      console.error("WhatsApp send failed:", out);
+      alert("El producto se guardó, pero WhatsApp no lo envió (revisa logs del backend).");
+      return;
     }
+
 
     // refrescar UI
     await loadMessages(selectedPhone);

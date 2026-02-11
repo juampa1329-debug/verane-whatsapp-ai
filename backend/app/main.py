@@ -11,6 +11,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
+from fastapi import FastAPI
+from app.routes.whatsapp import router as whatsapp_router
+
+app = FastAPI()
+app.include_router(whatsapp_router)
+
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 

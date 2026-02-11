@@ -27,7 +27,7 @@ async def _forward(raw_body: bytes):
         return
     headers = {
         "Content-Type": "application/json",
-        "X-Verane-Forwarded": "1",  # evita loops si algún día reenvías de vuelta
+        "X-Verane-Forwarded": "1",
     }
     async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
         await client.post(FORWARD_URL, content=raw_body, headers=headers)
@@ -35,8 +35,5 @@ async def _forward(raw_body: bytes):
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
-
-    # ACK rápido a Meta y reenvío en background a Sellerchat
     asyncio.create_task(_forward(raw))
-
     return {"ok": True}

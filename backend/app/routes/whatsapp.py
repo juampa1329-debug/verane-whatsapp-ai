@@ -49,6 +49,80 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
 
     return {"saved": True, "sent": True, "whatsapp": r.json()}
 
+async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
+    """
+    Sube un archivo binario a WhatsApp Media API y devuelve media_id.
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        raise HTTPException(status_code=500, detail="WhatsApp credentials not set")
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+    }
+
+    # multipart/form-data
+    files = {
+        "file": ("upload", file_bytes, mime_type),
+    }
+    data = {
+        "messaging_product": "whatsapp",
+        "type": mime_type,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=headers, data=data, files=files)
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=500, detail=f"Media upload failed: {r.status_code} {r.text}")
+
+    j = r.json()
+    media_id = j.get("id")
+    if not media_id:
+        raise HTTPException(status_code=500, detail=f"No media id returned: {j}")
+
+    return media_id
+
+async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, caption: str = ""):
+    """
+    Envía media a WhatsApp usando media_id para que aparezca como adjunto real.
+    media_type: image | video | audio | document
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    media_type = (media_type or "").strip().lower()
+    if media_type not in ("image", "video", "audio", "document"):
+        return {"saved": True, "sent": False, "reason": f"Unsupported media_type: {media_type}"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": media_type,
+        media_type: {"id": media_id}
+    }
+
+    # caption aplica a image/video/document (audio normalmente no)
+    if caption and media_type in ("image", "video", "document"):
+        payload[media_type]["caption"] = caption
+
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    return {"saved": True, "sent": True, "whatsapp": r.json()}
+
+
 async def send_whatsapp_media(to_phone: str, media_type: str, media_url: str, caption: str = ""):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}

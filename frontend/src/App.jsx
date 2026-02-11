@@ -1,813 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import './App.css';
 
-// --- ESTILOS CSS (Integrados para asegurar el diseño visual exacto) ---
-const styles = `
-/* --- Global Reset & Variables --- */
-:root {
-  --bg-dark: #0b1217;
-  --bg-sidebar: #0f1b22;
-  --bg-input: rgba(255,255,255,0.05);
-  --border-color: rgba(255,255,255,0.1);
-  --primary-green: #2ecc71;
-  --primary-green-dim: rgba(46, 204, 113, 0.1);
-  --text-main: #e2e8f0;
-  --text-muted: #94a3b8;
-  --danger: #e74c3c;
-  --danger-dim: rgba(231, 76, 60, 0.15);
-}
 
-body {
-  margin: 0;
-  padding: 0;
-  background-color: var(--bg-dark);
-  color: var(--text-main);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  overflow: hidden;
-}
 
-/* --- Layout Principal --- */
-.app-layout {
-  display: flex;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-}
-
-/* --- 1. Navegación Lateral (Izquierda) --- */
-.main-nav {
-  width: 80px;
-  background-color: var(--bg-sidebar);
-  border-right: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 24px 0;
-  z-index: 20;
-}
-
-.nav-logo {
-  margin-bottom: 32px;
-  font-weight: 900;
-  font-size: 24px;
-  color: var(--primary-green);
-  letter-spacing: -1px;
-}
-
-.nav-items {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  padding: 0 8px;
-}
-
-.nav-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.nav-btn:hover {
-  background-color: rgba(255,255,255,0.05);
-  color: #fff;
-}
-
-.nav-btn.active {
-  background-color: var(--primary-green-dim);
-  color: var(--primary-green);
-}
-
-.nav-btn span {
-  font-size: 10px;
-  margin-top: 4px;
-  font-weight: 500;
-}
-
-.nav-footer {
-  margin-top: auto;
-}
-
-.avatar-placeholder {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background-color: #1e293b;
-  border: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  color: var(--text-muted);
-}
-
-/* --- 2. Panel Lista de Chat --- */
-.chat-list-panel {
-  width: 320px;
-  background-color: var(--bg-sidebar);
-  border-right: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  z-index: 10;
-}
-
-.chat-list-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.header-row h2 {
-  margin: 0;
-  font-size: 18px;
-  color: #fff;
-}
-
-.badge {
-  font-size: 10px;
-  background-color: rgba(255,255,255,0.1);
-  padding: 2px 8px;
-  border-radius: 99px;
-  color: var(--text-muted);
-}
-
-.search-box {
-  position: relative;
-}
-
-.search-icon {
-  position: absolute;
-  left: 12px;
-  top: 10px;
-  color: var(--text-muted);
-}
-
-.search-box input {
-  width: 100%;
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 10px 10px 10px 36px;
-  color: #fff;
-  outline: none;
-  font-size: 14px;
-  transition: border-color 0.2s;
-}
-
-.search-box input:focus {
-  border-color: var(--primary-green);
-}
-
-.chat-list-items {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.chat-item {
-  width: 100%;
-  background: transparent;
-  border: 1px solid transparent;
-  padding: 12px;
-  margin-bottom: 4px;
-  border-radius: 12px;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.chat-item:hover {
-  background-color: rgba(255,255,255,0.03);
-}
-
-.chat-item.selected {
-  background-color: var(--primary-green-dim);
-  border-color: rgba(46, 204, 113, 0.2);
-}
-
-.chat-item-top {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.chat-phone {
-  font-weight: bold;
-  font-size: 14px;
-  color: #fff;
-}
-
-.chat-date {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.chat-tags {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.pill {
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 99px;
-  border: 1px solid transparent;
-  font-weight: bold;
-}
-
-.pill-bot {
-  background-color: var(--primary-green-dim);
-  color: var(--primary-green);
-  border-color: rgba(46, 204, 113, 0.2);
-}
-
-.pill-human {
-  background-color: var(--danger-dim);
-  color: #e74c3c;
-  border-color: rgba(231, 76, 60, 0.2);
-}
-
-.chat-preview {
-  font-size: 12px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin: 0;
-  opacity: 0.8;
-}
-
-/* --- 3. Ventana de Chat --- */
-.chat-window {
-  flex: 1;
-  background-color: var(--bg-dark);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  min-width: 0;
-}
-
-.chat-header {
-  height: 64px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background-color: var(--bg-dark);
-}
-
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.avatar-circle {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #2ecc71, #16a085);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 12px;
-  color: #fff;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-}
-
-.chat-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: bold;
-  color: #fff;
-}
-
-.chat-subtitle {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.takeover-btn {
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
-  background-color: rgba(46, 204, 113, 0.1);
-  color: var(--primary-green);
-  font-size: 12px;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.2s;
-}
-
-.takeover-btn.active {
-  background-color: var(--danger-dim);
-  color: var(--danger);
-  border-color: rgba(231, 76, 60, 0.2);
-}
-
-/* Mensajes */
-.messages-area {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.message-row {
-  display: flex;
-  flex-direction: column;
-  max-width: 70%;
-}
-
-.message-row.in {
-  align-items: flex-start;
-  align-self: flex-start;
-}
-
-.message-row.out {
-  align-items: flex-end;
-  align-self: flex-end;
-}
-
-.message-bubble {
-  padding: 14px;
-  border-radius: 16px;
-  font-size: 14px;
-  line-height: 1.5;
-  position: relative;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-}
-
-.message-bubble.in {
-  background-color: rgba(255,255,255,0.1);
-  color: var(--text-main);
-  border-bottom-left-radius: 2px;
-  border: 1px solid rgba(255,255,255,0.05);
-}
-
-.message-bubble.out {
-  background-color: rgba(46, 204, 113, 0.2);
-  color: #fff;
-  border-bottom-right-radius: 2px;
-  border: 1px solid rgba(46, 204, 113, 0.2);
-}
-
-.msg-image-container {
-  margin-bottom: 12px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(0,0,0,0.2);
-}
-
-.msg-image-container img {
-  max-width: 220px;
-  max-height: 220px;
-  object-fit: contain;
-  border-radius: 12px;
-}
-
-.msg-text {
-  white-space: pre-wrap;
-}
-
-.msg-actions {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255,255,255,0.1);
-}
-
-.btn-action {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px;
-  background-color: #1e293b;
-  border: 1px solid #475569;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.btn-action:hover {
-  background-color: #0f172a;
-}
-
-.msg-meta {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 0 4px;
-  opacity: 0.6;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* Composer */
-.composer-area {
-  padding: 16px;
-  background-color: var(--bg-sidebar);
-  border-top: 1px solid var(--border-color);
-}
-
-.composer-input-wrapper {
-  display: flex;
-  gap: 12px;
-  background-color: var(--bg-dark);
-  padding: 4px;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-}
-
-.composer-input-wrapper:focus-within {
-  border-color: var(--primary-green);
-  background-color: rgba(255,255,255,0.02);
-}
-
-.composer-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  padding: 12px;
-  color: #fff;
-  outline: none;
-  font-size: 14px;
-}
-
-.btn-send {
-  background-color: var(--primary-green);
-  color: #0b1217;
-  border: none;
-  border-radius: 10px;
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform 0.1s;
-}
-
-.btn-send:active { transform: scale(0.95); }
-.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
-
-/* --- 4. Panel CRM (Derecha) --- */
-.crm-panel {
-  width: 380px;
-  background-color: var(--bg-sidebar);
-  border-left: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  z-index: 10;
-}
-
-.crm-header {
-  padding: 24px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.crm-header h3 {
-  margin: 0;
-  font-size: 18px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #fff;
-}
-
-.icon-green { color: var(--primary-green); display: flex; }
-
-.crm-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-}
-
-.crm-card-info {
-  background-color: rgba(255,255,255,0.03);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 24px;
-}
-
-.crm-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-.crm-row:last-child { margin-bottom: 0; }
-
-.crm-label { color: var(--text-muted); }
-.crm-value.mono { font-family: monospace; font-weight: bold; color: #fff; }
-
-.form-group-row {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.form-group {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 16px;
-}
-
-.form-group label {
-  font-size: 12px;
-  font-weight: bold;
-  color: var(--text-muted);
-}
-
-.flex-label { display: flex; align-items: center; gap: 6px; }
-
-.form-group input, .form-group select {
-  background-color: var(--bg-dark);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 10px;
-  color: #fff;
-  outline: none;
-  font-size: 14px;
-  transition: border-color 0.2s;
-}
-
-.form-group input:focus, .form-group textarea:focus, .form-group select:focus {
-  border-color: var(--primary-green);
-}
-
-.notes-area {
-  min-height: 140px;
-  resize: none;
-  background-color: var(--bg-dark);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 12px;
-  color: #fff;
-  outline: none;
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.separator {
-  height: 1px;
-  background-color: var(--border-color);
-  margin: 16px 0 24px 0;
-}
-
-.crm-footer {
-  padding: 24px;
-  background-color: var(--bg-sidebar);
-  border-top: 1px solid var(--border-color);
-}
-
-.btn-save {
-  width: 100%;
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  background-color: rgba(255,255,255,0.05);
-  color: var(--text-muted);
-  font-weight: bold;
-  cursor: not-allowed;
-  transition: all 0.2s;
-}
-
-.btn-save.dirty {
-  background-color: rgba(52, 152, 219, 0.15);
-  color: #3498db;
-  border-color: rgba(52, 152, 219, 0.3);
-  cursor: pointer;
-}
-
-.btn-save.dirty:hover {
-  background-color: rgba(52, 152, 219, 0.25);
-}
-
-.status-msg {
-  text-align: center;
-  font-size: 12px;
-  margin-top: 12px;
-  color: var(--primary-green);
-}
-
-/* --- Attachments UI (clip + menu + modal + preview chip) --- */
-.btn-attach {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.btn-attach:hover { background: rgba(255,255,255,0.06); color: #fff; }
-
-.attach-menu {
-  position: absolute;
-  bottom: 74px;
-  left: 16px;
-  background: #0b1217;
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  padding: 8px;
-  width: 220px;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
-  z-index: 50;
-}
-.attach-menu button {
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: #fff;
-  padding: 10px 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.attach-menu button:hover { background: rgba(255,255,255,0.06); }
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-}
-.modal {
-  width: min(720px, 100%);
-  background: #0b1217;
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
-  overflow: hidden;
-}
-.modal-header {
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.modal-header h4 { margin: 0; font-size: 14px; color: #fff; }
-.modal-close {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  cursor: pointer;
-}
-.modal-body { padding: 16px 18px; }
-.modal-search {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-.modal-search input {
-  flex: 1;
-  background: var(--bg-dark);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 10px 12px;
-  color: #fff;
-  outline: none;
-}
-.product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-.product-card {
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  padding: 12px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.product-card img {
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
-  object-fit: cover;
-  background: rgba(0,0,0,0.2);
-}
-.product-card h5 { margin: 0; font-size: 13px; color: #fff; }
-.product-card p { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
-.product-card .pc-actions { margin-left: auto; }
-.product-card .pc-actions button {
-  background: rgba(46,204,113,0.15);
-  border: 1px solid rgba(46,204,113,0.25);
-  color: var(--primary-green);
-  padding: 8px 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-weight: bold;
-  font-size: 12px;
-}
-.product-card .pc-actions button:hover { background: rgba(46,204,113,0.25); }
-
-.attach-preview {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  margin: 10px 0 0;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-}
-.attach-preview img {
-  width: 54px;
-  height: 54px;
-  border-radius: 12px;
-  object-fit: cover;
-  background: rgba(0,0,0,0.2);
-}
-.attach-preview .ap-meta { flex: 1; min-width: 0; }
-.attach-preview .ap-title {
-  font-size: 12px;
-  font-weight: 800;
-  color: #fff;
-  margin: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.attach-preview .ap-sub {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 3px 0 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.attach-preview .ap-remove {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-}
-.attach-preview .ap-remove:hover { color: #fff; }
-
-
-/* Scrollbars */
-.custom-scrollbar::-webkit-scrollbar { width: 6px; }
-.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-.spacer { height: 1px; }
-.placeholder-view { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); }
-`;
 
 // --- CONFIGURACIÓN ---
 const API_BASE = import.meta.env.VITE_API_BASE || "https://backend.perfumesverane.com";
-window.__API_BASE__ = API_BASE;
-<div style={{fontSize: 12, opacity: 0.7}}>
-  API_BASE: {API_BASE}
-</div>
-
-
 
 // --- ICONOS SVG (Nativos) ---
 const IconMessage = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
@@ -902,7 +100,7 @@ const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
           >
             <div className="chat-item-top">
               <span className="chat-phone">{c.phone}</span>
-              <span className="chat-date">{fmtDateTime(c.created_at).split(',')[0]}</span>
+              <span className="chat-date">{fmtDateTime(c.updated_at).split(',')[0]}</span>
             </div>
 
             <div className="chat-tags">
@@ -912,7 +110,7 @@ const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
             </div>
 
             <p className="chat-preview">
-              {c.text}
+              {c.text || ""}
             </p>
           </button>
         ))}
@@ -988,16 +186,16 @@ const CustomerCardCRM = ({ phone, takeover }) => {
 
       <div className="crm-content custom-scrollbar">
         <div className="crm-card-info">
-            <div className="crm-row">
-                <span className="crm-label">Teléfono</span>
-                <span className="crm-value mono">{phone}</span>
-            </div>
-            <div className="crm-row">
-                <span className="crm-label">Modo</span>
-                <span className={`pill ${takeover ? "pill-human" : "pill-bot"}`}>
-                    {takeover ? "Humano" : "Bot"}
-                </span>
-            </div>
+          <div className="crm-row">
+            <span className="crm-label">Teléfono</span>
+            <span className="crm-value mono">{phone}</span>
+          </div>
+          <div className="crm-row">
+            <span className="crm-label">Modo</span>
+            <span className={`pill ${takeover ? "pill-human" : "pill-bot"}`}>
+              {takeover ? "Humano" : "Bot"}
+            </span>
+          </div>
         </div>
 
         <div className="form-group-row">
@@ -1012,9 +210,9 @@ const CustomerCardCRM = ({ phone, takeover }) => {
           <div className="form-group">
             <label>Apellido</label>
             <input
-               value={form.last_name}
-               onChange={e => handleChange('last_name', e.target.value)}
-               placeholder="Ej: Pérez"
+              value={form.last_name}
+              onChange={e => handleChange('last_name', e.target.value)}
+              placeholder="Ej: Pérez"
             />
           </div>
         </div>
@@ -1023,8 +221,8 @@ const CustomerCardCRM = ({ phone, takeover }) => {
           <div className="form-group">
             <label>Ciudad</label>
             <input
-                value={form.city}
-                onChange={e => handleChange('city', e.target.value)}
+              value={form.city}
+              onChange={e => handleChange('city', e.target.value)}
             />
           </div>
           <div className="form-group">
@@ -1045,25 +243,25 @@ const CustomerCardCRM = ({ phone, takeover }) => {
         <div className="form-group">
           <label>Intereses</label>
           <input
-              value={form.interests}
-              onChange={e => handleChange('interests', e.target.value)}
-              placeholder="dulces, frescos..."
+            value={form.interests}
+            onChange={e => handleChange('interests', e.target.value)}
+            placeholder="dulces, frescos..."
           />
         </div>
 
         <div className="form-group">
           <label className="flex-label"><IconTag /> Etiquetas</label>
           <input
-              value={form.tags}
-              onChange={e => handleChange('tags', e.target.value)}
-              placeholder="Separadas por comas..."
+            value={form.tags}
+            onChange={e => handleChange('tags', e.target.value)}
+            placeholder="Separadas por comas..."
           />
         </div>
 
         <div className="separator" />
 
         <div className="form-group">
-           <label className="flex-label"><IconBag /> Notas Internas</label>
+          <label className="flex-label"><IconBag /> Notas Internas</label>
           <textarea
             className="notes-area"
             value={form.notes}
@@ -1095,21 +293,17 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
-  // Attach UI
+
+  // Attachments
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [showProductModal, setShowProductModal] = useState(false);
-
-  // attachment seleccionado (uno a la vez para mantenerlo simple)
   const [attachment, setAttachment] = useState(null);
-  /*
-  attachment ejemplos:
-  { kind:"media", msg_type:"image|video|document", media_url:"https://...", media_caption:"" }
-  { kind:"product", msg_type:"product", text:"...", featured_image:"...", real_image:"...", permalink:"..." }
-  */
 
-  // búsqueda de productos (por ahora local; luego lo conectamos a Woo)
+  const fileInputRef = useRef(null);
+  const [filePickKind, setFilePickKind] = useState("image"); // image|video|audio|document
+
+  // Productos (demo)
+  const [showProductModal, setShowProductModal] = useState(false);
   const [prodQ, setProdQ] = useState("");
-
 
   const bottomRef = useRef(null);
 
@@ -1119,7 +313,6 @@ export default function App() {
       const data = await r.json();
       const list = data.conversations || [];
       setConversations(list);
-      if (!selectedPhone && list.length > 0) { /* Opcional: setSelectedPhone(list[0].phone); */ }
     } catch (e) { console.error("Error cargando conversaciones", e); }
   };
 
@@ -1132,68 +325,63 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-     const sendMessage = async () => {
-  if (!selectedPhone) return;
+  const sendMessage = async () => {
+    if (!selectedPhone) return;
 
-  const hasText = !!text.trim();
-  const hasAttachment = !!attachment;
+    const hasText = !!text.trim();
+    const hasAttachment = !!attachment;
 
-  if (!hasText && !hasAttachment) return;
+    if (!hasText && !hasAttachment) return;
 
-  // Payload base
-  let payload = {
-    phone: selectedPhone,
-    direction: "out",
-    msg_type: "text",
-    text: text.trim()
-  };
+    let payload = {
+      phone: selectedPhone,
+      direction: "out",
+      msg_type: "text",
+      text: text.trim()
+    };
 
-  // Si hay attachment, cambia payload según tipo
-  if (hasAttachment) {
-    if (attachment.kind === "media") {
+    if (hasAttachment && attachment.kind === "media") {
       payload = {
         phone: selectedPhone,
         direction: "out",
-        msg_type: attachment.msg_type,     // image|video|document
-        text: "",                          // dejamos vacío
-        media_url: attachment.media_url,
-        media_caption: (attachment.media_caption || text.trim() || "")
+        msg_type: attachment.msg_type,       // image|video|audio|document
+        text: "",
+        media_id: attachment.media_id,       // ✅ CLAVE
+        media_caption: text.trim() || ""
       };
     }
 
-    if (attachment.kind === "product") {
+    if (hasAttachment && attachment.kind === "product") {
       payload = {
         phone: selectedPhone,
         direction: "out",
         msg_type: "product",
-        text: attachment.text || text.trim() || "",
-        featured_image: attachment.featured_image,
-        real_image: attachment.real_image,
-        permalink: attachment.permalink
+        text: attachment.text || "",
+        featured_image: attachment.featured_image || null,
+        real_image: attachment.real_image || null,
+        permalink: attachment.permalink || null,
       };
     }
-  }
 
-  try {
-    const r = await fetch(`${API_BASE}/api/messages/ingest`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const r = await fetch(`${API_BASE}/api/messages/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!r.ok) throw new Error("No se pudo enviar/guardar el mensaje");
+      if (!r.ok) throw new Error("No se pudo enviar/guardar el mensaje");
 
-    await loadMessages(selectedPhone);
-    setText("");
-    setAttachment(null);
-    setShowAttachMenu(false);
-    loadConversations();
-  } catch (e) {
-    console.error(e);
-  }
-};
-
-
+      await loadMessages(selectedPhone);
+      setText("");
+      setAttachment(null);
+      setShowAttachMenu(false);
+      loadConversations();
+    } catch (e) {
+      console.error(e);
+      alert("Error enviando mensaje");
+    }
+  };
 
   const toggleTakeover = async () => {
     if (!selectedPhone) return;
@@ -1225,40 +413,40 @@ export default function App() {
   }, [messages.length]);
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
-  const demoProducts = useMemo(() => ([
-  {
-    id: 1,
-    name: "Art of Universe",
-    price: "$185.000",
-    featured_image: "https://picsum.photos/seed/artofuniverse/600/400",
-    real_image: "https://picsum.photos/seed/artofuniverse-real/900/700",
-    permalink: "https://app.perfumesverane.com/producto/art-of-universe"
-  },
-  {
-    id: 2,
-    name: "Lattafa Asad Elixir",
-    price: "$135.000",
-    featured_image: "https://picsum.photos/seed/asadelixir/600/400",
-    real_image: "https://picsum.photos/seed/asadelixir-real/900/700",
-    permalink: "https://app.perfumesverane.com/producto/lattafa-asad-elixir"
-  }
-]).filter(p => (p.name || "").toLowerCase().includes((prodQ || "").toLowerCase())), [prodQ]);
 
+  const demoProducts = useMemo(() => ([
+    {
+      id: 1,
+      name: "Art of Universe",
+      price: "$185.000",
+      featured_image: "https://picsum.photos/seed/artofuniverse/600/400",
+      real_image: "https://picsum.photos/seed/artofuniverse-real/900/700",
+      permalink: "https://app.perfumesverane.com/producto/art-of-universe"
+    },
+    {
+      id: 2,
+      name: "Lattafa Asad Elixir",
+      price: "$135.000",
+      featured_image: "https://picsum.photos/seed/asadelixir/600/400",
+      real_image: "https://picsum.photos/seed/asadelixir-real/900/700",
+      permalink: "https://app.perfumesverane.com/producto/lattafa-asad-elixir"
+    }
+  ]).filter(p => (p.name || "").toLowerCase().includes((prodQ || "").toLowerCase())), [prodQ]);
 
   return (
     <div className="app-layout">
-        {/* Inyectamos los estilos CSS directamente */}
-        <style>{styles}</style>
+      <style>{styles}</style>
+
       <MainNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
       {activeTab === 'inbox' ? (
         <>
           <ChatList
-             conversations={conversations}
-             selectedPhone={selectedPhone}
-             onSelect={setSelectedPhone}
-             q={q}
-             setQ={setQ}
+            conversations={conversations}
+            selectedPhone={selectedPhone}
+            onSelect={setSelectedPhone}
+            q={q}
+            setQ={setQ}
           />
 
           <div className="chat-window">
@@ -1272,7 +460,7 @@ export default function App() {
                     <div>
                       <h3 className="chat-title">{selectedPhone}</h3>
                       <div className="chat-subtitle">
-                        {selectedConversation?.created_at ? `Último: ${fmtDateTime(selectedConversation.created_at)}` : ''}
+                        {selectedConversation?.updated_at ? `Último: ${fmtDateTime(selectedConversation.updated_at)}` : ''}
                       </div>
                     </div>
                   </>
@@ -1302,7 +490,7 @@ export default function App() {
                           alt=""
                           style={{
                             width: "100%",
-                            maxWidth: "360px",     // <-- controla el tamaño en el bubble
+                            maxWidth: "360px",
                             maxHeight: "280px",
                             objectFit: "contain",
                             borderRadius: "14px",
@@ -1313,172 +501,190 @@ export default function App() {
                       </div>
                     )}
 
-
                     <div className="msg-text">{m.text}</div>
 
                     {m.real_image && m.real_image !== m.featured_image && (
                       <div className="msg-actions">
-                          <button
-                            onClick={() => window.open(m.real_image, '_blank')}
-                            className="btn-action"
-                          >
-                            <IconImage /> Ver foto real
-                          </button>
+                        <button
+                          onClick={() => window.open(m.real_image, '_blank')}
+                          className="btn-action"
+                        >
+                          <IconImage /> Ver foto real
+                        </button>
                       </div>
                     )}
                   </div>
 
                   <div className="msg-meta">
-                      <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
-                      <span>•</span>
-                      <span>{fmtDateTime(m.created_at)}</span>
+                    <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
+                    <span>•</span>
+                    <span>{fmtDateTime(m.created_at)}</span>
                   </div>
                 </div>
               ))}
               <div ref={bottomRef} className="spacer" />
             </div>
 
+            {/* COMPOSER */}
             <div className="composer-area" style={{ position: "relative" }}>
-  {/* Menú de adjuntos */}
-  {showAttachMenu && (
-    <div className="attach-menu">
-      <button onClick={() => {
-        const url = prompt("Pega la URL pública de la IMAGEN (https):");
-        if (url) setAttachment({ kind: "media", msg_type: "image", media_url: url, media_caption: "" });
-        setShowAttachMenu(false);
-      }}>
-        <IconImage /> Imagen (URL)
-      </button>
 
-      <button onClick={() => {
-        const url = prompt("Pega la URL pública del VIDEO (https):");
-        if (url) setAttachment({ kind: "media", msg_type: "video", media_url: url, media_caption: "" });
-        setShowAttachMenu(false);
-      }}>
-        🎥 Video (URL)
-      </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f || !selectedPhone) return;
 
-      <button onClick={() => {
-        const url = prompt("Pega la URL pública del DOCUMENTO (https):");
-        if (url) setAttachment({ kind: "media", msg_type: "document", media_url: url, media_caption: "" });
-        setShowAttachMenu(false);
-      }}>
-        📄 Documento (URL)
-      </button>
+                  try {
+                    const fd = new FormData();
+                    fd.append("file", f);
+                    fd.append("kind", filePickKind);
 
-      <button onClick={() => {
-        setShowProductModal(true);
-        setShowAttachMenu(false);
-      }}>
-        🛍️ Producto (Catálogo)
-      </button>
-    </div>
-  )}
-
-  {/* Modal productos */}
-  {showProductModal && (
-    <div className="modal-backdrop" onClick={() => setShowProductModal(false)}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h4>Adjuntar producto</h4>
-          <button className="modal-close" onClick={() => setShowProductModal(false)}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="modal-search">
-            <input
-              placeholder="Buscar perfume..."
-              value={prodQ}
-              onChange={(e) => setProdQ(e.target.value)}
-              autoFocus
-            />
-          </div>
-
-          <div className="product-grid">
-            {demoProducts.map(p => (
-              <div key={p.id} className="product-card">
-                <img src={p.featured_image} alt="" />
-                <div>
-                  <h5>{p.name}</h5>
-                  <p>{p.price}</p>
-                </div>
-                <div className="pc-actions">
-                  <button onClick={() => {
-                    // Texto “tipo IA” base (luego lo reemplazamos por el resumen real del backend/woo)
-                    const baseText = `**${p.name}**: Disponible. Precio ${p.price}. ✨ ¿Te gusta más dulce, fresco o amaderado?`;
-
-                    setAttachment({
-                      kind: "product",
-                      msg_type: "product",
-                      text: baseText.replace(/\*\*/g, ""), // tu UI no renderiza markdown
-                      featured_image: p.featured_image,
-                      real_image: p.real_image,
-                      permalink: p.permalink
+                    const r = await fetch(`${API_BASE}/api/media/upload`, {
+                      method: "POST",
+                      body: fd
                     });
 
-                    setShowProductModal(false);
-                    setProdQ("");
-                  }}>
-                    Adjuntar
+                    if (!r.ok) throw new Error("upload failed");
+                    const data = await r.json();
+
+                    setAttachment({
+                      kind: "media",
+                      msg_type: filePickKind,
+                      media_id: data.media_id,
+                      filename: data.filename,
+                      mime_type: data.mime_type,
+                    });
+
+                  } catch (err) {
+                    console.error(err);
+                    alert("Error subiendo el archivo");
+                  } finally {
+                    e.target.value = "";
+                  }
+                }}
+              />
+
+              {showAttachMenu && (
+                <div className="attach-menu">
+                  <button onClick={() => { setFilePickKind("image"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
+                    <IconImage /> Imagen
+                  </button>
+                  <button onClick={() => { setFilePickKind("video"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
+                    🎥 Video
+                  </button>
+                  <button onClick={() => { setFilePickKind("document"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
+                    📄 Documento
+                  </button>
+                  <button onClick={() => { setFilePickKind("audio"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
+                    🎙️ Audio
+                  </button>
+                  <button onClick={() => { setShowProductModal(true); setShowAttachMenu(false); }}>
+                    🛍️ Producto (Catálogo)
                   </button>
                 </div>
+              )}
+
+              <div className="composer-input-wrapper">
+                <button
+                  className="btn-attach"
+                  onClick={() => setShowAttachMenu(v => !v)}
+                  disabled={!selectedPhone}
+                  title="Adjuntar"
+                >
+                  <IconPaperclip />
+                </button>
+
+                <input
+                  className="composer-input"
+                  placeholder="Escribe un mensaje..."
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                  disabled={!selectedPhone}
+                />
+
+                <button
+                  onClick={sendMessage}
+                  disabled={!text.trim() && !attachment}
+                  className="btn-send"
+                >
+                  <IconSend />
+                </button>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )}
 
-  <div className="composer-input-wrapper">
-    <button
-      className="btn-attach"
-      onClick={() => setShowAttachMenu(v => !v)}
-      disabled={!selectedPhone}
-      title="Adjuntar"
-    >
-      <IconPaperclip />
-    </button>
+              {attachment && (
+                <div className="attach-preview">
+                  <div className="ap-meta">
+                    <p className="ap-title">
+                      {attachment.kind === "product" ? "Producto adjunto ✅" : "Archivo adjunto ✅"}
+                    </p>
+                    <p className="ap-sub">
+                      {attachment.kind === "product"
+                        ? (attachment.permalink || "")
+                        : (attachment.filename || attachment.mime_type || attachment.media_id)
+                      }
+                    </p>
+                  </div>
+                  <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">✕</button>
+                </div>
+              )}
+            </div>
 
-    <input
-      className="composer-input"
-      placeholder="Escribe un mensaje..."
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-      disabled={!selectedPhone}
-    />
+            {/* MODAL PRODUCTOS */}
+            {showProductModal && (
+              <div className="modal-backdrop" onClick={() => setShowProductModal(false)}>
+                <div className="modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h4>Adjuntar producto</h4>
+                    <button className="modal-close" onClick={() => setShowProductModal(false)}>✕</button>
+                  </div>
+                  <div className="modal-body">
+                    <div className="modal-search">
+                      <input
+                        placeholder="Buscar perfume..."
+                        value={prodQ}
+                        onChange={(e) => setProdQ(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
 
-    <button
-      onClick={sendMessage}
-      disabled={!text.trim() && !attachment}
-      className="btn-send"
-    >
-      <IconSend />
-    </button>
-  </div>
+                    <div className="product-grid">
+                      {demoProducts.map(p => (
+                        <div key={p.id} className="product-card">
+                          <img src={p.featured_image} alt="" />
+                          <div>
+                            <h5>{p.name}</h5>
+                            <p>{p.price}</p>
+                          </div>
+                          <div className="pc-actions">
+                            <button onClick={() => {
+                              const baseText = `${p.name}: Disponible. Precio ${p.price}. ✨ ¿Te gusta más dulce, fresco o amaderado?`;
 
-  {/* Preview del adjunto antes de enviar */}
-  {attachment && (
-    <div className="attach-preview">
-      <img
-        src={attachment.featured_image || attachment.media_url}
-        alt=""
-      />
-      <div className="ap-meta">
-        <p className="ap-title">
-          {attachment.kind === "product" ? "Producto adjunto" : "Archivo adjunto"}
-        </p>
-        <p className="ap-sub">
-          {attachment.kind === "product"
-            ? (attachment.permalink || "")
-            : (attachment.media_url || "")
-          }
-        </p>
-      </div>
-      <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">✕</button>
-    </div>
-  )}
-</div>
+                              setAttachment({
+                                kind: "product",
+                                msg_type: "product",
+                                text: baseText,
+                                featured_image: p.featured_image,
+                                real_image: p.real_image,
+                                permalink: p.permalink
+                              });
+
+                              setShowProductModal(false);
+                              setProdQ("");
+                            }}>
+                              Adjuntar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
 
@@ -1489,7 +695,7 @@ export default function App() {
         </>
       ) : (
         <div className="placeholder-view">
-           Módulo en construcción
+          Módulo en construcción
         </div>
       )}
     </div>

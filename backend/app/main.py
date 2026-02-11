@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from typing import Optional
 from app.routes.whatsapp import send_whatsapp_text
+from fastapi import UploadFile, File, Form
 
 
 import requests
@@ -84,6 +85,17 @@ class IngestMessage(BaseModel):
     phone: str
     direction: str
     msg_type: str = "text"  # text | image | video | document | product
+    phone: str
+    direction: str
+    msg_type: str = "text"
+    text: str = ""
+    media_url: Optional[str] = None
+    media_caption: Optional[str] = None
+    featured_image: Optional[str] = None
+    real_image: Optional[str] = None
+    permalink: Optional[str] = None
+    media_id: Optional[str] = None
+
 
     # texto normal (o caption / descripción del producto)
     text: str = ""
@@ -174,6 +186,32 @@ def save_message(
 def health():
     return {"ok": True}
 
+@app.post("/api/media/upload")
+async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
+    """
+    Recibe archivo desde el frontend (PC local), lo sube a WhatsApp y devuelve media_id.
+    kind: image | video | audio | document
+    """
+    kind = (kind or "image").lower().strip()
+
+    if kind not in ("image", "video", "audio", "document"):
+        raise HTTPException(status_code=400, detail="Invalid kind")
+
+    content = await file.read()
+    mime = file.content_type or "application/octet-stream"
+
+    from app.routes.whatsapp import upload_whatsapp_media
+    media_id = await upload_whatsapp_media(content, mime)
+
+    return {
+        "ok": True,
+        "media_id": media_id,
+        "mime_type": mime,
+        "filename": file.filename,
+        "kind": kind
+    }
+
+
 @app.get("/api/conversations")
 def get_conversations():
     with engine.begin() as conn:
@@ -223,22 +261,25 @@ async def ingest(msg: IngestMessage):
             permalink=msg.permalink,
         )
 
-    # Si es salida, enviar a WhatsApp según tipo
+    # --- ENVIAR A WHATSAPP SOLO SI ES OUT ---
     if direction == "out":
-        if msg_type in ("image", "video", "document"):
-            from app.routes.whatsapp import send_whatsapp_media
-            return await send_whatsapp_media(
+        # ✅ Adjuntos reales (imagen/video/audio/document) usando media_id
+        if msg_type in ("image", "video", "audio", "document"):
+            if not msg.media_id:
+                return {"saved": True, "sent": False, "reason": "media_id is required for media messages"}
+
+            from app.routes.whatsapp import send_whatsapp_media_id
+            return await send_whatsapp_media_id(
                 to_phone=msg.phone,
                 media_type=msg_type,
-                media_url=msg.media_url or "",
+                media_id=msg.media_id,
                 caption=msg.media_caption or msg.text or ""
             )
 
+        # ✅ Producto (por ahora texto con links; luego lo mejoramos a imagen adjunta + texto)
         if msg_type == "product":
-            # MVP: mandamos texto + links (simple y efectivo)
             body = (msg.text or "").strip()
 
-            # agregamos links útiles (si existen)
             extra_lines = []
             if msg.permalink:
                 extra_lines.append(f"🛒 Ver producto: {msg.permalink}")
@@ -250,10 +291,11 @@ async def ingest(msg: IngestMessage):
 
             return await send_whatsapp_text(msg.phone, body)
 
-        # default: text
+        # ✅ Texto normal
         return await send_whatsapp_text(msg.phone, msg.text or "")
 
     return {"saved": True}
+
 
 
 

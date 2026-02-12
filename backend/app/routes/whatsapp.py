@@ -243,6 +243,9 @@ def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str, media
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
+    print("✅ WEBHOOK HIT:", raw[:200])
+    print("HEADERS:", dict(request.headers))
+
 
     # 1) ACK rápido + forward en background
     asyncio.create_task(_forward_to_targets(raw))

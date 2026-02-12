@@ -13,17 +13,7 @@ from sqlalchemy import create_engine, text
 from app.routes.whatsapp import router as whatsapp_router
 from app.routes.whatsapp import send_whatsapp_text
 
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):
-    # Esto hace que SIEMPRE veas el error real en Network -> Response
-    return JSONResponse(
-        status_code=500,
-        content={
-            "ok": False,
-            "error": str(exc),
-            "path": str(request.url.path),
-        },
-    )
+
 
 # =========================================================
 # APP
@@ -41,7 +31,16 @@ app.add_middleware(
 
 from fastapi.responses import JSONResponse
 from starlette.requests import Request as StarletteRequest
-
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "ok": False,
+            "error": str(exc),
+            "path": str(request.url.path),
+        },
+    )
 
 
 app.include_router(whatsapp_router)

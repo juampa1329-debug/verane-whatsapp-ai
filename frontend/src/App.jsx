@@ -432,11 +432,16 @@ export default function App() {
       payload = {
         phone: selectedPhone,
         direction: "out",
-        msg_type: attachment.msg_type,       // image|video|audio|document
+        msg_type: attachment.msg_type,   // image|video|audio|document
         text: "",
-        media_id: attachment.media_id,       // ✅ CLAVE
-        media_caption: text.trim() || ""
+        media_id: attachment.media_id,
+        media_caption: text.trim() || "",
+        mime_type: attachment.mime_type || null,
+        file_name: attachment.filename || null,
+        file_size: attachment.file_size || null,
+        duration_sec: attachment.duration_sec || null,
       };
+
     }
 
     if (hasAttachment && attachment.kind === "product") {
@@ -524,6 +529,8 @@ const startRecording = async () => {
           media_id: data.media_id,
           filename: data.filename || file.name,
           mime_type: data.mime_type || blob.type,
+          duration_sec: recordSeconds || null,
+          file_size: file.size || null,
         });
       } catch (err) {
         console.error(err);
@@ -668,6 +675,80 @@ const stopRecording = async () => {
                       </div>
                     )}
 
+                    {/* ✅ PREVIEW: Imagen real enviada por media_id */}
+                    {m.msg_type === "image" && m.media_id && (
+                      <div className="msg-image-container">
+                        <img
+                          src={mediaProxyUrl(m.media_id)}
+                          alt={m.file_name || ""}
+                          style={{
+                            width: "100%",
+                            maxWidth: "360px",
+                            maxHeight: "280px",
+                            objectFit: "contain",
+                            borderRadius: "14px",
+                            display: "block",
+                            marginTop: "10px",
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {/* ✅ PREVIEW: Video */}
+                    {m.msg_type === "video" && m.media_id && (
+                      <div style={{ marginTop: 10 }}>
+                        <video
+                          controls
+                          preload="metadata"
+                          style={{ width: "100%", maxWidth: 360, borderRadius: 14 }}
+                          src={mediaProxyUrl(m.media_id)}
+                        />
+                      </div>
+                    )}
+
+                    {/* ✅ PREVIEW: Audio */}
+                    {m.msg_type === "audio" && m.media_id && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+                          🎵 {m.file_name || "audio"} {m.duration_sec ? `• ${formatDur(m.duration_sec)}` : ""} {m.file_size ? `• ${formatBytes(m.file_size)}` : ""}
+                        </div>
+                        <audio controls preload="metadata" style={{ width: 280 }} src={mediaProxyUrl(m.media_id)} />
+                      </div>
+                    )}
+
+                    {/* ✅ PREVIEW: Documento */}
+                    {m.msg_type === "document" && m.media_id && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 6 }}>
+                          📄 {m.file_name || "documento"} {m.file_size ? `• ${formatBytes(m.file_size)}` : ""}
+                        </div>
+                        <a
+                          href={mediaProxyUrl(m.media_id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn-action"
+                          style={{ display: "inline-flex", gap: 8, alignItems: "center" }}
+                        >
+                          Descargar / Ver
+                        </a>
+                      </div>
+                    )}
+
+                    {/* ✅ Texto / caption */}
+                    <div className="msg-text">{m.text || m.media_caption || ""}</div>
+
+                    {/* ✅ Foto real (productos) */}
+                    {m.real_image && m.real_image !== m.featured_image && (
+                      <div className="msg-actions">
+                        <button
+                          onClick={() => window.open(m.real_image, '_blank')}
+                          className="btn-action"
+                        >
+                          <IconImage /> Ver foto real
+                        </button>
+                      </div>
+                    )}
+
                     <div className="msg-text">{m.text || m.media_caption || ""}</div>
 
 
@@ -727,7 +808,10 @@ const stopRecording = async () => {
                       media_id: data.media_id,
                       filename: data.filename,
                       mime_type: data.mime_type,
+                      file_size: f.size || null,
+                      duration_sec: null,
                     });
+
 
                   } catch (err) {
                     console.error(err);

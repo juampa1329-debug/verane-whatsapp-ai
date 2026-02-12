@@ -287,3 +287,37 @@ async def whatsapp_receive(request: Request):
         pass
 
     return {"ok": True}
+
+from fastapi.responses import StreamingResponse
+
+@router.get("/api/media/proxy/{media_id}")
+async def proxy_media(media_id: str):
+    """
+    Devuelve el binario del media_id usando Graph API.
+    Sirve para previsualizar audio/video/imagen/documento en el dashboard.
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_GRAPH_VERSION):
+        raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN not configured")
+
+    # 1) Obtener URL temporal del media
+    meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r_meta = await client.get(meta_url, headers=headers)
+        if r_meta.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Graph meta failed: {r_meta.status_code} {r_meta.text}")
+
+        meta = r_meta.json()
+        dl_url = meta.get("url")
+        ct = meta.get("mime_type") or "application/octet-stream"
+        if not dl_url:
+            raise HTTPException(status_code=502, detail=f"No url in meta: {meta}")
+
+        # 2) Descargar el binario y streamearlo al frontend
+        r_bin = await client.get(dl_url, headers=headers)
+        if r_bin.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text}")
+
+        return StreamingResponse(iter([r_bin.content]), media_type=ct)
+

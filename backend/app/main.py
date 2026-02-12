@@ -73,7 +73,16 @@ def ensure_schema():
                 permalink TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
+                          
+                          
         """))
+                # ✅ Asegurar columnas nuevas (no rompe si ya existen)
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_id TEXT"""))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS mime_type TEXT"""))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT"""))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER"""))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS duration_sec INTEGER"""))
+
 
 ensure_schema()
 
@@ -138,8 +147,17 @@ def save_message(
     direction: str,
     text_msg: str = "",
     msg_type: str = "text",
+
+    # media (para previews)
     media_url: Optional[str] = None,
     media_caption: Optional[str] = None,
+    media_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
+    file_name: Optional[str] = None,
+    file_size: Optional[int] = None,
+    duration_sec: Optional[int] = None,
+
+    # producto / UI
     featured_image: Optional[str] = None,
     real_image: Optional[str] = None,
     permalink: Optional[str] = None,
@@ -147,12 +165,12 @@ def save_message(
     conn.execute(text("""
         INSERT INTO messages (
             phone, direction, msg_type, text,
-            media_url, media_caption,
+            media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
             featured_image, real_image, permalink, created_at
         )
         VALUES (
             :phone, :direction, :msg_type, :text,
-            :media_url, :media_caption,
+            :media_url, :media_caption, :media_id, :mime_type, :file_name, :file_size, :duration_sec,
             :featured_image, :real_image, :permalink, :created_at
         )
     """), {
@@ -162,6 +180,11 @@ def save_message(
         "text": text_msg,
         "media_url": media_url,
         "media_caption": media_caption,
+        "media_id": media_id,
+        "mime_type": mime_type,
+        "file_name": file_name,
+        "file_size": file_size,
+        "duration_sec": duration_sec,
         "featured_image": featured_image,
         "real_image": real_image,
         "permalink": permalink,
@@ -176,6 +199,7 @@ def save_message(
         "phone": phone,
         "updated_at": datetime.utcnow()
     })
+
 
 
 # =========================================================
@@ -263,8 +287,9 @@ def get_messages(phone: str):
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT id, phone, direction, msg_type, text,
-                media_url, media_caption,
+                media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
                 featured_image, real_image, permalink, created_at
+            
             FROM messages
             WHERE phone = :phone
             ORDER BY created_at ASC
@@ -293,10 +318,16 @@ async def ingest(msg: IngestMessage):
             text_msg=msg.text or "",
             media_url=msg.media_url,
             media_caption=msg.media_caption,
+            media_id=msg.media_id,
+            mime_type=msg.mime_type,
+            file_name=msg.file_name,
+            file_size=msg.file_size,
+            duration_sec=msg.duration_sec,
             featured_image=msg.featured_image,
             real_image=msg.real_image,
             permalink=msg.permalink,
         )
+
 
     # --- ENVIAR A WHATSAPP SOLO SI ES OUT ---
     if direction == "out":

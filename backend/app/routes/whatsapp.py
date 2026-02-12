@@ -4,7 +4,8 @@ import asyncio
 import httpx
 from datetime import datetime
 from app.db import engine
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+
 
 
 

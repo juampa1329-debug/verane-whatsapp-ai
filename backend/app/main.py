@@ -49,10 +49,8 @@ app.include_router(whatsapp_router)
 # DATABASE
 # =========================================================
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set (revisa variables en Coolify + docker-compose)")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+from app.db import engine
+
 
 
 LAST_PRODUCT_CACHE: dict[str, dict] = {}

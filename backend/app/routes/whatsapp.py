@@ -3,7 +3,7 @@ import json
 import asyncio
 import httpx
 from datetime import datetime
-from app.main import engine
+from app.db import engine
 from sqlalchemy import text
 
 
@@ -23,6 +23,8 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
+
 
 
 async def send_whatsapp_text(to_phone: str, text_msg: str):

@@ -1,19 +1,29 @@
 import os
 import re
+import requests
 from datetime import datetime
 from typing import Optional
-from app.routes.whatsapp import send_whatsapp_text
-from fastapi import UploadFile, File, Form
 
-
-import requests
-from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 
 # ✅ Router externo WhatsApp
 from app.routes.whatsapp import router as whatsapp_router
+from app.routes.whatsapp import send_whatsapp_text
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):
+    # Esto hace que SIEMPRE veas el error real en Network -> Response
+    return JSONResponse(
+        status_code=500,
+        content={
+            "ok": False,
+            "error": str(exc),
+            "path": str(request.url.path),
+        },
+    )
 
 # =========================================================
 # APP
@@ -29,6 +39,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.responses import JSONResponse
+from starlette.requests import Request as StarletteRequest
+
+
+
 app.include_router(whatsapp_router)
 
 # =========================================================
@@ -36,9 +51,13 @@ app.include_router(whatsapp_router)
 # =========================================================
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set (revisa variables en Coolify + docker-compose)")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
+
 LAST_PRODUCT_CACHE: dict[str, dict] = {}
+
 
 def ensure_schema():
     with engine.connect() as conn:
@@ -73,10 +92,9 @@ def ensure_schema():
                 permalink TEXT,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
-                          
-                          
         """))
-                # ✅ Asegurar columnas nuevas (no rompe si ya existen)
+
+        # ✅ Asegurar columnas nuevas (no rompe si ya existen)
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_id TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS mime_type TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT"""))
@@ -91,38 +109,35 @@ ensure_schema()
 # =========================================================
 
 class IngestMessage(BaseModel):
+    # ✅ no explota si el frontend envía campos extra
     model_config = {"extra": "allow"}
+
     phone: str
     direction: str
-    msg_type: str = "text"  # text | image | video | document | product
-    phone: str
-    direction: str
-    msg_type: str = "text"
+    msg_type: str = "text"  # text | image | video | audio | document | product
+
+    # texto normal (o caption)
     text: str = ""
+
+    # media
     media_url: Optional[str] = None
     media_caption: Optional[str] = None
+    media_id: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    duration_sec: Optional[int] = None
+
+    # producto (tarjeta)
     featured_image: Optional[str] = None
     real_image: Optional[str] = None
     permalink: Optional[str] = None
-    media_id: Optional[str] = None
-
-
-    # texto normal (o caption / descripción del producto)
-    text: str = ""
-
-    # media (imagen / video / documento)
-    media_url: Optional[str] = None
-    media_caption: Optional[str] = None
-
-    # producto (tarjeta como tu screenshot)
-    featured_image: Optional[str] = None   # imagen bonita (catálogo)
-    real_image: Optional[str] = None       # foto real (galería)
-    permalink: Optional[str] = None        # link del producto
 
 
 class BotReplyIn(BaseModel):
     phone: str
     text: str
+
 
 class CRMIn(BaseModel):
     phone: str
@@ -133,6 +148,7 @@ class CRMIn(BaseModel):
     interests: str = ""
     tags: str = ""
     notes: str = ""
+
 
 class TakeoverPayload(BaseModel):
     phone: str
@@ -201,15 +217,14 @@ def save_message(
         "updated_at": datetime.utcnow()
     })
 
-
-
 # =========================================================
 # ENDPOINTS
 # =========================================================
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "build": "2026-02-12-1"}
+
 
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
@@ -219,7 +234,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     """
     import tempfile
     import subprocess
-    import os
 
     kind = (kind or "image").lower().strip()
     if kind not in ("image", "video", "audio", "document"):
@@ -238,7 +252,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
             with open(in_path, "wb") as f:
                 f.write(content)
 
-            # Convertir a OGG/OPUS (formato aceptado por WhatsApp)
             cmd = [
                 "ffmpeg", "-y",
                 "-i", in_path,
@@ -271,7 +284,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     }
 
 
-
 @app.get("/api/conversations")
 def get_conversations():
     with engine.begin() as conn:
@@ -283,90 +295,95 @@ def get_conversations():
         """)).mappings().all()
     return {"conversations": [dict(r) for r in rows]}
 
+
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT id, phone, direction, msg_type, text,
+            SELECT
+                id, phone, direction, msg_type, text,
                 media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
                 featured_image, real_image, permalink, created_at
-            
             FROM messages
             WHERE phone = :phone
             ORDER BY created_at ASC
             LIMIT 500
-
         """), {"phone": phone}).mappings().all()
     return {"messages": [dict(r) for r in rows]}
+
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
     direction = msg.direction if msg.direction in ("in", "out") else "in"
     msg_type = (msg.msg_type or "text").strip().lower()
 
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO conversations (phone, takeover, updated_at)
-            VALUES (:phone, FALSE, :updated_at)
-            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
-        """), {"phone": msg.phone, "updated_at": datetime.utcnow()})
+    # 1) Guardar en DB (y si falla, devolver error en JSON en vez de 500 ciego)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO conversations (phone, takeover, updated_at)
+                VALUES (:phone, FALSE, :updated_at)
+                ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
+            """), {"phone": msg.phone, "updated_at": datetime.utcnow()})
 
-        save_message(
-            conn,
-            phone=msg.phone,
-            direction=direction,
-            msg_type=msg_type,
-            text_msg=msg.text or "",
-            media_url=msg.media_url,
-            media_caption=msg.media_caption,
-            media_id=msg.media_id,
-            mime_type=msg.mime_type,
-            file_name=msg.file_name,
-            file_size=msg.file_size,
-            duration_sec=msg.duration_sec,
-            featured_image=msg.featured_image,
-            real_image=msg.real_image,
-            permalink=msg.permalink,
-        )
-
-
-    # --- ENVIAR A WHATSAPP SOLO SI ES OUT ---
-    if direction == "out":
-        # ✅ Adjuntos reales (imagen/video/audio/document) usando media_id
-        if msg_type in ("image", "video", "audio", "document"):
-            if not msg.media_id:
-                return {"saved": True, "sent": False, "reason": "media_id is required for media messages"}
-
-            from app.routes.whatsapp import send_whatsapp_media_id
-            return await send_whatsapp_media_id(
-                to_phone=msg.phone,
-                media_type=msg_type,
+            save_message(
+                conn,
+                phone=msg.phone,
+                direction=direction,
+                msg_type=msg_type,
+                text_msg=msg.text or "",
+                media_url=msg.media_url,
+                media_caption=msg.media_caption,
                 media_id=msg.media_id,
-                caption=msg.media_caption or msg.text or ""
+                mime_type=msg.mime_type,
+                file_name=msg.file_name,
+                file_size=msg.file_size,
+                duration_sec=msg.duration_sec,
+                featured_image=msg.featured_image,
+                real_image=msg.real_image,
+                permalink=msg.permalink,
             )
+    except Exception as e:
+        return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
-        # ✅ Producto (por ahora texto con links; luego lo mejoramos a imagen adjunta + texto)
-        if msg_type == "product":
-            body = (msg.text or "").strip()
+    # 2) Enviar a WhatsApp solo si es OUT (y no explotar)
+    if direction == "out":
+        try:
+            # ✅ Adjuntos reales (imagen/video/audio/document) usando media_id
+            if msg_type in ("image", "video", "audio", "document"):
+                if not msg.media_id:
+                    return {"saved": True, "sent": False, "reason": "media_id is required for media messages"}
 
-            extra_lines = []
-            if msg.permalink:
-                extra_lines.append(f"🛒 Ver producto: {msg.permalink}")
-            if msg.real_image:
-                extra_lines.append(f"📸 Ver foto real: {msg.real_image}")
+                from app.routes.whatsapp import send_whatsapp_media_id
+                return await send_whatsapp_media_id(
+                    to_phone=msg.phone,
+                    media_type=msg_type,
+                    media_id=msg.media_id,
+                    caption=msg.media_caption or msg.text or ""
+                )
 
-            if extra_lines:
-                body = (body + "\n\n" + "\n".join(extra_lines)).strip()
+            # ✅ Producto
+            if msg_type == "product":
+                body = (msg.text or "").strip()
 
-            return await send_whatsapp_text(msg.phone, body)
+                extra_lines = []
+                if msg.permalink:
+                    extra_lines.append(f"🛒 Ver producto: {msg.permalink}")
+                if msg.real_image:
+                    extra_lines.append(f"📸 Ver foto real: {msg.real_image}")
 
-        # ✅ Texto normal
-        return await send_whatsapp_text(msg.phone, msg.text or "")
+                if extra_lines:
+                    body = (body + "\n\n" + "\n".join(extra_lines)).strip()
 
-    return {"saved": True}
+                return await send_whatsapp_text(msg.phone, body)
 
+            # ✅ Texto normal
+            return await send_whatsapp_text(msg.phone, msg.text or "")
 
+        except Exception as e:
+            return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
+    return {"saved": True, "sent": False}
 
 
 @app.post("/api/conversations/takeover")
@@ -384,6 +401,7 @@ def set_takeover(payload: TakeoverPayload):
             "updated_at": datetime.utcnow()
         })
     return {"ok": True}
+
 
 @app.post("/api/crm")
 def save_crm(payload: CRMIn):
@@ -419,6 +437,7 @@ def save_crm(payload: CRMIn):
         })
     return {"ok": True}
 
+
 @app.get("/api/crm/{phone}")
 def get_crm(phone: str):
     try:
@@ -439,7 +458,6 @@ def get_crm(phone: str):
             """), {"phone": phone}).mappings().first()
 
         if not r:
-            # si no existe aún, devolvemos estructura completa por defecto
             return {
                 "phone": phone,
                 "takeover": False,
@@ -455,10 +473,7 @@ def get_crm(phone: str):
         return dict(r)
 
     except Exception as e:
-        # devuelve JSON (para que el frontend no explote) + ayuda para debug
         return {"ok": False, "error": str(e), "phone": phone}
-
-
 
 
 # =========================================================
@@ -469,15 +484,13 @@ WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
 WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
 WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
 
+
 def _wc_enabled() -> bool:
-    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
+    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)  # <- corregiremos si lo deseas
+
 
 def _wc_get(path: str, params: dict | None = None):
-    """
-    WooCommerce REST API v3 helper.
-    Usa query auth (ck/cs) por simplicidad.
-    """
-    if not _wc_enabled():
+    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
         raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
 
     url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
@@ -495,19 +508,16 @@ def _wc_get(path: str, params: dict | None = None):
 
     return r.json()
 
+
 def _pick_first_image(product: dict) -> str | None:
-    # WC v3 trae lista `images`
     imgs = product.get("images") or []
     if imgs and isinstance(imgs, list):
         src = (imgs[0] or {}).get("src")
         return src
     return None
 
+
 def _extract_aromas(product: dict) -> list[str]:
-    """
-    En tu JSON ejemplo, Aromas está en attributes name="Aromas" con options.
-    En WC real, suele venir en product["attributes"] con name y options.
-    """
     out: list[str] = []
     attrs = product.get("attributes") or []
     for a in attrs:
@@ -520,19 +530,8 @@ def _extract_aromas(product: dict) -> list[str]:
                 out = [str(x).strip() for x in opts if str(x).strip()]
     return out
 
+
 def _extract_brand(product: dict) -> str:
-    """
-    Marca puede venir como:
-    - metadata / brands plugin
-    - attributes
-    - tags
-    Como no tenemos el JSON real de WC v3 de tu tienda aquí,
-    usamos una estrategia conservadora:
-    1) meta_data con keys comunes
-    2) atributo llamado "brand" o "marca"
-    3) tags (si manejas marca como tag)
-    """
-    # 1) meta_data
     for md in (product.get("meta_data") or []):
         if not isinstance(md, dict):
             continue
@@ -542,7 +541,6 @@ def _extract_brand(product: dict) -> str:
             if isinstance(v, str) and v.strip():
                 return v.strip()
 
-    # 2) attributes
     for a in (product.get("attributes") or []):
         if not isinstance(a, dict):
             continue
@@ -552,21 +550,16 @@ def _extract_brand(product: dict) -> str:
             if isinstance(opts, list) and opts:
                 return str(opts[0]).strip()
 
-    # 3) tags
     tags = product.get("tags") or []
     if isinstance(tags, list) and tags:
-        # si tags trae objetos {name}
         t0 = tags[0]
         if isinstance(t0, dict) and (t0.get("name") or "").strip():
             return (t0.get("name") or "").strip()
 
     return ""
 
+
 def _extract_gender(product: dict) -> str:
-    """
-    Si manejas Hombre/Mujer como categories:
-    product["categories"] -> [{name: "Hombre"}]
-    """
     cats = product.get("categories") or []
     names = []
     for c in cats:
@@ -580,6 +573,7 @@ def _extract_gender(product: dict) -> str:
     if any("unisex" in n for n in names):
         return "unisex"
     return ""
+
 
 def _map_product_for_ui(product: dict) -> dict:
     price = product.get("price") or product.get("regular_price") or ""
@@ -596,15 +590,13 @@ def _map_product_for_ui(product: dict) -> dict:
         "stock_status": product.get("stock_status") or "",
     }
 
+
 @app.get("/api/wc/products")
 def wc_products(
     q: str = Query("", description="texto de búsqueda"),
     page: int = Query(1, ge=1),
     per_page: int = Query(12, ge=1, le=50),
 ):
-    """
-    Para el modal del frontend y para la IA.
-    """
     params = {
         "search": q or "",
         "page": page,
@@ -615,20 +607,18 @@ def wc_products(
     items = [_map_product_for_ui(p) for p in (data or [])]
     return {"products": items}
 
+
 class SendWCProductIn(BaseModel):
     phone: str
     product_id: int
-    caption: str = ""  # opcional: si viene vacío, armamos uno
+    caption: str = ""
+
 
 @app.post("/api/wc/send-product")
 async def send_wc_product(payload: dict):
-    """
-    Envía un producto WooCommerce como imagen adjunta real (JPG) + caption.
-    Convierte AVIF -> JPG en backend para compatibilidad con WhatsApp.
-    """
     import io
     from PIL import Image
-    import pillow_avif  # noqa: F401  (activa soporte AVIF en Pillow)
+    import pillow_avif  # noqa: F401
 
     phone = payload.get("phone")
     product_id = payload.get("product_id")
@@ -637,13 +627,9 @@ async def send_wc_product(payload: dict):
     if not phone or not product_id:
         raise HTTPException(status_code=400, detail="phone and product_id required")
 
-    WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
-    WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
-    WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
-    if not WC_BASE_URL or not WC_CONSUMER_KEY or not WC_CONSUMER_SECRET:
+    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
         raise HTTPException(status_code=500, detail="WC env vars not configured")
 
-    # --- Obtener producto desde Woo ---
     url = f"{WC_BASE_URL}/wp-json/wc/v3/products/{product_id}"
     params = {"consumer_key": WC_CONSUMER_KEY, "consumer_secret": WC_CONSUMER_SECRET}
 
@@ -660,7 +646,6 @@ async def send_wc_product(payload: dict):
     featured_image = (images[0] or {}).get("src") or ""
     real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
 
-    # --- Descargar imagen destacada (puede ser AVIF) ---
     img_response = requests.get(featured_image, timeout=25)
     if img_response.status_code != 200 or not img_response.content:
         raise HTTPException(status_code=502, detail=f"Image download failed: {img_response.status_code}")
@@ -669,23 +654,12 @@ async def send_wc_product(payload: dict):
     content_type = (img_response.headers.get("Content-Type") or "").lower()
 
     def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
-        """
-        Convierte bytes de imagen (AVIF/WEBP/PNG/JPG) a JPG bytes.
-        """
         im = Image.open(io.BytesIO(src_bytes))
-        # WhatsApp suele ir mejor con RGB (no alpha)
-        if im.mode in ("RGBA", "LA", "P"):
-            im = im.convert("RGB")
-        else:
-            im = im.convert("RGB")
-
+        im = im.convert("RGB")
         out = io.BytesIO()
         im.save(out, format="JPEG", quality=88, optimize=True)
         return out.getvalue()
 
-    # --- Forzar JPG si:
-    # 1) Content-Type dice avif/webp o
-    # 2) URL termina en .avif/.webp
     lower_url = featured_image.lower()
     needs_convert = (
         ("image/avif" in content_type) or ("image/webp" in content_type) or
@@ -697,43 +671,33 @@ async def send_wc_product(payload: dict):
             image_bytes = _to_jpeg_bytes(image_bytes)
             mime_type = "image/jpeg"
         else:
-            # Aun si dice jpeg/png, WhatsApp acepta, pero preferimos enviar jpg siempre:
-            # si quieres SIEMPRE JPG, descomenta:
-            # image_bytes = _to_jpeg_bytes(image_bytes); mime_type = "image/jpeg"
             mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
-            # si viene png, WhatsApp ok, pero si quieres unificar:
             if mime_type not in ("image/jpeg", "image/png"):
                 image_bytes = _to_jpeg_bytes(image_bytes)
                 mime_type = "image/jpeg"
     except Exception as e:
-        # fallback duro: intenta convertir sí o sí
         try:
             image_bytes = _to_jpeg_bytes(image_bytes)
             mime_type = "image/jpeg"
         except Exception:
             raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
 
-    # --- Subir a WhatsApp ---
     from app.routes.whatsapp import upload_whatsapp_media, send_whatsapp_media_id
     media_id = await upload_whatsapp_media(image_bytes, mime_type)
 
-    # --- Construir caption enriquecido ---
     name = product.get("name", "") or ""
     price = product.get("price") or product.get("regular_price") or ""
     short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "").strip()
     permalink = product.get("permalink", "") or ""
 
-    # Marca (si existe en brands)
     brands = product.get("brands") or []
     brand = (brands[0].get("name") if brands else "") or ""
     if not brand:
         brand = _extract_brand(product)
 
-    # Hombre/Mujer desde categorías
     gender = _extract_gender(product)
     gender_label = "Hombre" if gender == "hombre" else "Mujer" if gender == "mujer" else "Unisex" if gender == "unisex" else ""
 
-    # Aromas
     aromas_list = _extract_aromas(product)
     aromas = ", ".join(aromas_list) if aromas_list else ""
 
@@ -755,7 +719,6 @@ async def send_wc_product(payload: dict):
 
     caption = (custom_caption or "").strip() or "\n".join(caption_lines)
 
-    # --- Guardar en DB (para que tu UI muestre tarjeta + botón foto real) ---
     with engine.begin() as conn:
         save_message(
             conn,
@@ -763,17 +726,14 @@ async def send_wc_product(payload: dict):
             direction="out",
             msg_type="product",
             text_msg=caption,
-            featured_image=featured_image,   # guardamos la original (AVIF) para la tarjeta en dashboard
+            featured_image=featured_image,
             real_image=real_image or None,
             permalink=permalink
         )
 
-    # --- Enviar imagen real por WhatsApp como adjunto ---
     return await send_whatsapp_media_id(
         to_phone=phone,
         media_type="image",
         media_id=media_id,
         caption=caption
     )
-
-

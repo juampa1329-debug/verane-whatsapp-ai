@@ -32,6 +32,37 @@ function fmtDateTime(s) {
   catch { return s; }
 }
 
+// ✅ Convierte bytes a texto: 123 KB, 2.3 MB, etc.
+function formatBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  const out = i === 0 ? String(Math.round(v)) : v.toFixed(v >= 10 ? 0 : 1);
+  return `${out} ${units[i]}`;
+}
+
+// ✅ Duración en segundos -> mm:ss
+function formatDur(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// ✅ URL para previsualizar adjuntos reales desde tu backend
+function mediaProxyUrl(mediaId) {
+  if (!mediaId) return "";
+  return `${API_BASE}/api/media/proxy/${encodeURIComponent(mediaId)}`;
+}
+
+
 // --- 1. Barra de Navegación Lateral ---
 const MainNav = ({ activeTab, setActiveTab }) => {
   const navItems = [

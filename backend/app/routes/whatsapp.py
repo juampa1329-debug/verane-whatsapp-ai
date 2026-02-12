@@ -3,9 +3,13 @@ import json
 import asyncio
 import httpx
 from datetime import datetime
+from app.main import engine
+from sqlalchemy import text
+
+
 
 from fastapi import APIRouter, Request, Response, HTTPException
-from sqlalchemy import create_engine, text
+
 
 router = APIRouter()
 
@@ -19,7 +23,7 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
+
 
 async def send_whatsapp_text(to_phone: str, text_msg: str):
     # Si no está configurado WhatsApp, no explotes: responde "sent=false"
@@ -214,7 +218,7 @@ async def _forward_to_targets(raw_body: bytes):
 
 def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str, media_id: str | None = None):
 
-    if not (engine and phone):
+    if not  phone:
         return
     with engine.begin() as conn:
         # upsert conversation

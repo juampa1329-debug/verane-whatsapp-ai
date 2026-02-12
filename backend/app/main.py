@@ -91,6 +91,7 @@ ensure_schema()
 # =========================================================
 
 class IngestMessage(BaseModel):
+    model_config = {"extra": "allow"}
     phone: str
     direction: str
     msg_type: str = "text"  # text | image | video | document | product

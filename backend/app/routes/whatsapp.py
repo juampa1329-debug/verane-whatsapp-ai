@@ -3,13 +3,13 @@ import json
 import asyncio
 import httpx
 from datetime import datetime
-from app.db import engine
-from sqlalchemy import create_engine, text
-
-
-
 
 from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy import text
+
+from app.db import engine  # ✅ usa SOLO este engine (el de db.py)
+
 
 
 router = APIRouter()
@@ -22,9 +22,6 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
-
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
 
 
 
@@ -219,46 +216,52 @@ async def _forward_to_targets(raw_body: bytes):
 
 
 
-def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str, media_id: str | None = None):
-
-    if not  phone:
+def _store_in_db(
+    phone: str,
+    direction: str,
+    msg_type: str,
+    text_msg: str,
+    media_id: str | None = None,
+):
+    if not phone:
         return
+
     with engine.begin() as conn:
-        # upsert conversation
+        # 1) upsert conversation (esto es lo que hace que el chat "suba" en el inbox)
+        conn.execute(text("""
+            INSERT INTO conversations (phone, takeover, updated_at)
+            VALUES (:phone, FALSE, :updated_at)
+            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
+        """), {
+            "phone": phone,
+            "updated_at": datetime.utcnow(),
+        })
+
+        # 2) insert message (esto es lo que hace que el mensaje salga en el UI)
         conn.execute(text("""
             INSERT INTO messages (phone, direction, msg_type, text, media_id, created_at)
             VALUES (:phone, :direction, :msg_type, :text, :media_id, :created_at)
-            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
-        """), {"phone": phone, "updated_at": datetime.utcnow()})
-
-        # insert message
-        conn.execute(text("""
-            INSERT INTO messages (phone, direction, msg_type, text, created_at)
-            VALUES (:phone, :direction, :msg_type, :text, :created_at)
         """), {
             "phone": phone,
             "direction": direction,
             "msg_type": msg_type or "text",
             "text": text_msg or "",
-            "created_at": datetime.utcnow(),
             "media_id": media_id,
-
+            "created_at": datetime.utcnow(),
         })
+
 
 
 
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
-    print("✅ WEBHOOK HIT:", raw[:200])
-    print("HEADERS:", dict(request.headers))
 
+    # ✅ Evita loops: si este request YA fue reenviado por ti, NO lo vuelvas a reenviar
+    if request.headers.get("X-Verane-Forwarded") != "1":
+        asyncio.create_task(_forward_to_targets(raw))
 
-    # 1) ACK rápido + forward en background
-    asyncio.create_task(_forward_to_targets(raw))
-
-
-    # 2) Parse + store (sin romper si cambia el payload)
+    # Parse seguro
     try:
         data = json.loads(raw.decode("utf-8") or "{}")
     except Exception:
@@ -268,27 +271,21 @@ async def whatsapp_receive(request: Request):
         entry = (data.get("entry") or [])[0]
         change = (entry.get("changes") or [])[0]
         value = change.get("value") or {}
-                # ✅ 0) Status updates (DELIVERED / FAILED / READ)
+
+        # 0) Status updates (DELIVERED / FAILED / READ) -> solo log
         statuses = value.get("statuses") or []
         if statuses:
             s = statuses[0]
             print("WA_STATUS:", json.dumps(s, ensure_ascii=False))
-
-            # Opcional: si falla, imprime el error completo
             if s.get("status") == "failed":
                 print("WA_STATUS_FAILED:", json.dumps(s, ensure_ascii=False))
 
-
-        # WhatsApp messages
+        # 1) Mensajes entrantes
         messages = value.get("messages") or []
-        if messages:
-            m = messages[0]
+        for m in messages:
             phone = m.get("from")
             msg_type = (m.get("type") or "text").strip().lower()
 
-            text_msg = ""
-            if msg_type == "text":
-                text_msg = (m.get("text") or {}).get("body", "") or ""
             text_msg = ""
             media_id = None
 
@@ -302,21 +299,24 @@ async def whatsapp_receive(request: Request):
                 text_msg = caption or f"[{msg_type}]"
 
             else:
+                # para otros tipos: sticker, location, etc.
                 text_msg = f"[{msg_type}]"
 
+            # ✅ GUARDA en DB para que el UI lo vea
             _store_in_db(
                 phone=phone,
                 direction="in",
                 msg_type=msg_type,
                 text_msg=text_msg,
-                media_id=media_id
+                media_id=media_id,
             )
 
-    except Exception:
-        # no rompemos el webhook por payloads raros (statuses, etc.)
-        pass
+    except Exception as e:
+        # ✅ NO lo tapes: imprime para ver errores reales en Coolify
+        print("WEBHOOK_STORE_ERROR:", str(e))
 
     return {"ok": True}
+
 
 from fastapi.responses import StreamingResponse
 

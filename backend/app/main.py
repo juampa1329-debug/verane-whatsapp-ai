@@ -2,7 +2,7 @@ import os
 import re
 import requests
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +101,9 @@ def ensure_schema():
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_delivered TIMESTAMP"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_read TIMESTAMP"""))
 
+        # ✅ Unread tracking (para filtros "no leído")
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMP"""))
+
 ensure_schema()
 
 # =========================================================
@@ -196,14 +199,14 @@ def save_message(
         "permalink": permalink,
         "created_at": datetime.utcnow(),
 
-        # ✅ si es OUT, el estado inicial visual será "sent" (en realidad: "queued local")
-        # luego el webhook lo sube a delivered/read cuando WhatsApp lo notifica.
+        # ✅ si es OUT, estado inicial visual "sent"
         "wa_status": "sent" if direction == "out" else None,
         "wa_ts_sent": datetime.utcnow() if direction == "out" else None,
     })
 
     message_id = int(r.scalar())
 
+    # subir conversación al inbox
     conn.execute(text("""
         INSERT INTO conversations (phone, updated_at)
         VALUES (:phone, :updated_at)
@@ -213,7 +216,6 @@ def save_message(
     return message_id
 
 def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str], sent_ok: bool, wa_error: str = ""):
-    # Si no hay wa_message_id, marcamos failed para que lo veas en UI
     if not wa_message_id or not sent_ok:
         conn.execute(text("""
             UPDATE messages
@@ -232,13 +234,26 @@ def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str]
         WHERE id = :id
     """), {"id": local_message_id, "wa_message_id": wa_message_id})
 
+def _parse_tags_param(tags: str) -> List[str]:
+    """
+    tags param: "vip,pago pendiente" -> ["vip", "pago pendiente"]
+    """
+    if not tags:
+        return []
+    out = []
+    for t in tags.split(","):
+        tt = (t or "").strip().lower()
+        if tt:
+            out.append(tt)
+    return out
+
 # =========================================================
 # ENDPOINTS
 # =========================================================
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-12-1"}
+    return {"ok": True, "build": "2026-02-13-filters-2"}
 
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
@@ -279,16 +294,118 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
 
     return {"ok": True, "media_id": media_id, "mime_type": mime, "filename": filename, "kind": kind}
 
-@app.get("/api/conversations")
-def get_conversations():
+@app.post("/api/conversations/{phone}/read")
+def mark_conversation_read(phone: str):
     """
-    Devuelve lista para el Inbox:
-    - phone, takeover, updated_at
-    - first_name, last_name (CRM)
-    - text, msg_type, direction, created_at del último mensaje (preview)
+    Marca conversación como leída: last_read_at = UTC NOW
+    Frontend debe llamar esto al seleccionar/abrir un chat.
+    """
+    phone = (phone or "").strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone required")
+
+    ts = datetime.utcnow()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO conversations (phone, last_read_at)
+            VALUES (:phone, :ts)
+            ON CONFLICT (phone)
+            DO UPDATE SET last_read_at = EXCLUDED.last_read_at
+        """), {"phone": phone, "ts": ts})
+
+    return {"ok": True}
+
+@app.get("/api/crm/tags")
+def list_crm_tags(limit: int = Query(200, ge=1, le=2000)):
+    """
+    Devuelve tags únicos existentes (desde conversations.tags),
+    para poblar el filtro por tags en el Inbox.
     """
     with engine.begin() as conn:
         rows = conn.execute(text("""
+            SELECT DISTINCT TRIM(LOWER(x)) AS tag
+            FROM conversations c
+            CROSS JOIN LATERAL regexp_split_to_table(COALESCE(c.tags,''), ',') AS x
+            WHERE TRIM(x) <> ''
+            ORDER BY tag ASC
+            LIMIT :limit
+        """), {"limit": limit}).mappings().all()
+
+    return {"tags": [r["tag"] for r in rows]}
+
+@app.get("/api/conversations")
+def get_conversations(
+    search: str = Query("", description="Buscar por phone, nombre CRM o texto preview"),
+    takeover: str = Query("all", description="all|on|off"),
+    unread: str = Query("all", description="all|yes|no"),
+    tags: str = Query("", description="Filtro por tags CRM. Ej: vip,pago pendiente"),
+):
+    """
+    Devuelve lista para el Inbox:
+    - phone, takeover, updated_at
+    - first_name, last_name, tags, etc.
+    - preview del último mensaje
+    - has_unread + unread_count
+    """
+    takeover = (takeover or "all").strip().lower()
+    unread = (unread or "all").strip().lower()
+    term = (search or "").strip().lower()
+    tag_list = _parse_tags_param(tags)
+
+    where = []
+    params = {}
+
+    # takeover filter
+    if takeover == "on":
+        where.append("c.takeover = TRUE")
+    elif takeover == "off":
+        where.append("c.takeover = FALSE")
+
+    # search filter (phone / nombre CRM / preview)
+    if term:
+        params["term"] = f"%{term}%"
+        where.append("""
+            (
+              LOWER(c.phone) LIKE :term
+              OR LOWER(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,'')) LIKE :term
+              OR LOWER(COALESCE(m.text, '')) LIKE :term
+            )
+        """)
+
+    # tags filter (OR entre tags solicitados)
+    if tag_list:
+        tag_clauses = []
+        for i, t in enumerate(tag_list):
+            k = f"tag{i}"
+            params[k] = f"%{t}%"
+            tag_clauses.append(f"LOWER(COALESCE(c.tags,'')) LIKE :{k}")
+        where.append("(" + " OR ".join(tag_clauses) + ")")
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    # unread filter en SQL (si unread != all)
+    if unread in ("yes", "no"):
+        unread_cond = """
+            EXISTS (
+                SELECT 1
+                FROM messages mi
+                WHERE mi.phone = c.phone
+                  AND mi.direction = 'in'
+                  AND mi.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
+            )
+        """
+        if unread == "yes":
+            extra = f" AND {unread_cond} "
+        else:
+            extra = f" AND NOT ({unread_cond}) "
+
+        if where_sql:
+            where_sql = where_sql + extra
+        else:
+            where_sql = "WHERE 1=1 " + extra
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
             SELECT
                 c.phone,
                 c.takeover,
@@ -300,11 +417,28 @@ def get_conversations():
                 c.interests,
                 c.tags,
                 c.notes,
+                c.last_read_at,
 
                 m.text AS last_text,
                 m.msg_type AS last_msg_type,
                 m.direction AS last_direction,
-                m.created_at AS last_created_at
+                m.created_at AS last_created_at,
+
+                EXISTS (
+                    SELECT 1
+                    FROM messages mi
+                    WHERE mi.phone = c.phone
+                      AND mi.direction = 'in'
+                      AND mi.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
+                ) AS has_unread,
+
+                (
+                    SELECT COUNT(*)
+                    FROM messages mi2
+                    WHERE mi2.phone = c.phone
+                      AND mi2.direction = 'in'
+                      AND mi2.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
+                ) AS unread_count
 
             FROM conversations c
             LEFT JOIN LATERAL (
@@ -315,20 +449,24 @@ def get_conversations():
                 LIMIT 1
             ) m ON TRUE
 
+            {where_sql}
+
             ORDER BY c.updated_at DESC
             LIMIT 200
-        """)).mappings().all()
+        """), params).mappings().all()
 
-    # Normaliza "text" para que el frontend no cambie tanto
     out = []
     for r in rows:
         d = dict(r)
-        # "text" como preview principal esperado por tu UI
         d["text"] = d.get("last_text") or ""
+        try:
+            d["unread_count"] = int(d.get("unread_count") or 0)
+        except Exception:
+            d["unread_count"] = 0
+        d["has_unread"] = bool(d.get("has_unread"))
         out.append(d)
 
     return {"conversations": out}
-
 
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):
@@ -413,7 +551,6 @@ async def ingest(msg: IngestMessage):
             else:
                 wa_resp = await send_whatsapp_text(msg.phone, msg.text or "")
 
-            # ✅ Persistir resultado de envío
             wa_message_id = None
             if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
                 wa_message_id = wa_resp.get("wa_message_id")
@@ -422,7 +559,6 @@ async def ingest(msg: IngestMessage):
                 if wa_resp.get("sent") is True and wa_message_id:
                     set_wa_send_result(conn, local_id, wa_message_id, True, "")
                 else:
-                    # guardar error de WhatsApp si vino
                     err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 

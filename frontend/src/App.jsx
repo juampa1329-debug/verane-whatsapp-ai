@@ -71,7 +71,7 @@ function mediaProxyUrl(mediaId) {
   return `${API_BASE}/api/media/proxy/${encodeURIComponent(mediaId)}`;
 }
 
-// --- Inbox helpers (nombre CRM + unread local) ---
+// --- Inbox helpers (nombre CRM) ---
 function displayName(c) {
   const fn = (c?.first_name || "").trim();
   const ln = (c?.last_name || "").trim();
@@ -87,25 +87,6 @@ function initialsFromConversation(c) {
   const a = (parts[0] || "").slice(0, 1).toUpperCase();
   const b = (parts[1] || "").slice(0, 1).toUpperCase();
   return (a + b).trim() || "•";
-}
-
-function getLastSeenKey(phone) {
-  return `verane:last_seen:${phone}`;
-}
-
-function getLastSeen(phone) {
-  try {
-    const v = localStorage.getItem(getLastSeenKey(phone));
-    return v ? Number(v) : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function setLastSeen(phone, tsMs) {
-  try {
-    localStorage.setItem(getLastSeenKey(phone), String(tsMs || Date.now()));
-  } catch { }
 }
 
 // --- 1. Barra de Navegación Lateral ---
@@ -140,19 +121,20 @@ const MainNav = ({ activeTab, setActiveTab }) => {
 };
 
 // --- 2. Lista de Conversaciones ---
-const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    if (!term) return conversations;
-
-    return conversations.filter(c => {
-      const name = displayName(c).toLowerCase();
-      const phone = (c.phone || "").toLowerCase();
-      const preview = (c.text || "").toLowerCase();
-      return name.includes(term) || phone.includes(term) || preview.includes(term);
-    });
-  }, [conversations, q]);
-
+const ChatList = ({
+  conversations,
+  selectedPhone,
+  onSelect,
+  q,
+  setQ,
+  filterTakeover,
+  setFilterTakeover,
+  filterUnread,
+  setFilterUnread,
+  filterTags,
+  setFilterTags,
+  onClearFilters,
+}) => {
   return (
     <div className="chat-list-panel">
       <div className="chat-list-header">
@@ -160,20 +142,51 @@ const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
           <h2>Inbox</h2>
           <span className="badge">Local</span>
         </div>
+
         <div className="search-box">
           <div className="search-icon"><IconSearch /></div>
           <input
-            placeholder="Buscar..."
+            placeholder="Buscar (teléfono o preview)..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+
+        {/* Filtros */}
+        <div className="filter-row" style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <select value={filterTakeover} onChange={(e) => setFilterTakeover(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10 }}>
+            <option value="all">Takeover: Todos</option>
+            <option value="on">Takeover: ON</option>
+            <option value="off">Takeover: OFF</option>
+          </select>
+
+          <select value={filterUnread} onChange={(e) => setFilterUnread(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10 }}>
+            <option value="all">Unread: Todos</option>
+            <option value="yes">Unread: Sí</option>
+            <option value="no">Unread: No</option>
+          </select>
+
+          <input
+            value={filterTags}
+            onChange={(e) => setFilterTags(e.target.value)}
+            placeholder="Tags (ej: vip,pago pendiente)"
+            style={{ padding: "8px 10px", borderRadius: 10, flex: "1 1 220px" }}
+          />
+
+          <button
+            onClick={onClearFilters}
+            style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "transparent", cursor: "pointer" }}
+            title="Limpiar filtros"
+          >
+            Limpiar
+          </button>
+        </div>
       </div>
 
       <div className="chat-list-items custom-scrollbar">
-        {filtered.map(c => {
-          const updatedMs = c.updated_at ? new Date(c.updated_at).getTime() : 0;
-          const unread = c.phone !== selectedPhone && updatedMs > getLastSeen(c.phone);
+        {(conversations || []).map(c => {
+          const unread = !!c.has_unread;
+          const unreadCount = Number.isFinite(Number(c.unread_count)) ? Number(c.unread_count) : 0;
 
           return (
             <button
@@ -182,9 +195,28 @@ const ChatList = ({ conversations, selectedPhone, onSelect, q, setQ }) => {
               className={`chat-item ${selectedPhone === c.phone ? 'selected' : ''} ${unread ? 'unread' : ''}`}
             >
               <div className="chat-item-top">
-                <div className="chat-title-wrap">
+                <div className="chat-title-wrap" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="chat-phone">{displayName(c)}</span>
-                  {unread && <span className="unread-dot" title="Nuevo mensaje" />}
+
+                  {unread && (
+                    <>
+                      <span className="unread-dot" title="Nuevo mensaje" />
+                      {unreadCount > 0 && (
+                        <span
+                          title={`No leídos: ${unreadCount}`}
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,255,255,0.15)",
+                            opacity: 0.9,
+                          }}
+                        >
+                          {unreadCount}
+                        </span>
+                      )}
+                    </>
+                  )}
                 </div>
                 <span className="chat-date">{fmtDateTime(c.updated_at).split(',')[0]}</span>
               </div>
@@ -379,7 +411,12 @@ export default function App() {
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-  const [q, setQ] = useState("");
+
+  // filtros inbox
+  const [q, setQ] = useState(""); // server-side search
+  const [filterTakeover, setFilterTakeover] = useState("all"); // all|on|off
+  const [filterUnread, setFilterUnread] = useState("all");     // all|yes|no
+  const [filterTags, setFilterTags] = useState("");            // "vip,pago pendiente"
 
   // Attachments
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -439,9 +476,19 @@ export default function App() {
     } catch { }
   };
 
+  const buildConversationsUrl = () => {
+    const params = new URLSearchParams();
+    params.set("search", q || "");
+    params.set("takeover", filterTakeover || "all");
+    params.set("unread", filterUnread || "all");
+    if ((filterTags || "").trim()) params.set("tags", filterTags.trim());
+    return `${API_BASE}/api/conversations?${params.toString()}`;
+  };
+
   const loadConversations = async () => {
     try {
-      const r = await fetch(`${API_BASE}/api/conversations`);
+      const url = buildConversationsUrl();
+      const r = await fetch(url);
       const data = await r.json();
       const list = data.conversations || [];
 
@@ -452,10 +499,10 @@ export default function App() {
           const prevTs = prev.get(c.phone) || 0;
           const curTs = c.updated_at ? new Date(c.updated_at).getTime() : 0;
 
-          // si subió y NO estás en ese chat -> ding + queda unread por last_seen
+          // si subió y NO estás en ese chat -> ding
           if (curTs && curTs > prevTs && c.phone !== selectedPhone) {
             await playDing();
-            break; // un solo sonido por poll
+            break;
           }
         }
       } else {
@@ -490,6 +537,20 @@ export default function App() {
       setMessages(data.messages || []);
       if (userNearBottomRef.current) scrollToBottom(false);
     } catch (e) { console.error(e); }
+  };
+
+  const markRead = async (phone) => {
+    if (!phone) return;
+    try {
+      await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(phone)}/read`, { method: "POST" });
+    } catch { }
+  };
+
+  const selectChat = async (phone) => {
+    setSelectedPhone(phone);
+    await markRead(phone);
+    // recargar para que el badge de unread se quite en el inbox (según last_read_at)
+    loadConversations();
   };
 
   const loadWCProducts = async (search = "") => {
@@ -708,12 +769,20 @@ export default function App() {
     loadConversations();
   };
 
+  const onClearFilters = () => {
+    setQ("");
+    setFilterTakeover("all");
+    setFilterUnread("all");
+    setFilterTags("");
+  };
+
   // Poll conversations
   useEffect(() => {
     loadConversations();
     const interval = setInterval(loadConversations, 2500);
     return () => clearInterval(interval);
-  }, [selectedPhone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPhone, filterTakeover, filterUnread, filterTags, q]);
 
   // Poll messages for selected
   useEffect(() => {
@@ -729,13 +798,14 @@ export default function App() {
     if (userNearBottomRef.current) scrollToBottom(true);
   }, [messages.length]);
 
-  // Mark selected chat as "seen" whenever you open it or it updates
+  // cada vez que se abre chat o llega update, marcamos leído
   useEffect(() => {
     if (!selectedPhone) return;
-    const c = conversations.find(x => x.phone === selectedPhone);
-    const updatedMs = c?.updated_at ? new Date(c.updated_at).getTime() : Date.now();
-    setLastSeen(selectedPhone, updatedMs || Date.now());
-  }, [selectedPhone, conversations]);
+    markRead(selectedPhone);
+    // y refrescamos inbox para quitar unread badge
+    loadConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPhone]);
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
 
@@ -748,9 +818,16 @@ export default function App() {
           <ChatList
             conversations={conversations}
             selectedPhone={selectedPhone}
-            onSelect={setSelectedPhone}
+            onSelect={selectChat}
             q={q}
             setQ={setQ}
+            filterTakeover={filterTakeover}
+            setFilterTakeover={setFilterTakeover}
+            filterUnread={filterUnread}
+            setFilterUnread={setFilterUnread}
+            filterTags={filterTags}
+            setFilterTags={setFilterTags}
+            onClearFilters={onClearFilters}
           />
 
           <div className="chat-window">

@@ -8,9 +8,7 @@ from fastapi import APIRouter, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
-from app.db import engine  # ✅ usa SOLO este engine (el de db.py)
-
-
+from app.db import engine  # ✅ usa SOLO este engine
 
 router = APIRouter()
 
@@ -18,15 +16,28 @@ VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 FORWARD_URLS = os.getenv("WHATSAPP_FORWARD_URLS", "")
 FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"
 FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "3"))
+
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
+def _extract_wa_message_id(resp_json: dict) -> str | None:
+    """
+    WhatsApp Cloud API suele devolver:
+    { "messages": [ { "id": "wamid...." } ] }
+    """
+    try:
+        msgs = resp_json.get("messages") or []
+        if msgs and isinstance(msgs, list):
+            mid = (msgs[0] or {}).get("id")
+            return mid
+    except Exception:
+        pass
+    return None
 
 
 async def send_whatsapp_text(to_phone: str, text_msg: str):
-    # Si no está configurado WhatsApp, no explotes: responde "sent=false"
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
@@ -39,41 +50,32 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
         "text": {"body": text_msg},
     }
 
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(url, json=payload, headers=headers)
 
-    # Si WhatsApp responde error, devuelve detalle (pero no 500 “ciego”)
     if r.status_code >= 400:
         return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
 
-    return {"saved": True, "sent": True, "whatsapp": r.json()}
+    j = r.json()
+    return {
+        "saved": True,
+        "sent": True,
+        "wa_message_id": _extract_wa_message_id(j),
+        "whatsapp": j
+    }
+
 
 async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
-    """
-    Sube un archivo binario a WhatsApp Media API y devuelve media_id.
-    """
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         raise HTTPException(status_code=500, detail="WhatsApp credentials not set")
 
     url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
 
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-    }
-
-    # multipart/form-data
-    files = {
-        "file": ("upload", file_bytes, mime_type),
-    }
-    data = {
-        "messaging_product": "whatsapp",
-        "type": mime_type,
-    }
+    files = {"file": ("upload", file_bytes, mime_type)}
+    data = {"messaging_product": "whatsapp", "type": mime_type}
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, headers=headers, data=data, files=files)
@@ -88,11 +90,8 @@ async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
 
     return media_id
 
+
 async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, caption: str = ""):
-    """
-    Envía media a WhatsApp usando media_id para que aparezca como adjunto real.
-    media_type: image | video | audio | document
-    """
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
@@ -109,14 +108,10 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
         media_type: {"id": media_id}
     }
 
-    # caption aplica a image/video/document (audio normalmente no)
     if caption and media_type in ("image", "video", "document"):
         payload[media_type]["caption"] = caption
 
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(url, json=payload, headers=headers)
@@ -124,47 +119,13 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
     if r.status_code >= 400:
         return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
 
-    return {"saved": True, "sent": True, "whatsapp": r.json()}
-
-
-async def send_whatsapp_media(to_phone: str, media_type: str, media_url: str, caption: str = ""):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
-        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
-
-    media_type = (media_type or "").strip().lower()
-    if media_type not in ("image", "video", "document"):
-        return {"saved": True, "sent": False, "reason": f"Unsupported media_type: {media_type}"}
-
-    if not media_url:
-        return {"saved": True, "sent": False, "reason": "media_url is required"}
-
-    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-
-    # WhatsApp descarga el archivo desde este link (debe ser URL pública https)
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_phone,
-        "type": media_type,
-        media_type: {
-            "link": media_url
-        }
+    j = r.json()
+    return {
+        "saved": True,
+        "sent": True,
+        "wa_message_id": _extract_wa_message_id(j),
+        "whatsapp": j
     }
-
-    if caption and media_type in ("image", "video", "document"):
-        payload[media_type]["caption"] = caption
-
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(url, json=payload, headers=headers)
-
-    if r.status_code >= 400:
-        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
-
-    return {"saved": True, "sent": True, "whatsapp": r.json()}
 
 
 @router.get("/api/whatsapp/webhook")
@@ -181,7 +142,6 @@ async def whatsapp_verify(request: Request):
 
 
 def _parse_forward_urls() -> list[str]:
-    # Permite separar por coma y limpiar espacios
     urls = []
     for part in (FORWARD_URLS or "").split(","):
         u = (part or "").strip()
@@ -191,10 +151,6 @@ def _parse_forward_urls() -> list[str]:
 
 
 async def _forward_to_targets(raw_body: bytes):
-    """
-    Fanout múltiple: reenvía el webhook a N destinos en background.
-    No bloquea el ACK a WhatsApp.
-    """
     if not FORWARD_ENABLED:
         return
 
@@ -208,36 +164,23 @@ async def _forward_to_targets(raw_body: bytes):
         try:
             await client.post(url, content=raw_body, headers=headers)
         except Exception:
-            # Silencioso: no queremos romper el webhook por un destino caído
             return
 
     async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
         await asyncio.gather(*[_post_one(client, u) for u in urls])
 
 
-
-def _store_in_db(
-    phone: str,
-    direction: str,
-    msg_type: str,
-    text_msg: str,
-    media_id: str | None = None,
-):
+def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str, media_id: str | None = None):
     if not phone:
         return
 
     with engine.begin() as conn:
-        # 1) upsert conversation (esto es lo que hace que el chat "suba" en el inbox)
         conn.execute(text("""
             INSERT INTO conversations (phone, takeover, updated_at)
             VALUES (:phone, FALSE, :updated_at)
             ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
-        """), {
-            "phone": phone,
-            "updated_at": datetime.utcnow(),
-        })
+        """), {"phone": phone, "updated_at": datetime.utcnow()})
 
-        # 2) insert message (esto es lo que hace que el mensaje salga en el UI)
         conn.execute(text("""
             INSERT INTO messages (phone, direction, msg_type, text, media_id, created_at)
             VALUES (:phone, :direction, :msg_type, :text, :media_id, :created_at)
@@ -251,17 +194,82 @@ def _store_in_db(
         })
 
 
+def _update_status_in_db(status_obj: dict):
+    """
+    status_obj típico:
+    {
+      "id": "wamid....",
+      "status": "delivered" | "read" | "failed" | "sent",
+      "timestamp": "1700000000",
+      "errors": [...]
+    }
+    """
+    wa_id = status_obj.get("id")
+    st = (status_obj.get("status") or "").lower().strip()
+    ts = status_obj.get("timestamp")
+
+    if not wa_id or not st:
+        return
+
+    dt = None
+    try:
+        if ts:
+            dt = datetime.utcfromtimestamp(int(ts))
+    except Exception:
+        dt = None
+
+    wa_error = ""
+    if st == "failed":
+        try:
+            errs = status_obj.get("errors") or []
+            if errs and isinstance(errs, list):
+                wa_error = json.dumps(errs[0], ensure_ascii=False)[:900]
+        except Exception:
+            wa_error = "failed"
+
+    with engine.begin() as conn:
+        if st == "delivered":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='delivered',
+                    wa_ts_delivered = COALESCE(wa_ts_delivered, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+        elif st == "read":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='read',
+                    wa_ts_read = COALESCE(wa_ts_read, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+        elif st == "failed":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='failed',
+                    wa_error = :wa_error
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "wa_error": wa_error or "failed"})
+
+        elif st == "sent":
+            # normalmente ya lo dejamos sent al guardar, pero lo soportamos
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='sent',
+                    wa_ts_sent = COALESCE(wa_ts_sent, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
 
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
 
-    # ✅ Evita loops: si este request YA fue reenviado por ti, NO lo vuelvas a reenviar
+    # ✅ Evita loops fanout
     if request.headers.get("X-Verane-Forwarded") != "1":
         asyncio.create_task(_forward_to_targets(raw))
 
-    # Parse seguro
     try:
         data = json.loads(raw.decode("utf-8") or "{}")
     except Exception:
@@ -272,15 +280,12 @@ async def whatsapp_receive(request: Request):
         change = (entry.get("changes") or [])[0]
         value = change.get("value") or {}
 
-        # 0) Status updates (DELIVERED / FAILED / READ) -> solo log
+        # 1) Status updates -> ACTUALIZA DB
         statuses = value.get("statuses") or []
-        if statuses:
-            s = statuses[0]
-            print("WA_STATUS:", json.dumps(s, ensure_ascii=False))
-            if s.get("status") == "failed":
-                print("WA_STATUS_FAILED:", json.dumps(s, ensure_ascii=False))
+        for s in statuses:
+            _update_status_in_db(s)
 
-        # 1) Mensajes entrantes
+        # 2) Mensajes entrantes -> GUARDA DB
         messages = value.get("messages") or []
         for m in messages:
             phone = m.get("from")
@@ -299,10 +304,8 @@ async def whatsapp_receive(request: Request):
                 text_msg = caption or f"[{msg_type}]"
 
             else:
-                # para otros tipos: sticker, location, etc.
                 text_msg = f"[{msg_type}]"
 
-            # ✅ GUARDA en DB para que el UI lo vea
             _store_in_db(
                 phone=phone,
                 direction="in",
@@ -312,24 +315,16 @@ async def whatsapp_receive(request: Request):
             )
 
     except Exception as e:
-        # ✅ NO lo tapes: imprime para ver errores reales en Coolify
         print("WEBHOOK_STORE_ERROR:", str(e))
 
     return {"ok": True}
 
 
-from fastapi.responses import StreamingResponse
-
 @router.get("/api/media/proxy/{media_id}")
 async def proxy_media(media_id: str):
-    """
-    Devuelve el binario del media_id usando Graph API.
-    Sirve para previsualizar audio/video/imagen/documento en el dashboard.
-    """
     if not (WHATSAPP_TOKEN and WHATSAPP_GRAPH_VERSION):
         raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN not configured")
 
-    # 1) Obtener URL temporal del media
     meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
 
@@ -344,10 +339,8 @@ async def proxy_media(media_id: str):
         if not dl_url:
             raise HTTPException(status_code=502, detail=f"No url in meta: {meta}")
 
-        # 2) Descargar el binario y streamearlo al frontend
         r_bin = await client.get(dl_url, headers=headers)
         if r_bin.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text}")
 
         return StreamingResponse(iter([r_bin.content]), media_type=ct)
-

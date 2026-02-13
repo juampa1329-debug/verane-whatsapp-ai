@@ -56,6 +56,28 @@ function formatDur(sec) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function waTicks(m) {
+  // Solo para mensajes OUT
+  if (!m || m.direction !== "out") return "";
+
+  const st = (m.wa_status || "").toLowerCase();
+
+  if (st === "failed") return "⚠️";
+  if (st === "read") return "✓✓";       // luego lo pintamos azul con CSS
+  if (st === "delivered") return "✓✓";
+  if (st === "sent") return "✓";
+  return "✓"; // default
+}
+
+function waTickClass(m) {
+  const st = (m.wa_status || "").toLowerCase();
+  if (st === "read") return "wa-read";
+  if (st === "delivered") return "wa-delivered";
+  if (st === "failed") return "wa-failed";
+  return "wa-sent";
+}
+
+
 // ✅ URL para previsualizar adjuntos reales desde tu backend
 function mediaProxyUrl(mediaId) {
   if (!mediaId) return "";
@@ -807,6 +829,14 @@ const stopRecording = async () => {
                     <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
                     <span>•</span>
                     <span>{fmtDateTime(m.created_at)}</span>
+                    {m.direction === "out" && (
+                      <>
+                        <span style={{ margin: "0 6px" }}>•</span>
+                        <span className={`wa-ticks ${waTickClass(m)}`} title={m.wa_error || m.wa_status || ""}>
+                          {waTicks(m)}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}

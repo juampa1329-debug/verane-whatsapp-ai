@@ -789,3 +789,29 @@ body {
   background: #e74c3c;
   color: white;
 }
+
+.wa-ticks {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.wa-sent {
+  color: #94a3b8;
+}
+
+/* gris */
+.wa-delivered {
+  color: #94a3b8;
+}
+
+/* gris */
+.wa-read {
+  color: #38bdf8;
+}
+
+/* azul */
+.wa-failed {
+  color: #fb7185;
+}
+
+/* rojo/rosado */

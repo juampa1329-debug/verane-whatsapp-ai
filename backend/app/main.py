@@ -281,14 +281,54 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
 
 @app.get("/api/conversations")
 def get_conversations():
+    """
+    Devuelve lista para el Inbox:
+    - phone, takeover, updated_at
+    - first_name, last_name (CRM)
+    - text, msg_type, direction, created_at del último mensaje (preview)
+    """
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT phone, takeover, updated_at
-            FROM conversations
-            ORDER BY updated_at DESC
+            SELECT
+                c.phone,
+                c.takeover,
+                c.updated_at,
+                c.first_name,
+                c.last_name,
+                c.city,
+                c.customer_type,
+                c.interests,
+                c.tags,
+                c.notes,
+
+                m.text AS last_text,
+                m.msg_type AS last_msg_type,
+                m.direction AS last_direction,
+                m.created_at AS last_created_at
+
+            FROM conversations c
+            LEFT JOIN LATERAL (
+                SELECT text, msg_type, direction, created_at
+                FROM messages
+                WHERE phone = c.phone
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) m ON TRUE
+
+            ORDER BY c.updated_at DESC
             LIMIT 200
         """)).mappings().all()
-    return {"conversations": [dict(r) for r in rows]}
+
+    # Normaliza "text" para que el frontend no cambie tanto
+    out = []
+    for r in rows:
+        d = dict(r)
+        # "text" como preview principal esperado por tu UI
+        d["text"] = d.get("last_text") or ""
+        out.append(d)
+
+    return {"conversations": out}
+
 
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):

@@ -13,6 +13,18 @@ from sqlalchemy import text
 from app.routes.whatsapp import router as whatsapp_router
 from app.routes.whatsapp import send_whatsapp_text, send_whatsapp_media_id
 
+# ✅ IA
+from app.ai.engine import process_message
+from app.ai.context_builder import build_ai_meta
+
+# ✅ (Recomendado) Montar router IA (/api/ai/settings, /api/ai/knowledge, etc.)
+# Si ya existe app/ai/router.py, esto habilita el panel de settings y KB.
+try:
+    from app.ai.router import router as ai_router
+except Exception:
+    ai_router = None
+
+
 # =========================================================
 # APP
 # =========================================================
@@ -43,6 +55,9 @@ async def unhandled_exception_handler(request: StarletteRequest, exc: Exception)
 
 app.include_router(whatsapp_router)
 
+if ai_router is not None:
+    app.include_router(ai_router, prefix="/api/ai")
+
 # =========================================================
 # DATABASE
 # =========================================================
@@ -52,8 +67,8 @@ from app.db import engine
 LAST_PRODUCT_CACHE: dict[str, dict] = {}
 
 def ensure_schema():
-    with engine.connect() as conn:
-        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+    with engine.begin() as conn:
+
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -103,6 +118,47 @@ def ensure_schema():
 
         # ✅ Unread tracking (para filtros "no leído")
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMP"""))
+
+        # ✅ Estado IA estructural
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_state TEXT"""))
+
+        # ✅ Tabla settings IA (requerida por engine.py)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ai_settings (
+                id SERIAL PRIMARY KEY,
+                is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                provider TEXT NOT NULL DEFAULT 'google',
+                model TEXT NOT NULL DEFAULT 'gemma-3-4b-it',
+                system_prompt TEXT NOT NULL DEFAULT '',
+                max_tokens INTEGER NOT NULL DEFAULT 512,
+                temperature DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+
+                fallback_provider TEXT NOT NULL DEFAULT 'groq',
+                fallback_model TEXT NOT NULL DEFAULT 'llama-3.1-8b-instant',
+
+                timeout_sec INTEGER NOT NULL DEFAULT 25,
+                max_retries INTEGER NOT NULL DEFAULT 1,
+
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        # Insertar 1 fila default si la tabla está vacía
+        conn.execute(text("""
+            INSERT INTO ai_settings (
+                is_enabled, provider, model, system_prompt,
+                max_tokens, temperature,
+                fallback_provider, fallback_model,
+                timeout_sec, max_retries
+            )
+            SELECT
+                TRUE, 'google', 'gemma-3-4b-it', '',
+                512, 0.7,
+                'groq', 'llama-3.1-8b-instant',
+                25, 1
+            WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
+        """))
 
 ensure_schema()
 
@@ -253,7 +309,7 @@ def _parse_tags_param(tags: str) -> List[str]:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-13-filters-2"}
+    return {"ok": True, "build": "2026-02-14-ai-rag-helpers-1"}
 
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
@@ -317,10 +373,6 @@ def mark_conversation_read(phone: str):
 
 @app.get("/api/crm/tags")
 def list_crm_tags(limit: int = Query(200, ge=1, le=2000)):
-    """
-    Devuelve tags únicos existentes (desde conversations.tags),
-    para poblar el filtro por tags en el Inbox.
-    """
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT DISTINCT TRIM(LOWER(x)) AS tag
@@ -340,13 +392,6 @@ def get_conversations(
     unread: str = Query("all", description="all|yes|no"),
     tags: str = Query("", description="Filtro por tags CRM. Ej: vip,pago pendiente"),
 ):
-    """
-    Devuelve lista para el Inbox:
-    - phone, takeover, updated_at
-    - first_name, last_name, tags, etc.
-    - preview del último mensaje
-    - has_unread + unread_count
-    """
     takeover = (takeover or "all").strip().lower()
     unread = (unread or "all").strip().lower()
     term = (search or "").strip().lower()
@@ -355,13 +400,11 @@ def get_conversations(
     where = []
     params = {}
 
-    # takeover filter
     if takeover == "on":
         where.append("c.takeover = TRUE")
     elif takeover == "off":
         where.append("c.takeover = FALSE")
 
-    # search filter (phone / nombre CRM / preview)
     if term:
         params["term"] = f"%{term}%"
         where.append("""
@@ -372,7 +415,6 @@ def get_conversations(
             )
         """)
 
-    # tags filter (OR entre tags solicitados)
     if tag_list:
         tag_clauses = []
         for i, t in enumerate(tag_list):
@@ -383,7 +425,6 @@ def get_conversations(
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
-    # unread filter en SQL (si unread != all)
     if unread in ("yes", "no"):
         unread_cond = """
             EXISTS (
@@ -568,6 +609,58 @@ async def ingest(msg: IngestMessage):
             with engine.begin() as conn:
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
+
+    # 3) Disparar IA si es IN y takeover está activo
+    if direction == "in":
+        try:
+            with engine.begin() as conn:
+                c = conn.execute(text("""
+                    SELECT takeover
+                    FROM conversations
+                    WHERE phone = :phone
+                """), {"phone": msg.phone}).mappings().first()
+
+            takeover_on = bool(c and c.get("takeover") is True)
+
+            if takeover_on:
+                meta = build_ai_meta(msg.phone, msg.text or "")
+
+                ai_result = await process_message(
+                    phone=msg.phone,
+                    text=(msg.text or ""),
+                    meta=meta,
+                )
+
+                reply_text = (ai_result.get("reply_text") or "").strip()
+                if reply_text:
+                    # Guardar mensaje OUT en DB
+                    with engine.begin() as conn:
+                        local_out_id = save_message(
+                            conn,
+                            phone=msg.phone,
+                            direction="out",
+                            msg_type="text",
+                            text_msg=reply_text,
+                        )
+
+                    # Enviar por WhatsApp
+                    wa_resp = await send_whatsapp_text(msg.phone, reply_text)
+
+                    wa_message_id = None
+                    if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
+                        wa_message_id = wa_resp.get("wa_message_id")
+
+                    with engine.begin() as conn:
+                        if wa_resp.get("sent") is True and wa_message_id:
+                            set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
+                        else:
+                            err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
+                            set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+
+                    return {"saved": True, "sent": False, "ai": True, "reply": reply_text, "wa": wa_resp, "ai_meta": True}
+
+        except Exception as e:
+            return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}
 

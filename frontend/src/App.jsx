@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import './App.css';
+import AIPanel from "./components/AIPanel";
+
 
 // --- CONFIGURACIÓN ---
 const API_BASE = import.meta.env.VITE_API_BASE || "https://backend.perfumesverane.com";
@@ -1156,10 +1158,16 @@ export default function App() {
             takeover={selectedConversation?.takeover}
           />
         </>
-      ) : (
-        <div className="placeholder-view">
-          Módulo en construcción
+      ) : activeTab === "settings" ? (
+          <div className="placeholder-view" style={{ padding: 0 }}>
+            <AIPanel apiBase={API_BASE} />
+      
         </div>
+        ) : (
+            <div className="placeholder-view">
+              Módulo en construcción
+            </div>
+      
       )}
     </div>
   );

@@ -170,30 +170,6 @@ async def _forward_to_targets(raw_body: bytes):
         await asyncio.gather(*[_post_one(client, u) for u in urls])
 
 
-def _store_in_db(phone: str, direction: str, msg_type: str, text_msg: str, media_id: str | None = None):
-    if not phone:
-        return
-
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO conversations (phone, takeover, updated_at)
-            VALUES (:phone, FALSE, :updated_at)
-            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
-        """), {"phone": phone, "updated_at": datetime.utcnow()})
-
-        conn.execute(text("""
-            INSERT INTO messages (phone, direction, msg_type, text, media_id, created_at)
-            VALUES (:phone, :direction, :msg_type, :text, :media_id, :created_at)
-        """), {
-            "phone": phone,
-            "direction": direction,
-            "msg_type": msg_type or "text",
-            "text": text_msg or "",
-            "media_id": media_id,
-            "created_at": datetime.utcnow(),
-        })
-
-
 def _update_status_in_db(status_obj: dict):
     """
     status_obj típico:
@@ -253,13 +229,34 @@ def _update_status_in_db(status_obj: dict):
             """), {"wa_id": wa_id, "wa_error": wa_error or "failed"})
 
         elif st == "sent":
-            # normalmente ya lo dejamos sent al guardar, pero lo soportamos
             conn.execute(text("""
                 UPDATE messages
                 SET wa_status='sent',
                     wa_ts_sent = COALESCE(wa_ts_sent, :dt)
                 WHERE wa_message_id = :wa_id
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+
+async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: str | None = None):
+    """
+    En vez de escribir directo a DB, usamos el pipeline único:
+    /api/messages/ingest (llamado directo como función).
+    Eso dispara IA si takeover está activo.
+    """
+    try:
+        # Import local para evitar circular imports al cargar módulos
+        from app.main import ingest, IngestMessage  # type: ignore
+
+        payload = IngestMessage(
+            phone=phone or "",
+            direction="in",
+            msg_type=msg_type or "text",
+            text=text_msg or "",
+            media_id=media_id,
+        )
+        await ingest(payload)
+    except Exception as e:
+        print("INGEST_INTERNAL_ERROR:", str(e)[:300])
 
 
 @router.post("/api/whatsapp/webhook")
@@ -285,7 +282,7 @@ async def whatsapp_receive(request: Request):
         for s in statuses:
             _update_status_in_db(s)
 
-        # 2) Mensajes entrantes -> GUARDA DB
+        # 2) Mensajes entrantes -> pasan por ingest (pipeline único)
         messages = value.get("messages") or []
         for m in messages:
             phone = m.get("from")
@@ -306,16 +303,16 @@ async def whatsapp_receive(request: Request):
             else:
                 text_msg = f"[{msg_type}]"
 
-            _store_in_db(
+            # ✅ Usa ingest (que guarda y dispara IA si takeover ON)
+            await _ingest_internal(
                 phone=phone,
-                direction="in",
                 msg_type=msg_type,
                 text_msg=text_msg,
                 media_id=media_id,
             )
 
     except Exception as e:
-        print("WEBHOOK_STORE_ERROR:", str(e))
+        print("WEBHOOK_ERROR:", str(e))
 
     return {"ok": True}
 

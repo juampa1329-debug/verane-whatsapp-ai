@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, List
 
+import requests
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -16,16 +18,18 @@ router = APIRouter()
 # KB endpoints quedan bajo /api/ai/knowledge/*
 router.include_router(knowledge_router, prefix="/knowledge")
 
-# Providers que vamos a soportar desde ya (Fase 1)
+# Providers soportados
 AIProvider = Literal["google", "groq", "mistral", "openrouter"]
 
 # =========================================================
-# Model catalog (whitelist) - backend source of truth
+# Static catalog (safe defaults) - optional fallback
 # =========================================================
 
 MODEL_CATALOG: Dict[str, List[str]] = {
     "google": [
         "gemma-3-4b-it",
+        # puedes dejar otros defaults aquí si quieres
+        # "gemini-2.5-flash",
     ],
     "groq": [
         "llama-3.1-8b-instant",
@@ -40,18 +44,150 @@ MODEL_CATALOG: Dict[str, List[str]] = {
     ],
 }
 
-def _is_valid_provider(p: str) -> bool:
-    return (p or "").strip().lower() in MODEL_CATALOG
 
-def _is_valid_model(provider: str, model: str) -> bool:
+def _is_valid_provider(p: str) -> bool:
+    return (p or "").strip().lower() in ("google", "groq", "mistral", "openrouter")
+
+
+def _is_valid_model_strict(provider: str, model: str) -> bool:
     p = (provider or "").strip().lower()
     m = (model or "").strip()
     return bool(p in MODEL_CATALOG and m in MODEL_CATALOG[p])
 
 
+# =========================================================
+# Live models helpers
+# =========================================================
+
+def _strip_google_model_prefix(name: str) -> str:
+    # "models/gemini-2.5-flash" -> "gemini-2.5-flash"
+    n = (name or "").strip()
+    if n.startswith("models/"):
+        return n.split("/", 1)[1]
+    return n
+
+
+def _fetch_google_models() -> List[Dict[str, Any]]:
+    api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing GOOGLE_AI_API_KEY (or GEMINI_API_KEY)")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    r = requests.get(url, timeout=20)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"google models error {r.status_code}: {r.text[:300]}")
+
+    data = r.json() or {}
+    models = data.get("models") or []
+    out: List[Dict[str, Any]] = []
+    for m in models:
+        raw = (m.get("name") or "").strip()  # models/xxx
+        mid = _strip_google_model_prefix(raw)  # xxx
+        if not mid:
+            continue
+        out.append({
+            "id": mid,
+            "label": m.get("displayName") or mid,
+            "raw": raw,
+        })
+    return out
+
+
+def _fetch_openai_style_models(url: str, api_key: str, label_key: str = "id") -> List[Dict[str, Any]]:
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing API key for provider")
+
+    r = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=20)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"models error {r.status_code}: {r.text[:300]}")
+
+    data = r.json() or {}
+    items = data.get("data") or []
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        mid = (it.get("id") or "").strip()
+        if not mid:
+            continue
+        out.append({"id": mid, "label": it.get(label_key) or mid, "raw": mid})
+    return out
+
+
+def _fetch_groq_models() -> List[Dict[str, Any]]:
+    api_key = os.getenv("GROQ_API_KEY")
+    return _fetch_openai_style_models("https://api.groq.com/openai/v1/models", api_key)
+
+
+def _fetch_mistral_models() -> List[Dict[str, Any]]:
+    api_key = os.getenv("MISTRAL_API_KEY")
+    return _fetch_openai_style_models("https://api.mistral.ai/v1/models", api_key)
+
+
+def _fetch_openrouter_models() -> List[Dict[str, Any]]:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing OPENROUTER_API_KEY")
+
+    r = requests.get(
+        "https://openrouter.ai/api/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"openrouter models error {r.status_code}: {r.text[:300]}")
+
+    data = r.json() or {}
+    items = data.get("data") or []
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        mid = (it.get("id") or "").strip()
+        if not mid:
+            continue
+        name = (it.get("name") or "").strip()
+        out.append({"id": mid, "label": name or mid, "raw": mid})
+    return out
+
+
+def _provider_supports_live(p: str) -> bool:
+    return p in ("google", "groq", "mistral", "openrouter")
+
+
+def _validate_model_flex(provider: str, model: str) -> None:
+    """
+    Opción recomendada (FLEX):
+    - google: acepta gemini-* y gemma-* (y también gemini-*-preview, etc.)
+    - groq: acepta cualquier string no vacío (porque Groq models cambian; el select vendrá de /models/live)
+    - mistral: acepta cualquier string no vacío
+    - openrouter: acepta cualquier string no vacío, pero recomendado "vendor/model"
+    Además: normaliza google quitando "models/" si el user lo pega así.
+    """
+    p = (provider or "").strip().lower()
+    m = (model or "").strip()
+
+    if not p:
+        raise HTTPException(status_code=400, detail="provider is required")
+    if not m:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    if p == "google":
+        m2 = _strip_google_model_prefix(m)
+        if not (m2.startswith("gemini-") or m2.startswith("gemma-")):
+            raise HTTPException(status_code=400, detail=f"Invalid google model format: {m}")
+        return
+
+    if p == "openrouter":
+        # formato recomendado "vendor/model", pero no lo hacemos obligatorio
+        # por compatibilidad; si quieres hacerlo obligatorio:
+        # if "/" not in m: raise HTTPException(...)
+        return
+
+    if p in ("groq", "mistral"):
+        return
+
+    raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
+
 
 # =========================================================
-# DB helpers (solo lectura/escritura; el schema lo crea main.ensure_schema)
+# DB helpers (solo lectura/escritura; schema lo crea main.ensure_schema)
 # =========================================================
 
 def _get_settings_row(conn) -> Dict[str, Any]:
@@ -175,25 +311,26 @@ def update_ai_settings(payload: AISettingsUpdate):
             "max_retries": current.get("max_retries", 1) if payload.max_retries is None else payload.max_retries,
         }
 
+        # required
         if not new_vals["provider"]:
             raise HTTPException(status_code=400, detail="provider is required")
         if not new_vals["model"]:
             raise HTTPException(status_code=400, detail="model is required")
-        
-                # ✅ Validación fuerte provider/model (evita strings inválidos)
+
         if not _is_valid_provider(new_vals["provider"]):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid provider: {new_vals['provider']}. Allowed: {list(MODEL_CATALOG.keys())}"
+                detail=f"Invalid provider: {new_vals['provider']}. Allowed: ['google','groq','mistral','openrouter']",
             )
 
-        if not _is_valid_model(new_vals["provider"], new_vals["model"]):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid model '{new_vals['model']}' for provider '{new_vals['provider']}'"
-            )
+        # ✅ FLEX validation (recommended)
+        _validate_model_flex(new_vals["provider"], new_vals["model"])
 
-        # fallback opcional pero recomendado: si viene, validarlo también
+        # normalize google "models/xxx" -> "xxx"
+        if new_vals["provider"] == "google":
+            new_vals["model"] = _strip_google_model_prefix(new_vals["model"])
+
+        # fallback optional, validate too
         fb_p = (new_vals.get("fallback_provider") or "").strip().lower()
         fb_m = (new_vals.get("fallback_model") or "").strip()
 
@@ -201,14 +338,12 @@ def update_ai_settings(payload: AISettingsUpdate):
             if not _is_valid_provider(fb_p):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Invalid fallback_provider: {fb_p}. Allowed: {list(MODEL_CATALOG.keys())}"
+                    detail=f"Invalid fallback_provider: {fb_p}. Allowed: ['google','groq','mistral','openrouter']",
                 )
-            if fb_m and not _is_valid_model(fb_p, fb_m):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid fallback_model '{fb_m}' for fallback_provider '{fb_p}'"
-                )
-
+            if fb_m:
+                _validate_model_flex(fb_p, fb_m)
+                if fb_p == "google":
+                    new_vals["fallback_model"] = _strip_google_model_prefix(fb_m)
 
         conn.execute(text("""
             UPDATE ai_settings
@@ -252,7 +387,6 @@ async def process_ai_message(payload: AIProcessRequest):
         )
 
     try:
-        # Si no pasan meta manual, usamos el mismo helper que usa el pipeline real
         meta = payload.meta if payload.meta is not None else build_ai_meta(payload.phone, payload.text or "")
 
         result = await process_message(
@@ -280,29 +414,15 @@ async def process_ai_message(payload: AIProcessRequest):
             error=str(e)[:900],
         )
 
+
 @router.get("/models")
 def list_ai_models():
     """
-    Catálogo (whitelist) de providers/modelos permitidos para el frontend.
-    Esto evita que el frontend mande cualquier string y te rompa el engine.
+    Catálogo (whitelist) estático - útil como fallback / defaults.
+    OJO: para modelos reales y actualizados usa /models/live.
     """
     return {
-        "providers": {
-            "google": [
-                "gemma-3-4b-it",
-            ],
-            "groq": [
-                "llama-3.1-8b-instant",
-                "llama-3.1-70b-versatile",
-            ],
-            "mistral": [
-                "mistral-small-latest",
-                "mistral-medium-latest",
-            ],
-            "openrouter": [
-                "google/gemma-2-9b-it",
-            ],
-        },
+        "providers": MODEL_CATALOG,
         "defaults": {
             "provider": "google",
             "model": "gemma-3-4b-it",
@@ -310,6 +430,37 @@ def list_ai_models():
             "fallback_model": "llama-3.1-8b-instant",
         },
     }
+
+
+@router.get("/models/live")
+def list_ai_models_live(
+    provider: str = Query(..., description="google|groq|mistral|openrouter"),
+):
+    """
+    Lista modelos disponibles consultando al provider en vivo usando la API key del entorno.
+    Ideal para poblar el <select> del frontend sin hardcode.
+    """
+    p = (provider or "").strip().lower()
+
+    if not _is_valid_provider(p):
+        raise HTTPException(status_code=400, detail="Invalid provider")
+
+    if not _provider_supports_live(p):
+        raise HTTPException(status_code=400, detail="Provider does not support live listing")
+
+    if p == "google":
+        models = _fetch_google_models()
+    elif p == "groq":
+        models = _fetch_groq_models()
+    elif p == "mistral":
+        models = _fetch_mistral_models()
+    elif p == "openrouter":
+        models = _fetch_openrouter_models()
+    else:
+        models = []
+
+    return {"provider": p, "models": models}
+
 
 @router.get("/debug/prompt")
 def debug_prompt(
@@ -326,19 +477,17 @@ def debug_prompt(
     if not phone:
         raise HTTPException(status_code=400, detail="phone is required")
 
-    # 1) leer settings desde DB
+    # 1) settings
     with engine.begin() as conn:
         s = _get_settings_row(conn)
 
     system_prompt = str(s.get("system_prompt") or "").strip()
 
-    # 2) armar meta igual que en el pipeline real (CRM + history + KB)
+    # 2) meta (CRM + history + KB)
     meta = build_ai_meta(phone, user_text)
 
-    # 3) armar messages EXACTAMENTE como el engine (sin duplicar RAG aquí)
-    #    - system_prompt viene de DB
-    #    - meta["context"] viene del context_builder (ya incluye KB)
-    messages = []
+    # 3) build messages (sin duplicar RAG aquí)
+    messages: List[Dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
 

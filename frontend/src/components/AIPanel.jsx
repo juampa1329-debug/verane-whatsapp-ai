@@ -35,10 +35,67 @@ export default function AIPanel({ apiBase }) {
   const [qaLoading, setQaLoading] = useState(false);
   const [qaOut, setQaOut] = useState(null);
 
-  const providers = useMemo(
-    () => ["google", "groq", "mistral", "openrouter"],
-    []
-  );
+  const providers = useMemo(() => ["google", "groq", "mistral", "openrouter"], []);
+
+  // Models (live + fallback)
+  const [modelsByProvider, setModelsByProvider] = useState({});
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+
+  const providerModels = useMemo(() => {
+    const p = (draft.provider || "").toLowerCase();
+    return Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+  }, [draft.provider, modelsByProvider]);
+
+  const fallbackProviderModels = useMemo(() => {
+    const p = (draft.fallback_provider || "").toLowerCase();
+    return Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+  }, [draft.fallback_provider, modelsByProvider]);
+
+  const loadModels = async (provider) => {
+    const p = (provider || "").trim().toLowerCase();
+    if (!p) return;
+
+    // cache: si ya están cargados, no pedir otra vez
+    if (Array.isArray(modelsByProvider[p]) && modelsByProvider[p].length > 0) return;
+
+    setModelsLoading(true);
+    setModelsError("");
+
+    // 1) intenta live
+    try {
+      const r = await fetch(`${API}/api/ai/models/live?provider=${encodeURIComponent(p)}`);
+      const data = await r.json();
+      if (r.ok && Array.isArray(data?.models) && data.models.length > 0) {
+        setModelsByProvider((prev) => ({ ...prev, [p]: data.models }));
+        return;
+      }
+      throw new Error(data?.detail || "No live models");
+    } catch (e) {
+      // 2) fallback al whitelist (/api/ai/models)
+      try {
+        const r2 = await fetch(`${API}/api/ai/models`);
+        const data2 = await r2.json();
+        const list = data2?.providers?.[p] || [];
+        if (Array.isArray(list) && list.length > 0) {
+          setModelsByProvider((prev) => ({ ...prev, [p]: list }));
+          return;
+        }
+        setModelsError(`No hay modelos disponibles para ${p}`);
+      } catch (e2) {
+        setModelsError(`Error cargando modelos: ${String(e2.message || e2)}`);
+      }
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  const forceReloadModels = async (provider) => {
+    const p = (provider || "").trim().toLowerCase();
+    if (!p) return;
+    setModelsByProvider((prev) => ({ ...prev, [p]: [] }));
+    await loadModels(p);
+  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -91,13 +148,11 @@ export default function AIPanel({ apiBase }) {
   const loadKbFiles = async () => {
     setKbLoading(true);
     try {
-      const url = `${API}/api/ai/knowledge/files?active=${encodeURIComponent(
-        kbActiveFilter
-      )}&limit=200`;
+      const url = `${API}/api/ai/knowledge/files?active=${encodeURIComponent(kbActiveFilter)}&limit=200`;
       const r = await fetch(url);
       const data = await r.json();
       if (!r.ok) throw new Error(data?.detail || "No se pudieron cargar archivos KB");
-      setKbFiles(Array.isArray(data) ? data : (data || []));
+      setKbFiles(Array.isArray(data) ? data : data || []);
     } catch (e) {
       setStatus(`KB error: ${String(e.message || e)}`);
     } finally {
@@ -208,6 +263,37 @@ export default function AIPanel({ apiBase }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbActiveFilter]);
 
+  // cargar modelos cuando cambie provider
+  useEffect(() => {
+    if (!draft?.provider) return;
+    loadModels(draft.provider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.provider]);
+
+  // cargar modelos cuando cambie fallback_provider
+  useEffect(() => {
+    if (!draft?.fallback_provider) return;
+    loadModels(draft.fallback_provider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.fallback_provider]);
+
+  // si el modelo actual no existe en la lista, setear el primero disponible
+  useEffect(() => {
+    if (!providerModels || providerModels.length === 0) return;
+    if (!draft.model || !providerModels.includes(draft.model)) {
+      setDraft((p) => ({ ...p, model: providerModels[0] }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerModels]);
+
+  useEffect(() => {
+    if (!fallbackProviderModels || fallbackProviderModels.length === 0) return;
+    if (!draft.fallback_model || !fallbackProviderModels.includes(draft.fallback_model)) {
+      setDraft((p) => ({ ...p, fallback_model: fallbackProviderModels[0] }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fallbackProviderModels]);
+
   if (!API) {
     return (
       <div style={panelStyle}>
@@ -224,7 +310,15 @@ export default function AIPanel({ apiBase }) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>Ajustes IA</h2>
         {status && (
-          <span style={{ fontSize: 13, opacity: 0.9, padding: "4px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.15)" }}>
+          <span
+            style={{
+              fontSize: 13,
+              opacity: 0.9,
+              padding: "4px 10px",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,0.15)",
+            }}
+          >
             {status}
           </span>
         )}
@@ -255,18 +349,49 @@ export default function AIPanel({ apiBase }) {
                   onChange={(e) => setDraft((p) => ({ ...p, provider: e.target.value }))}
                 >
                   {providers.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </select>
               </div>
 
+              {/* MODELO (SELECT) */}
               <div style={rowStyle}>
                 <label style={labelStyle}>Modelo</label>
-                <input
-                  value={draft.model}
-                  onChange={(e) => setDraft((p) => ({ ...p, model: e.target.value }))}
-                  placeholder="ej: gemma-3-4b-it"
-                />
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <select
+                    value={draft.model || ""}
+                    onChange={(e) => setDraft((p) => ({ ...p, model: e.target.value }))}
+                    disabled={modelsLoading && providerModels.length === 0}
+                    style={{ width: "100%" }}
+                  >
+                    {providerModels.length === 0 ? (
+                      <option value="">{modelsLoading ? "Cargando modelos..." : "Sin modelos"}</option>
+                    ) : (
+                      providerModels.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))
+                    )}
+                  </select>
+
+                  <button
+                    type="button"
+                    style={{ ...btnGhost, padding: "8px 10px" }}
+                    onClick={() => forceReloadModels(draft.provider)}
+                    title="Refrescar modelos"
+                  >
+                    ↻
+                  </button>
+                </div>
+
+                {modelsError && (
+                  <div style={{ gridColumn: "2 / -1", fontSize: 12, color: "#ff6b6b", marginTop: 6 }}>
+                    {modelsError}
+                  </div>
+                )}
               </div>
 
               <div style={{ ...rowStyle, alignItems: "flex-start" }}>
@@ -312,18 +437,31 @@ export default function AIPanel({ apiBase }) {
                   onChange={(e) => setDraft((p) => ({ ...p, fallback_provider: e.target.value }))}
                 >
                   {providers.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </select>
               </div>
 
+              {/* FALLBACK MODEL (SELECT) */}
               <div style={rowStyle}>
                 <label style={labelStyle}>Fallback model</label>
-                <input
-                  value={draft.fallback_model}
+                <select
+                  value={draft.fallback_model || ""}
                   onChange={(e) => setDraft((p) => ({ ...p, fallback_model: e.target.value }))}
-                  placeholder="ej: llama-3.1-8b-instant"
-                />
+                  disabled={fallbackProviderModels.length === 0}
+                >
+                  {fallbackProviderModels.length === 0 ? (
+                    <option value="">Sin modelos</option>
+                  ) : (
+                    fallbackProviderModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))
+                  )}
+                </select>
               </div>
 
               <div style={rowStyle}>
@@ -414,9 +552,7 @@ export default function AIPanel({ apiBase }) {
           </div>
 
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
-              Archivos ({kbFiles.length})
-            </div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Archivos ({kbFiles.length})</div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflow: "auto", paddingRight: 6 }}>
               {kbFiles.map((f) => (
@@ -429,13 +565,9 @@ export default function AIPanel({ apiBase }) {
                       {f.mime_type} • {f.size_bytes} bytes • {f.is_active ? "activo" : "inactivo"}
                     </div>
                     {f.notes ? (
-                      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
-                        📝 {f.notes}
-                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>📝 {f.notes}</div>
                     ) : null}
-                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
-                      upd: {String(f.updated_at || "")}
-                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>upd: {String(f.updated_at || "")}</div>
                   </div>
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -449,9 +581,7 @@ export default function AIPanel({ apiBase }) {
                 </div>
               ))}
 
-              {!kbLoading && kbFiles.length === 0 && (
-                <div style={{ opacity: 0.8 }}>No hay archivos KB.</div>
-              )}
+              {!kbLoading && kbFiles.length === 0 && <div style={{ opacity: 0.8 }}>No hay archivos KB.</div>}
             </div>
           </div>
         </section>
@@ -462,11 +592,7 @@ export default function AIPanel({ apiBase }) {
 
           <div style={rowStyle}>
             <label style={labelStyle}>Phone</label>
-            <input
-              value={qaPhone}
-              onChange={(e) => setQaPhone(e.target.value)}
-              placeholder="57300..."
-            />
+            <input value={qaPhone} onChange={(e) => setQaPhone(e.target.value)} placeholder="57300..." />
           </div>
 
           <div style={{ ...rowStyle, alignItems: "flex-start" }}>
@@ -489,11 +615,7 @@ export default function AIPanel({ apiBase }) {
             </button>
           </div>
 
-          {qaOut && (
-            <pre style={preStyle}>
-{JSON.stringify(qaOut, null, 2)}
-            </pre>
-          )}
+          {qaOut && <pre style={preStyle}>{JSON.stringify(qaOut, null, 2)}</pre>}
 
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>
             Usa <code>/api/ai/process-message</code> (endpoint manual de prueba).

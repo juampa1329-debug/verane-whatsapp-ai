@@ -610,7 +610,7 @@ async def ingest(msg: IngestMessage):
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
-    # 3) Disparar IA si es IN y takeover está activo
+    # 3) Disparar IA si es IN, IA habilitada, y takeover está OFF (bot mode)
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -620,49 +620,71 @@ async def ingest(msg: IngestMessage):
                     WHERE phone = :phone
                 """), {"phone": msg.phone}).mappings().first()
 
+                s = conn.execute(text("""
+                    SELECT is_enabled
+                    FROM ai_settings
+                    ORDER BY id DESC
+                    LIMIT 1
+                """)).mappings().first()
+
             takeover_on = bool(c and c.get("takeover") is True)
+            ai_enabled = bool(s and s.get("is_enabled") is True)
 
-            if takeover_on:
-                meta = build_ai_meta(msg.phone, msg.text or "")
+            # takeover ON = humano => NO IA
+            # takeover OFF = bot => SI IA (si está habilitada)
+            if (not ai_enabled) or takeover_on:
+                return {"saved": True, "sent": False, "ai": False, "reason": "ai_disabled_or_takeover_on"}
 
-                ai_result = await process_message(
+            meta = build_ai_meta(msg.phone, msg.text or "")
+
+            ai_result = await process_message(
+                phone=msg.phone,
+                text=(msg.text or ""),
+                meta=meta,
+            )
+
+            reply_text = (ai_result.get("reply_text") or "").strip()
+            if not reply_text:
+                return {"saved": True, "sent": False, "ai": True, "reply": ""}
+
+            # Guardar mensaje OUT en DB
+            with engine.begin() as conn:
+                local_out_id = save_message(
+                    conn,
                     phone=msg.phone,
-                    text=(msg.text or ""),
-                    meta=meta,
+                    direction="out",
+                    msg_type="text",
+                    text_msg=reply_text,
                 )
 
-                reply_text = (ai_result.get("reply_text") or "").strip()
-                if reply_text:
-                    # Guardar mensaje OUT en DB
-                    with engine.begin() as conn:
-                        local_out_id = save_message(
-                            conn,
-                            phone=msg.phone,
-                            direction="out",
-                            msg_type="text",
-                            text_msg=reply_text,
-                        )
+            # Enviar por WhatsApp
+            wa_resp = await send_whatsapp_text(msg.phone, reply_text)
 
-                    # Enviar por WhatsApp
-                    wa_resp = await send_whatsapp_text(msg.phone, reply_text)
+            wa_message_id = None
+            if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
+                wa_message_id = wa_resp.get("wa_message_id")
 
-                    wa_message_id = None
-                    if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
-                        wa_message_id = wa_resp.get("wa_message_id")
+            with engine.begin() as conn:
+                if wa_resp.get("sent") is True and wa_message_id:
+                    set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
+                else:
+                    err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
+                    set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
 
-                    with engine.begin() as conn:
-                        if wa_resp.get("sent") is True and wa_message_id:
-                            set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
-                        else:
-                            err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
-                            set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
-
-                    return {"saved": True, "sent": False, "ai": True, "reply": reply_text, "wa": wa_resp, "ai_meta": True}
+            return {
+                "saved": True,
+                "sent": bool(wa_resp.get("sent")),
+                "ai": True,
+                "reply": reply_text,
+                "wa": wa_resp,
+                "ai_meta": True
+            }
 
         except Exception as e:
             return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}
+
 
 @app.post("/api/conversations/takeover")
 def set_takeover(payload: TakeoverPayload):

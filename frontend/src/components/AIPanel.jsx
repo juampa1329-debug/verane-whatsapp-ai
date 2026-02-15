@@ -20,6 +20,11 @@ export default function AIPanel({ apiBase }) {
     fallback_model: "llama-3.1-8b-instant",
     timeout_sec: 25,
     max_retries: 1,
+
+    // ✅ NUEVO (humanización / separación de mensajes)
+    reply_chunk_chars: 480,
+    reply_delay_ms: 900,
+    typing_delay_ms: 450,
   });
 
   // KB
@@ -115,6 +120,32 @@ export default function AIPanel({ apiBase }) {
     await loadModels(p);
   };
 
+  const clampNum = (v, min, max, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  };
+
+  const coalesceSettings = (data) => {
+    return {
+      is_enabled: !!data.is_enabled,
+      provider: data.provider || "google",
+      model: data.model || "gemma-3-4b-it",
+      system_prompt: data.system_prompt || "",
+      max_tokens: Number(data.max_tokens ?? 512),
+      temperature: Number(data.temperature ?? 0.7),
+      fallback_provider: data.fallback_provider || "groq",
+      fallback_model: data.fallback_model || "llama-3.1-8b-instant",
+      timeout_sec: Number(data.timeout_sec ?? 25),
+      max_retries: Number(data.max_retries ?? 1),
+
+      // ✅ NUEVO (si backend no lo trae, defaults)
+      reply_chunk_chars: clampNum(data.reply_chunk_chars ?? 480, 120, 2000, 480),
+      reply_delay_ms: clampNum(data.reply_delay_ms ?? 900, 0, 15000, 900),
+      typing_delay_ms: clampNum(data.typing_delay_ms ?? 450, 0, 15000, 450),
+    };
+  };
+
   const loadSettings = async () => {
     setLoading(true);
     setStatus("");
@@ -122,19 +153,9 @@ export default function AIPanel({ apiBase }) {
       const r = await fetch(`${API}/api/ai/settings`);
       const data = await r.json();
       if (!r.ok) throw new Error(data?.detail || "No se pudieron cargar settings");
+
       setSettings(data);
-      setDraft({
-        is_enabled: !!data.is_enabled,
-        provider: data.provider || "google",
-        model: data.model || "gemma-3-4b-it",
-        system_prompt: data.system_prompt || "",
-        max_tokens: Number(data.max_tokens ?? 512),
-        temperature: Number(data.temperature ?? 0.7),
-        fallback_provider: data.fallback_provider || "groq",
-        fallback_model: data.fallback_model || "llama-3.1-8b-instant",
-        timeout_sec: Number(data.timeout_sec ?? 25),
-        max_retries: Number(data.max_retries ?? 1),
-      });
+      setDraft(coalesceSettings(data));
     } catch (e) {
       setStatus(`Error: ${String(e.message || e)}`);
     } finally {
@@ -146,14 +167,30 @@ export default function AIPanel({ apiBase }) {
     setSaving(true);
     setStatus("");
     try {
+      // ✅ aseguramos números razonables
+      const payload = {
+        ...draft,
+        max_tokens: clampNum(draft.max_tokens, 32, 8192, 512),
+        temperature: clampNum(draft.temperature, 0, 2, 0.7),
+        timeout_sec: clampNum(draft.timeout_sec, 5, 120, 25),
+        max_retries: clampNum(draft.max_retries, 0, 3, 1),
+
+        // ✅ NUEVO
+        reply_chunk_chars: clampNum(draft.reply_chunk_chars, 120, 2000, 480),
+        reply_delay_ms: clampNum(draft.reply_delay_ms, 0, 15000, 900),
+        typing_delay_ms: clampNum(draft.typing_delay_ms, 0, 15000, 450),
+      };
+
       const r = await fetch(`${API}/api/ai/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(payload),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.detail || "No se pudieron guardar settings");
+
       setSettings(data);
+      setDraft(coalesceSettings(data));
       setStatus("Guardado ✅");
     } catch (e) {
       setStatus(`Error al guardar: ${String(e.message || e)}`);
@@ -314,6 +351,13 @@ export default function AIPanel({ apiBase }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fallbackProviderModels]);
 
+  const humanPreview = useMemo(() => {
+    const c = clampNum(draft.reply_chunk_chars, 120, 2000, 480);
+    const d = clampNum(draft.reply_delay_ms, 0, 15000, 900);
+    const t = clampNum(draft.typing_delay_ms, 0, 15000, 450);
+    return `Chunks aprox: ${c} chars • Delay entre mensajes: ${d}ms • “Typing” inicial: ${t}ms`;
+  }, [draft.reply_chunk_chars, draft.reply_delay_ms, draft.typing_delay_ms]);
+
   if (!API) {
     return (
       <div style={panelStyle}>
@@ -364,10 +408,7 @@ export default function AIPanel({ apiBase }) {
 
               <div style={rowStyle}>
                 <label style={labelStyle}>Provider</label>
-                <select
-                  value={draft.provider}
-                  onChange={(e) => setDraft((p) => ({ ...p, provider: e.target.value }))}
-                >
+                <select value={draft.provider} onChange={(e) => setDraft((p) => ({ ...p, provider: e.target.value }))}>
                   {providers.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -503,6 +544,44 @@ export default function AIPanel({ apiBase }) {
                   max={3}
                   value={draft.max_retries}
                   onChange={(e) => setDraft((p) => ({ ...p, max_retries: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              {/* ✅ NUEVO: Humanización / chunks */}
+              <hr style={hrStyle} />
+              <h4 style={{ margin: "6px 0 0 0" }}>Humanización (WhatsApp)</h4>
+              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{humanPreview}</div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Chars por mensaje</label>
+                <input
+                  type="number"
+                  min={120}
+                  max={2000}
+                  value={draft.reply_chunk_chars}
+                  onChange={(e) => setDraft((p) => ({ ...p, reply_chunk_chars: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Delay entre mensajes (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15000}
+                  value={draft.reply_delay_ms}
+                  onChange={(e) => setDraft((p) => ({ ...p, reply_delay_ms: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Typing delay inicial (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15000}
+                  value={draft.typing_delay_ms}
+                  onChange={(e) => setDraft((p) => ({ ...p, typing_delay_ms: Number(e.target.value || 0) }))}
                 />
               </div>
 

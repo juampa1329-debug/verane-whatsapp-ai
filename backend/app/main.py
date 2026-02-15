@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+import asyncio
 from datetime import datetime
 from typing import Optional, List
 
@@ -18,7 +19,6 @@ from app.ai.engine import process_message
 from app.ai.context_builder import build_ai_meta
 
 # ✅ (Recomendado) Montar router IA (/api/ai/settings, /api/ai/knowledge, etc.)
-# Si ya existe app/ai/router.py, esto habilita el panel de settings y KB.
 try:
     from app.ai.router import router as ai_router
 except Exception:
@@ -66,9 +66,9 @@ from app.db import engine
 
 LAST_PRODUCT_CACHE: dict[str, dict] = {}
 
+
 def ensure_schema():
     with engine.begin() as conn:
-
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -122,7 +122,7 @@ def ensure_schema():
         # ✅ Estado IA estructural
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_state TEXT"""))
 
-        # ✅ Tabla settings IA (requerida por engine.py)
+        # ✅ Tabla settings IA
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS ai_settings (
                 id SERIAL PRIMARY KEY,
@@ -144,21 +144,39 @@ def ensure_schema():
             )
         """))
 
+        # ✅ NUEVO: settings humanización (router.py ya los usa)
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER"""))
+
         # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
             INSERT INTO ai_settings (
                 is_enabled, provider, model, system_prompt,
                 max_tokens, temperature,
                 fallback_provider, fallback_model,
-                timeout_sec, max_retries
+                timeout_sec, max_retries,
+                reply_chunk_chars, reply_delay_ms, typing_delay_ms
             )
             SELECT
                 TRUE, 'google', 'gemma-3-4b-it', '',
                 512, 0.7,
                 'groq', 'llama-3.1-8b-instant',
-                25, 1
+                25, 1,
+                480, 900, 450
             WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
         """))
+
+        # ✅ Si ya existía la fila, aseguramos defaults si quedaron NULL
+        conn.execute(text("""
+            UPDATE ai_settings
+            SET
+                reply_chunk_chars = COALESCE(reply_chunk_chars, 480),
+                reply_delay_ms = COALESCE(reply_delay_ms, 900),
+                typing_delay_ms = COALESCE(typing_delay_ms, 450)
+            WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
+        """))
+
 
 ensure_schema()
 
@@ -187,6 +205,7 @@ class IngestMessage(BaseModel):
     real_image: Optional[str] = None
     permalink: Optional[str] = None
 
+
 class CRMIn(BaseModel):
     phone: str
     first_name: str = ""
@@ -197,9 +216,11 @@ class CRMIn(BaseModel):
     tags: str = ""
     notes: str = ""
 
+
 class TakeoverPayload(BaseModel):
     phone: str
     takeover: bool
+
 
 # =========================================================
 # HELPERS
@@ -271,6 +292,7 @@ def save_message(
 
     return message_id
 
+
 def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str], sent_ok: bool, wa_error: str = ""):
     if not wa_message_id or not sent_ok:
         conn.execute(text("""
@@ -290,10 +312,8 @@ def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str]
         WHERE id = :id
     """), {"id": local_message_id, "wa_message_id": wa_message_id})
 
+
 def _parse_tags_param(tags: str) -> List[str]:
-    """
-    tags param: "vip,pago pendiente" -> ["vip", "pago pendiente"]
-    """
     if not tags:
         return []
     out = []
@@ -303,13 +323,212 @@ def _parse_tags_param(tags: str) -> List[str]:
             out.append(tt)
     return out
 
+
+def _get_ai_send_settings() -> dict:
+    """
+    Lee chunk/delay desde ai_settings.
+    """
+    defaults = {"reply_chunk_chars": 480, "reply_delay_ms": 900, "typing_delay_ms": 450}
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
+                    COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
+                    COALESCE(typing_delay_ms, 450) AS typing_delay_ms
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+        if not r:
+            return defaults
+        d = dict(r)
+        d["reply_chunk_chars"] = int(max(120, min(int(d.get("reply_chunk_chars") or 480), 2000)))
+        d["reply_delay_ms"] = int(max(0, min(int(d.get("reply_delay_ms") or 900), 15000)))
+        d["typing_delay_ms"] = int(max(0, min(int(d.get("typing_delay_ms") or 450), 15000)))
+        return d
+    except Exception:
+        return defaults
+
+
+def _normalize_text(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\r\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
+    """
+    Splitter igual al de whatsapp.py para que el UI y la DB queden 1:1 con lo enviado.
+    """
+    text_msg = _normalize_text(text_msg)
+    if not text_msg:
+        return [""]
+
+    if max_chars <= 0:
+        return [text_msg]
+
+    paras = [p.strip() for p in text_msg.split("\n\n") if p.strip()]
+    out: list[str] = []
+
+    sentence_split_re = re.compile(r"(?<=[\.\!\?])\s+")
+
+    def _push_piece(piece: str):
+        piece = piece.strip()
+        if not piece:
+            return
+        if len(piece) <= max_chars:
+            out.append(piece)
+            return
+
+        sents = sentence_split_re.split(piece)
+        if len(sents) <= 1:
+            i = 0
+            while i < len(piece):
+                chunk = piece[i:i + max_chars].strip()
+                if chunk:
+                    out.append(chunk)
+                i += max_chars
+            return
+
+        buf = ""
+        for s in sents:
+            s = s.strip()
+            if not s:
+                continue
+            cand = (buf + " " + s).strip() if buf else s
+            if len(cand) <= max_chars:
+                buf = cand
+            else:
+                if buf:
+                    out.append(buf)
+                if len(s) <= max_chars:
+                    buf = s
+                else:
+                    j = 0
+                    while j < len(s):
+                        c = s[j:j + max_chars].strip()
+                        if c:
+                            out.append(c)
+                        j += max_chars
+                    buf = ""
+        if buf:
+            out.append(buf)
+
+    buf = ""
+    for p in paras:
+        if not buf:
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+            continue
+
+        cand = (buf + "\n\n" + p).strip()
+        if len(cand) <= max_chars:
+            buf = cand
+        else:
+            out.append(buf)
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+
+    if buf:
+        out.append(buf)
+
+    out = [x.strip() for x in out if x.strip()]
+    return out or [""]
+
+
+async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
+    """
+    - Divide texto en chunks (según ai_settings)
+    - Por CADA chunk:
+        - guarda mensaje OUT en DB
+        - envía a WhatsApp
+        - actualiza wa_message_id / status
+        - espera delay
+    """
+    s = _get_ai_send_settings()
+    max_chars = int(s.get("reply_chunk_chars") or 480)
+    reply_delay = int(s.get("reply_delay_ms") or 900) / 1000.0
+    typing_delay = int(s.get("typing_delay_ms") or 450) / 1000.0
+
+    chunks = _split_long_text(full_text or "", max_chars=max_chars)
+    if not chunks:
+        chunks = [""]
+
+    # typing delay antes del primer envío
+    if typing_delay > 0:
+        await asyncio.sleep(typing_delay)
+
+    sent_any = False
+    wa_ids: list[str] = []
+    local_ids: list[int] = []
+    last_wa_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
+
+    for idx, chunk in enumerate(chunks):
+        # 1) Guardar chunk como mensaje OUT
+        with engine.begin() as conn:
+            local_out_id = save_message(
+                conn,
+                phone=phone,
+                direction="out",
+                msg_type="text",
+                text_msg=chunk,
+            )
+        local_ids.append(local_out_id)
+
+        # 2) Enviar chunk por WhatsApp
+        wa_resp = await send_whatsapp_text(phone, chunk)
+        last_wa_resp = wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
+
+        wa_message_id = None
+        if isinstance(last_wa_resp, dict) and last_wa_resp.get("sent") is True:
+            sent_any = True
+            wa_message_id = last_wa_resp.get("wa_message_id")
+            if wa_message_id:
+                wa_ids.append(str(wa_message_id))
+
+        # 3) Actualizar DB con resultado
+        with engine.begin() as conn:
+            if last_wa_resp.get("sent") is True and wa_message_id:
+                set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
+            else:
+                err = last_wa_resp.get("whatsapp_body") or last_wa_resp.get("reason") or last_wa_resp.get("error") or "WhatsApp send failed"
+                set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+
+        # 4) Delay entre chunks (no después del último)
+        if idx < len(chunks) - 1 and reply_delay > 0:
+            await asyncio.sleep(reply_delay)
+
+    return {
+        "sent": sent_any,
+        "chunks_sent": len(chunks),
+        "local_message_ids": local_ids,
+        "wa_message_ids": wa_ids,
+        "last_wa": last_wa_resp,
+        "humanized": True,
+        "settings_used": {
+            "reply_chunk_chars": max_chars,
+            "reply_delay_ms": int(reply_delay * 1000),
+            "typing_delay_ms": int(typing_delay * 1000),
+        },
+    }
+
+
 # =========================================================
 # ENDPOINTS
 # =========================================================
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-14-ai-rag-helpers-1"}
+    return {"ok": True, "build": "2026-02-15-ai-chunked-db-1"}
+
 
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
@@ -350,12 +569,9 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
 
     return {"ok": True, "media_id": media_id, "mime_type": mime, "filename": filename, "kind": kind}
 
+
 @app.post("/api/conversations/{phone}/read")
 def mark_conversation_read(phone: str):
-    """
-    Marca conversación como leída: last_read_at = UTC NOW
-    Frontend debe llamar esto al seleccionar/abrir un chat.
-    """
     phone = (phone or "").strip()
     if not phone:
         raise HTTPException(status_code=400, detail="phone required")
@@ -371,6 +587,7 @@ def mark_conversation_read(phone: str):
 
     return {"ok": True}
 
+
 @app.get("/api/crm/tags")
 def list_crm_tags(limit: int = Query(200, ge=1, le=2000)):
     with engine.begin() as conn:
@@ -384,6 +601,7 @@ def list_crm_tags(limit: int = Query(200, ge=1, le=2000)):
         """), {"limit": limit}).mappings().all()
 
     return {"tags": [r["tag"] for r in rows]}
+
 
 @app.get("/api/conversations")
 def get_conversations(
@@ -509,6 +727,7 @@ def get_conversations(
 
     return {"conversations": out}
 
+
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):
     with engine.begin() as conn:
@@ -524,6 +743,7 @@ def get_messages(phone: str):
             LIMIT 500
         """), {"phone": phone}).mappings().all()
     return {"messages": [dict(r) for r in rows]}
+
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
@@ -620,10 +840,11 @@ async def ingest(msg: IngestMessage):
                     WHERE phone = :phone
                 """), {"phone": msg.phone}).mappings().first()
 
+                # ✅ Consistente con engine/router: primera fila (ASC)
                 s = conn.execute(text("""
                     SELECT is_enabled
                     FROM ai_settings
-                    ORDER BY id DESC
+                    ORDER BY id ASC
                     LIMIT 1
                 """)).mappings().first()
 
@@ -647,37 +868,23 @@ async def ingest(msg: IngestMessage):
             if not reply_text:
                 return {"saved": True, "sent": False, "ai": True, "reply": ""}
 
-            # Guardar mensaje OUT en DB
-            with engine.begin() as conn:
-                local_out_id = save_message(
-                    conn,
-                    phone=msg.phone,
-                    direction="out",
-                    msg_type="text",
-                    text_msg=reply_text,
-                )
-
-            # Enviar por WhatsApp
-            wa_resp = await send_whatsapp_text(msg.phone, reply_text)
-
-            wa_message_id = None
-            if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
-                wa_message_id = wa_resp.get("wa_message_id")
-
-            with engine.begin() as conn:
-                if wa_resp.get("sent") is True and wa_message_id:
-                    set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
-                else:
-                    err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
-                    set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+            # ✅ NUEVO: enviar por chunks + guardar cada chunk como mensaje OUT separado
+            send_result = await _send_ai_reply_in_chunks(msg.phone, reply_text)
 
             return {
                 "saved": True,
-                "sent": bool(wa_resp.get("sent")),
+                "sent": bool(send_result.get("sent")),
                 "ai": True,
                 "reply": reply_text,
-                "wa": wa_resp,
-                "ai_meta": True
+                "ai_meta": True,
+                "humanized": True,
+                "chunks": {
+                    "count": int(send_result.get("chunks_sent") or 0),
+                    "local_message_ids": send_result.get("local_message_ids") or [],
+                    "wa_message_ids": send_result.get("wa_message_ids") or [],
+                    "settings_used": send_result.get("settings_used") or {},
+                },
+                "wa_last": send_result.get("last_wa") or {},
             }
 
         except Exception as e:
@@ -697,6 +904,7 @@ def set_takeover(payload: TakeoverPayload):
                           updated_at = EXCLUDED.updated_at
         """), {"phone": payload.phone, "takeover": payload.takeover, "updated_at": datetime.utcnow()})
     return {"ok": True}
+
 
 @app.post("/api/crm")
 def save_crm(payload: CRMIn):
@@ -731,6 +939,7 @@ def save_crm(payload: CRMIn):
             "notes": payload.notes,
         })
     return {"ok": True}
+
 
 @app.get("/api/crm/{phone}")
 def get_crm(phone: str):

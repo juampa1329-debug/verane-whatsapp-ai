@@ -28,8 +28,6 @@ AIProvider = Literal["google", "groq", "mistral", "openrouter"]
 MODEL_CATALOG: Dict[str, List[str]] = {
     "google": [
         "gemma-3-4b-it",
-        # puedes dejar otros defaults aquí si quieres
-        # "gemini-2.5-flash",
     ],
     "groq": [
         "llama-3.1-8b-instant",
@@ -47,12 +45,6 @@ MODEL_CATALOG: Dict[str, List[str]] = {
 
 def _is_valid_provider(p: str) -> bool:
     return (p or "").strip().lower() in ("google", "groq", "mistral", "openrouter")
-
-
-def _is_valid_model_strict(provider: str, model: str) -> bool:
-    p = (provider or "").strip().lower()
-    m = (model or "").strip()
-    return bool(p in MODEL_CATALOG and m in MODEL_CATALOG[p])
 
 
 # =========================================================
@@ -153,12 +145,9 @@ def _provider_supports_live(p: str) -> bool:
 
 def _validate_model_flex(provider: str, model: str) -> None:
     """
-    Opción recomendada (FLEX):
-    - google: acepta gemini-* y gemma-* (y también gemini-*-preview, etc.)
-    - groq: acepta cualquier string no vacío (porque Groq models cambian; el select vendrá de /models/live)
-    - mistral: acepta cualquier string no vacío
-    - openrouter: acepta cualquier string no vacío, pero recomendado "vendor/model"
-    Además: normaliza google quitando "models/" si el user lo pega así.
+    FLEX validation:
+    - google: acepta gemini-* y gemma-* (y preview)
+    - groq/mistral/openrouter: acepta cualquier string no vacío
     """
     p = (provider or "").strip().lower()
     m = (model or "").strip()
@@ -174,23 +163,25 @@ def _validate_model_flex(provider: str, model: str) -> None:
             raise HTTPException(status_code=400, detail=f"Invalid google model format: {m}")
         return
 
-    if p == "openrouter":
-        # formato recomendado "vendor/model", pero no lo hacemos obligatorio
-        # por compatibilidad; si quieres hacerlo obligatorio:
-        # if "/" not in m: raise HTTPException(...)
-        return
-
-    if p in ("groq", "mistral"):
+    if p in ("openrouter", "groq", "mistral"):
         return
 
     raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
 
 
 # =========================================================
-# DB helpers (solo lectura/escritura; schema lo crea main.ensure_schema)
+# DB helpers
 # =========================================================
 
 def _get_settings_row(conn) -> Dict[str, Any]:
+    """
+    OJO: Estos campos (reply_chunk_chars, reply_delay_ms, typing_delay_ms)
+    deben existir en la tabla ai_settings.
+    Si aún no existen, agrégalos en main.ensure_schema():
+      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER;
+      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER;
+      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER;
+    """
     r = conn.execute(text("""
         SELECT
             id,
@@ -204,6 +195,11 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(fallback_model, '') AS fallback_model,
             COALESCE(timeout_sec, 25) AS timeout_sec,
             COALESCE(max_retries, 1) AS max_retries,
+
+            COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
+            COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
+            COALESCE(typing_delay_ms, 450) AS typing_delay_ms,
+
             created_at,
             updated_at
         FROM ai_settings
@@ -234,6 +230,11 @@ class AISettingsOut(BaseModel):
     timeout_sec: int = 25
     max_retries: int = 1
 
+    # ✅ humanización
+    reply_chunk_chars: int = 480         # tamaño por “párrafo”/chunk
+    reply_delay_ms: int = 900            # delay entre chunks
+    typing_delay_ms: int = 450           # delay inicial antes de enviar el primer chunk
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -250,6 +251,11 @@ class AISettingsUpdate(BaseModel):
     fallback_model: Optional[str] = None
     timeout_sec: Optional[int] = Field(default=None, ge=5, le=120)
     max_retries: Optional[int] = Field(default=None, ge=0, le=3)
+
+    # ✅ humanización (ajustable en frontend)
+    reply_chunk_chars: Optional[int] = Field(default=None, ge=120, le=2000)
+    reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=6000)
+    typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=6000)
 
 
 class AIProcessRequest(BaseModel):
@@ -309,6 +315,11 @@ def update_ai_settings(payload: AISettingsUpdate):
             "fallback_model": (str(fallback_model or "").strip()),
             "timeout_sec": current.get("timeout_sec", 25) if payload.timeout_sec is None else payload.timeout_sec,
             "max_retries": current.get("max_retries", 1) if payload.max_retries is None else payload.max_retries,
+
+            # ✅ humanización
+            "reply_chunk_chars": current.get("reply_chunk_chars", 480) if payload.reply_chunk_chars is None else payload.reply_chunk_chars,
+            "reply_delay_ms": current.get("reply_delay_ms", 900) if payload.reply_delay_ms is None else payload.reply_delay_ms,
+            "typing_delay_ms": current.get("typing_delay_ms", 450) if payload.typing_delay_ms is None else payload.typing_delay_ms,
         }
 
         # required
@@ -323,7 +334,7 @@ def update_ai_settings(payload: AISettingsUpdate):
                 detail=f"Invalid provider: {new_vals['provider']}. Allowed: ['google','groq','mistral','openrouter']",
             )
 
-        # ✅ FLEX validation (recommended)
+        # FLEX validation
         _validate_model_flex(new_vals["provider"], new_vals["model"])
 
         # normalize google "models/xxx" -> "xxx"
@@ -358,6 +369,11 @@ def update_ai_settings(payload: AISettingsUpdate):
                 fallback_model = :fallback_model,
                 timeout_sec = :timeout_sec,
                 max_retries = :max_retries,
+
+                reply_chunk_chars = :reply_chunk_chars,
+                reply_delay_ms = :reply_delay_ms,
+                typing_delay_ms = :typing_delay_ms,
+
                 updated_at = NOW()
             WHERE id = :id
         """), {**new_vals, "id": sid})
@@ -371,7 +387,7 @@ def update_ai_settings(payload: AISettingsUpdate):
 async def process_ai_message(payload: AIProcessRequest):
     """
     Endpoint de prueba/manual QA.
-    NOTA: el disparo automático real ocurre desde /api/messages/ingest cuando takeover=true.
+    NOTA: el disparo automático real ocurre desde /api/messages/ingest (o webhook real).
     """
     with engine.begin() as conn:
         s = _get_settings_row(conn)
@@ -417,10 +433,6 @@ async def process_ai_message(payload: AIProcessRequest):
 
 @router.get("/models")
 def list_ai_models():
-    """
-    Catálogo (whitelist) estático - útil como fallback / defaults.
-    OJO: para modelos reales y actualizados usa /models/live.
-    """
     return {
         "providers": MODEL_CATALOG,
         "defaults": {
@@ -428,6 +440,9 @@ def list_ai_models():
             "model": "gemma-3-4b-it",
             "fallback_provider": "groq",
             "fallback_model": "llama-3.1-8b-instant",
+            "reply_chunk_chars": 480,
+            "reply_delay_ms": 900,
+            "typing_delay_ms": 450,
         },
     }
 
@@ -436,10 +451,6 @@ def list_ai_models():
 def list_ai_models_live(
     provider: str = Query(..., description="google|groq|mistral|openrouter"),
 ):
-    """
-    Lista modelos disponibles consultando al provider en vivo usando la API key del entorno.
-    Ideal para poblar el <select> del frontend sin hardcode.
-    """
     p = (provider or "").strip().lower()
 
     if not _is_valid_provider(p):
@@ -468,8 +479,8 @@ def debug_prompt(
     text: str = Query("", description="Texto del usuario (último mensaje)"),
 ):
     """
-    Dry-run: construye el meta (CRM + historial + KB), lee settings (system_prompt, etc.)
-    y devuelve el payload final que se mandaría al LLM. NO llama a ningún provider.
+    Dry-run: construye meta (CRM + historial + KB), lee settings y
+    devuelve el payload final que se mandaría al LLM. NO llama provider.
     """
     phone = (phone or "").strip()
     user_text = (text or "").strip()
@@ -477,16 +488,13 @@ def debug_prompt(
     if not phone:
         raise HTTPException(status_code=400, detail="phone is required")
 
-    # 1) settings
     with engine.begin() as conn:
         s = _get_settings_row(conn)
 
     system_prompt = str(s.get("system_prompt") or "").strip()
 
-    # 2) meta (CRM + history + KB)
     meta = build_ai_meta(phone, user_text)
 
-    # 3) build messages (sin duplicar RAG aquí)
     messages: List[Dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -515,6 +523,10 @@ def debug_prompt(
             "temperature": float(s.get("temperature") or 0.7),
             "timeout_sec": int(s.get("timeout_sec") or 25),
             "max_retries": int(s.get("max_retries") or 1),
+
+            "reply_chunk_chars": int(s.get("reply_chunk_chars") or 480),
+            "reply_delay_ms": int(s.get("reply_delay_ms") or 900),
+            "typing_delay_ms": int(s.get("typing_delay_ms") or 450),
         },
         "system_prompt": system_prompt,
         "meta": meta,

@@ -28,32 +28,87 @@ def _get_settings() -> Dict[str, Any]:
                 COALESCE(fallback_provider, '') AS fallback_provider,
                 COALESCE(fallback_model, '') AS fallback_model,
                 COALESCE(timeout_sec, 25) AS timeout_sec,
-                COALESCE(max_retries, 1) AS max_retries
+                COALESCE(max_retries, 1) AS max_retries,
+
+                -- ✅ humanize (si aún no existe la columna, en algunos DB puede fallar)
+                -- Por eso lo mantenemos opcional: si no está, lo seteamos abajo con defaults
+                -- (lo agregaremos formalmente luego en ensure_schema/main.py)
+                COALESCE(humanize_enabled, FALSE) AS humanize_enabled,
+                COALESCE(humanize_delay_ms, 650) AS humanize_delay_ms,
+                COALESCE(humanize_jitter_ms, 250) AS humanize_jitter_ms,
+                COALESCE(humanize_paragraph_min_chars, 180) AS humanize_paragraph_min_chars,
+                COALESCE(humanize_max_chunks, 4) AS humanize_max_chunks
             FROM ai_settings
             ORDER BY id ASC
             LIMIT 1
         """)).mappings().first()
 
-    if not r:
-        return {
-            "is_enabled": True,
-            "provider": "google",
-            "model": "gemma-3-4b-it",
-            "system_prompt": "",
-            "max_tokens": 512,
-            "temperature": 0.7,
-            "fallback_provider": "groq",
-            "fallback_model": "llama-3.1-8b-instant",
-            "timeout_sec": 25,
-            "max_retries": 1,
-        }
+    # Si la DB aún no tiene las columnas humanize_* puede tirar error.
+    # En ese caso, hacemos un fallback con una query simple.
+    if r is None:
+        with db_engine.begin() as conn:
+            r2 = conn.execute(text("""
+                SELECT
+                    is_enabled,
+                    provider,
+                    model,
+                    system_prompt,
+                    max_tokens,
+                    temperature,
+                    COALESCE(fallback_provider, '') AS fallback_provider,
+                    COALESCE(fallback_model, '') AS fallback_model,
+                    COALESCE(timeout_sec, 25) AS timeout_sec,
+                    COALESCE(max_retries, 1) AS max_retries
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+        if not r2:
+            return {
+                "is_enabled": True,
+                "provider": "google",
+                "model": "gemma-3-4b-it",
+                "system_prompt": "",
+                "max_tokens": 512,
+                "temperature": 0.7,
+                "fallback_provider": "groq",
+                "fallback_model": "llama-3.1-8b-instant",
+                "timeout_sec": 25,
+                "max_retries": 1,
+                "humanize_enabled": False,
+                "humanize_delay_ms": 650,
+                "humanize_jitter_ms": 250,
+                "humanize_paragraph_min_chars": 180,
+                "humanize_max_chunks": 4,
+            }
+        d = dict(r2)
+        d["humanize_enabled"] = False
+        d["humanize_delay_ms"] = 650
+        d["humanize_jitter_ms"] = 250
+        d["humanize_paragraph_min_chars"] = 180
+        d["humanize_max_chunks"] = 4
+
+        d["system_prompt"] = (d.get("system_prompt") or "").strip()
+        d["provider"] = (d.get("provider") or "").strip().lower()
+        d["model"] = (d.get("model") or "").strip()
+        d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
+        d["fallback_model"] = (d.get("fallback_model") or "").strip()
+        return d
 
     d = dict(r)
+
     d["system_prompt"] = (d.get("system_prompt") or "").strip()
     d["provider"] = (d.get("provider") or "").strip().lower()
     d["model"] = (d.get("model") or "").strip()
     d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
     d["fallback_model"] = (d.get("fallback_model") or "").strip()
+
+    d["humanize_enabled"] = bool(d.get("humanize_enabled") or False)
+    d["humanize_delay_ms"] = int(d.get("humanize_delay_ms") or 650)
+    d["humanize_jitter_ms"] = int(d.get("humanize_jitter_ms") or 250)
+    d["humanize_paragraph_min_chars"] = int(d.get("humanize_paragraph_min_chars") or 180)
+    d["humanize_max_chunks"] = int(d.get("humanize_max_chunks") or 4)
+
     return d
 
 
@@ -200,6 +255,52 @@ def _build_context_from_kb(user_text: str, max_chunks: int = 6, max_chars: int =
 
 
 # =========================================================
+# Humanize helpers (split reply into chunks)
+# =========================================================
+
+def _split_into_chunks(text: str, min_chars: int = 180, max_chunks: int = 4) -> List[str]:
+    t = (text or "").strip()
+    if not t:
+        return []
+
+    # Normalizar saltos
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Si ya viene por párrafos, usarlo
+    paras = [p.strip() for p in t.split("\n\n") if p.strip()]
+    if len(paras) <= 1:
+        # Fallback: partir por oraciones
+        sentences = re.split(r"(?<=[\.\!\?])\s+", t)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        paras = []
+        buf = ""
+        for s in sentences:
+            if not buf:
+                buf = s
+            else:
+                buf = (buf + " " + s).strip()
+
+            if len(buf) >= min_chars:
+                paras.append(buf)
+                buf = ""
+
+        if buf:
+            paras.append(buf)
+
+    # Limitar cantidad
+    out: List[str] = []
+    for p in paras:
+        if p and len(out) < max_chunks:
+            out.append(p)
+
+    # Si quedó vacío por alguna razón, devolver todo
+    if not out:
+        return [t]
+
+    return out
+
+
+# =========================================================
 # Public API
 # =========================================================
 
@@ -207,9 +308,11 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
     s = _get_settings()
     if not bool(s.get("is_enabled", True)):
         return {
+            "ok": False,
             "provider": str(s.get("provider", "")),
             "model": str(s.get("model", "")),
             "reply_text": "",
+            "reply_chunks": [],
             "used_fallback": False,
             "error": "AI disabled",
         }
@@ -246,10 +349,19 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         max_retries=max_retries,
     )
     if ok and reply:
+        chunks = []
+        if bool(s.get("humanize_enabled")):
+            chunks = _split_into_chunks(
+                reply,
+                min_chars=int(s.get("humanize_paragraph_min_chars") or 180),
+                max_chunks=int(s.get("humanize_max_chunks") or 4),
+            )
         return {
+            "ok": True,
             "provider": provider,
             "model": model,
             "reply_text": reply,
+            "reply_chunks": chunks,
             "used_fallback": False,
             "error": None,
         }
@@ -268,25 +380,38 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             max_retries=max_retries,
         )
         if ok2 and reply2:
+            chunks = []
+            if bool(s.get("humanize_enabled")):
+                chunks = _split_into_chunks(
+                    reply2,
+                    min_chars=int(s.get("humanize_paragraph_min_chars") or 180),
+                    max_chunks=int(s.get("humanize_max_chunks") or 4),
+                )
             return {
+                "ok": True,
                 "provider": fb_provider,
                 "model": fb_model,
                 "reply_text": reply2,
+                "reply_chunks": chunks,
                 "used_fallback": True,
                 "error": None,
             }
         return {
+            "ok": False,
             "provider": fb_provider or provider,
             "model": fb_model or model,
             "reply_text": "",
+            "reply_chunks": [],
             "used_fallback": True,
             "error": (err2 or err or "AI call failed")[:900],
         }
 
     return {
+        "ok": False,
         "provider": provider,
         "model": model,
         "reply_text": "",
+        "reply_chunks": [],
         "used_fallback": False,
         "error": (err or "AI call failed")[:900],
     }
@@ -395,6 +520,20 @@ def _system_text(messages: list[Dict[str, str]]) -> str:
     return ""
 
 
+def _all_user_text(messages: list[Dict[str, str]]) -> str:
+    """
+    Junta TODOS los mensajes role=user para providers que no soportan chat multi-turn bien.
+    Esto corrige el tema de 'se pierde el contexto' en Google.
+    """
+    parts: List[str] = []
+    for m in messages:
+        if m.get("role") == "user":
+            c = str(m.get("content", "") or "").strip()
+            if c:
+                parts.append(c)
+    return "\n\n".join(parts).strip()
+
+
 async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:
     api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -404,10 +543,14 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     sys = _system_text(messages)
-    user = _last_user_text(messages)
+
+    # ✅ IMPORTANTE:
+    # Antes estabas enviando SOLO el último user -> se perdía el "Contexto adicional".
+    # Ahora enviamos TODO el contenido user concatenado.
+    user_all = _all_user_text(messages)
 
     payload: Dict[str, Any] = {
-        "contents": [{"role": "user", "parts": [{"text": user or "Hola"}]}],
+        "contents": [{"role": "user", "parts": [{"text": user_all or "Hola"}]}],
         "generationConfig": {
             "temperature": float(temperature),
             "maxOutputTokens": int(max_tokens),
@@ -425,11 +568,18 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
         cands = data.get("candidates") or []
         if not cands:
             return ""
+
         content = (cands[0] or {}).get("content") or {}
         parts = content.get("parts") or []
+
+        # ✅ FIX "CUT": concatenar TODOS los parts, no solo parts[0]
         if parts and isinstance(parts, list):
-            t = (parts[0] or {}).get("text")
-            return str(t or "")
+            out = []
+            for p in parts:
+                if isinstance(p, dict) and p.get("text"):
+                    out.append(str(p.get("text") or ""))
+            return "".join(out).strip()
+
         return ""
 
     return await asyncio.to_thread(_do)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import text
 
@@ -14,8 +14,10 @@ from app.db import engine
 
 def _clean_text(s: str) -> str:
     s = (s or "").strip()
-    s = re.sub(r"\s+", " ", s)
-    return s
+    # colapsa espacios/saltos a algo legible
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
 def _keywords_from_text(user_text: str) -> List[str]:
@@ -36,7 +38,51 @@ def _clip(s: str, max_chars: int) -> str:
     s = (s or "").strip()
     if max_chars <= 0 or len(s) <= max_chars:
         return s
+    # recorte conservador (deja aviso)
     return (s[: max(0, max_chars - 20)] + " …(recortado)").strip()
+
+
+def _dedup_keep_order(items: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for x in items:
+        xx = (x or "").strip()
+        if not xx:
+            continue
+        key = xx.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(xx)
+    return out
+
+
+def _shorten_if_too_long(s: str, max_len: int) -> str:
+    s = (s or "").strip()
+    if max_len <= 0 or len(s) <= max_len:
+        return s
+    return s[:max_len].rstrip() + "…"
+
+
+def _looks_like_template_bot_answer(s: str) -> bool:
+    """
+    Heurística para detectar respuestas "plantilla" enormes que no ayudan
+    en el historial (tipo: listas largas, preguntas genéricas, etc.).
+    No es perfecta, pero reduce ruido.
+    """
+    t = (s or "").strip()
+    if not t:
+        return False
+    if len(t) >= 700:
+        return True
+    # muchas viñetas / markdown
+    if t.count("\n* ") >= 6 or t.count("\n- ") >= 6:
+        return True
+    # frases típicas de template
+    lower = t.lower()
+    if "necesito saber" in lower and "contexto" in lower and len(t) > 220:
+        return True
+    return False
 
 
 # =========================================================
@@ -187,9 +233,12 @@ def _kb_retrieve(user_text: str, max_chunks: int = 6, max_chars: int = 3500) -> 
     if not rows:
         return ""
 
-    picked: List[str] = []
+    picked_blocks: List[str] = []
     total = 0
     used = 0
+
+    # dedup por contenido (muy simple)
+    seen_content = set()
 
     for r in rows:
         if used >= max_chunks:
@@ -198,6 +247,11 @@ def _kb_retrieve(user_text: str, max_chunks: int = 6, max_chars: int = 3500) -> 
         content = _clean_text(r.get("content") or "")
         if not content:
             continue
+
+        key = content.lower()
+        if key in seen_content:
+            continue
+        seen_content.add(key)
 
         fname = _clean_text(r.get("file_name") or "")
         notes = _clean_text(r.get("notes") or "")
@@ -210,18 +264,18 @@ def _kb_retrieve(user_text: str, max_chunks: int = 6, max_chars: int = 3500) -> 
 
         if total + len(block) + 2 > max_chars:
             remaining = max_chars - total - 2
-            if remaining <= 50:
+            if remaining <= 60:
                 break
             block = block[:remaining].rstrip() + "…"
 
-        picked.append(block)
+        picked_blocks.append(block)
         total += len(block) + 2
         used += 1
 
         if total >= max_chars:
             break
 
-    return "\n\n".join(picked).strip()
+    return "\n\n".join(picked_blocks).strip()
 
 
 # =========================================================
@@ -235,12 +289,14 @@ def build_ai_meta(
     history_limit: int = 14,
     history_max_chars: int = 2200,
     kb_max_chars: int = 3500,
+    history_msg_max_len: int = 320,
 ) -> Dict[str, Any]:
     """
     Construye meta para engine.process_message:
     - meta["context"]: mezcla CRM + ai_state + historial + KB (PDF chunks)
     - meta["crm"]: objeto estructurado (para tools futuro)
     """
+
     phone = (phone or "").strip()
     user_text = (user_text or "").strip()
 
@@ -251,18 +307,27 @@ def build_ai_meta(
 
     recent = _get_recent_messages(phone, limit=history_limit) if phone else []
 
-    # Historial (limpio, compacto)
+    # Historial (limpio, compacto) — evitamos que el contexto se llene con respuestas OUT enormes
     history_lines: List[str] = []
     for r in reversed(recent):  # viejo -> nuevo
         d = (r.get("direction") or "").strip().lower()
         txt = _clean_text(r.get("text") or "")
         if not txt:
             continue
+
+        # Ignorar OUT demasiado "plantilla" o demasiado largo
+        if d != "in" and _looks_like_template_bot_answer(txt):
+            continue
+
+        # recorta cada línea individual para no explotar el prompt
+        txt = _shorten_if_too_long(txt, history_msg_max_len)
+
         if d == "in":
             history_lines.append(f"CLIENTE: {txt}")
         else:
             history_lines.append(f"AGENTE: {txt}")
 
+    history_lines = _dedup_keep_order(history_lines)
     history_block = _clip("\n".join(history_lines).strip(), history_max_chars)
 
     # CRM block (estructurado, corto)
@@ -270,7 +335,7 @@ def build_ai_meta(
     fn = _clean_text(crm.get("first_name") or "")
     ln = _clean_text(crm.get("last_name") or "")
     if fn or ln:
-        crm_lines.append(f"Nombre: {fn} {ln}".strip())
+        crm_lines.append(f"Nombre: {(fn + ' ' + ln).strip()}")
     city = _clean_text(crm.get("city") or "")
     if city:
         crm_lines.append(f"Ciudad: {city}")
@@ -290,21 +355,31 @@ def build_ai_meta(
     if ai_state:
         crm_lines.append(f"AI_STATE: {ai_state}")
 
-    # KB context
-    kb_ctx = _kb_retrieve(user_text=user_text, max_chunks=6, max_chars=kb_max_chars)
+    # KB context (solo si el usuario dijo algo)
+    kb_ctx = ""
+    if user_text:
+        kb_ctx = _kb_retrieve(user_text=user_text, max_chunks=6, max_chars=kb_max_chars)
 
     blocks: List[str] = []
     if crm_lines:
-        blocks.append("CRM:\n" + "\n".join(crm_lines))
+        blocks.append("CRM (perfil del cliente):\n" + "\n".join(crm_lines))
     if history_block:
-        blocks.append("Historial reciente:\n" + history_block)
+        blocks.append("Historial reciente (resumen):\n" + history_block)
     if kb_ctx:
         blocks.append("Knowledge Base (referencia):\n" + kb_ctx)
 
     context = "\n\n".join(blocks).strip()
 
-    # Si no hay contexto, no ensuciamos el meta
+    # meta estructurado
     meta: Dict[str, Any] = {"crm": crm}
+
+    # añadimos señales útiles explícitas (sin ensuciar el prompt)
+    meta["flags"] = {
+        "takeover": bool(crm.get("takeover") or False),
+        "has_kb": bool(kb_ctx),
+        "has_history": bool(history_block),
+    }
+
     if context:
         meta["context"] = context
 

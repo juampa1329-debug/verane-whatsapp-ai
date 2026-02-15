@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import httpx
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Request, Response, HTTPException
@@ -22,6 +23,49 @@ WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
+# =========================================================
+# Settings helpers (ai_settings)
+# =========================================================
+
+def _get_ai_send_settings() -> dict:
+    """
+    Lee settings de envío/humanización desde ai_settings.
+    Importante: consistente con engine/router => ORDER BY id ASC LIMIT 1.
+    """
+    defaults = {
+        "reply_chunk_chars": 480,
+        "reply_delay_ms": 900,
+        "typing_delay_ms": 450,
+    }
+
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
+                    COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
+                    COALESCE(typing_delay_ms, 450) AS typing_delay_ms
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+        if not r:
+            return defaults
+
+        d = dict(r)
+        # hard safety bounds
+        d["reply_chunk_chars"] = int(max(120, min(int(d.get("reply_chunk_chars") or 480), 2000)))
+        d["reply_delay_ms"] = int(max(0, min(int(d.get("reply_delay_ms") or 900), 15000)))
+        d["typing_delay_ms"] = int(max(0, min(int(d.get("typing_delay_ms") or 450), 15000)))
+        return d
+    except Exception:
+        return defaults
+
+
+# =========================================================
+# WhatsApp utils
+# =========================================================
+
 def _extract_wa_message_id(resp_json: dict) -> str | None:
     """
     WhatsApp Cloud API suele devolver:
@@ -38,6 +82,9 @@ def _extract_wa_message_id(resp_json: dict) -> str | None:
 
 
 async def send_whatsapp_text(to_phone: str, text_msg: str):
+    """
+    Envío simple (sin chunking). Se mantiene para compatibilidad.
+    """
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
@@ -65,6 +112,158 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
         "wa_message_id": _extract_wa_message_id(j),
         "whatsapp": j
     }
+
+
+def _normalize_text(s: str) -> str:
+    s = (s or "").strip()
+    # Normaliza saltos de línea exagerados
+    s = re.sub(r"\r\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
+    """
+    Chunking inteligente:
+    1) divide por párrafos (doble salto)
+    2) si un párrafo queda largo, divide por oraciones
+    3) si aún queda largo, divide por longitud fija
+    """
+    text_msg = _normalize_text(text_msg)
+    if not text_msg:
+        return [""]
+
+    if max_chars <= 0:
+        return [text_msg]
+
+    # 1) párrafos
+    paras = [p.strip() for p in text_msg.split("\n\n") if p.strip()]
+    out: list[str] = []
+
+    sentence_split_re = re.compile(r"(?<=[\.\!\?])\s+")
+
+    def _push_piece(piece: str):
+        piece = piece.strip()
+        if not piece:
+            return
+        if len(piece) <= max_chars:
+            out.append(piece)
+            return
+
+        # 2) oraciones
+        sents = sentence_split_re.split(piece)
+        if len(sents) <= 1:
+            # 3) fijo
+            i = 0
+            while i < len(piece):
+                chunk = piece[i:i + max_chars].strip()
+                if chunk:
+                    out.append(chunk)
+                i += max_chars
+            return
+
+        buf = ""
+        for s in sents:
+            s = s.strip()
+            if not s:
+                continue
+            cand = (buf + " " + s).strip() if buf else s
+            if len(cand) <= max_chars:
+                buf = cand
+            else:
+                if buf:
+                    out.append(buf)
+                if len(s) <= max_chars:
+                    buf = s
+                else:
+                    # si una oración sola es gigante, corto fijo
+                    j = 0
+                    while j < len(s):
+                        c = s[j:j + max_chars].strip()
+                        if c:
+                            out.append(c)
+                        j += max_chars
+                    buf = ""
+        if buf:
+            out.append(buf)
+
+    # junta párrafos tratando de llenar hasta max_chars sin romper sentido
+    buf = ""
+    for p in paras:
+        if not buf:
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+            continue
+
+        cand = (buf + "\n\n" + p).strip()
+        if len(cand) <= max_chars:
+            buf = cand
+        else:
+            out.append(buf)
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+
+    if buf:
+        out.append(buf)
+
+    # WhatsApp a veces odia cuerpos vacíos o con espacios raros
+    out = [x.strip() for x in out if x.strip()]
+    return out or [""]
+
+
+async def send_whatsapp_text_humanized(to_phone: str, text_msg: str) -> dict:
+    """
+    Envío humanizado:
+    - divide respuestas largas en chunks
+    - espera typing_delay antes del primer envío
+    - espera reply_delay entre chunks
+    Devuelve el resultado del último chunk y el listado de ids.
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    s = _get_ai_send_settings()
+    max_chars = int(s.get("reply_chunk_chars") or 480)
+    reply_delay = int(s.get("reply_delay_ms") or 900) / 1000.0
+    typing_delay = int(s.get("typing_delay_ms") or 450) / 1000.0
+
+    chunks = _split_long_text(text_msg or "", max_chars=max_chars)
+    if not chunks:
+        chunks = [""]
+
+    wa_ids: list[str] = []
+    last_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
+
+    # typing delay antes del primer mensaje
+    if typing_delay > 0:
+        await asyncio.sleep(typing_delay)
+
+    for idx, chunk in enumerate(chunks):
+        last_resp = await send_whatsapp_text(to_phone, chunk)
+        if isinstance(last_resp, dict) and last_resp.get("sent") is True:
+            mid = last_resp.get("wa_message_id")
+            if mid:
+                wa_ids.append(str(mid))
+
+        # delay entre mensajes (no después del último)
+        if idx < len(chunks) - 1 and reply_delay > 0:
+            await asyncio.sleep(reply_delay)
+
+    last_resp["chunks_sent"] = len(chunks)
+    last_resp["chunk_message_ids"] = wa_ids
+    last_resp["humanized"] = True
+    last_resp["settings_used"] = {
+        "reply_chunk_chars": max_chars,
+        "reply_delay_ms": int(reply_delay * 1000),
+        "typing_delay_ms": int(typing_delay * 1000),
+    }
+    return last_resp
 
 
 async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
@@ -241,7 +440,11 @@ async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: s
     """
     En vez de escribir directo a DB, usamos el pipeline único:
     /api/messages/ingest (llamado directo como función).
-    Eso dispara IA si takeover está activo.
+
+    NOTA IMPORTANTE:
+    La lógica de takeover se decide dentro de main.ingest:
+      - takeover=True  => humano => NO IA
+      - takeover=False => bot => SI IA (si ai_settings.is_enabled)
     """
     try:
         # Import local para evitar circular imports al cargar módulos
@@ -303,7 +506,6 @@ async def whatsapp_receive(request: Request):
             else:
                 text_msg = f"[{msg_type}]"
 
-            # ✅ Usa ingest (que guarda y dispara IA si takeover ON)
             await _ingest_internal(
                 phone=phone,
                 msg_type=msg_type,

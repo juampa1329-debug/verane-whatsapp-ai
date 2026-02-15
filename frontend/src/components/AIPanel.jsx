@@ -42,14 +42,32 @@ export default function AIPanel({ apiBase }) {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
 
+  // ===== helpers para soportar modelos string o {id,label,raw} =====
+  const normalizeModels = (list) => {
+    if (!Array.isArray(list)) return [];
+    return list
+      .map((m) => {
+        if (typeof m === "string") return { value: m, label: m };
+        if (m && typeof m === "object") {
+          const value = String(m.id || m.raw || "");
+          const label = String(m.label || m.id || m.raw || value);
+          return value ? { value, label } : null;
+        }
+        return null;
+      })
+      .filter(Boolean);
+  };
+
   const providerModels = useMemo(() => {
     const p = (draft.provider || "").toLowerCase();
-    return Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+    const raw = Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+    return normalizeModels(raw);
   }, [draft.provider, modelsByProvider]);
 
   const fallbackProviderModels = useMemo(() => {
     const p = (draft.fallback_provider || "").toLowerCase();
-    return Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+    const raw = Array.isArray(modelsByProvider[p]) ? modelsByProvider[p] : [];
+    return normalizeModels(raw);
   }, [draft.fallback_provider, modelsByProvider]);
 
   const loadModels = async (provider) => {
@@ -280,16 +298,18 @@ export default function AIPanel({ apiBase }) {
   // si el modelo actual no existe en la lista, setear el primero disponible
   useEffect(() => {
     if (!providerModels || providerModels.length === 0) return;
-    if (!draft.model || !providerModels.includes(draft.model)) {
-      setDraft((p) => ({ ...p, model: providerModels[0] }));
+    const exists = providerModels.some((m) => m.value === draft.model);
+    if (!draft.model || !exists) {
+      setDraft((p) => ({ ...p, model: providerModels[0].value }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerModels]);
 
   useEffect(() => {
     if (!fallbackProviderModels || fallbackProviderModels.length === 0) return;
-    if (!draft.fallback_model || !fallbackProviderModels.includes(draft.fallback_model)) {
-      setDraft((p) => ({ ...p, fallback_model: fallbackProviderModels[0] }));
+    const exists = fallbackProviderModels.some((m) => m.value === draft.fallback_model);
+    if (!draft.fallback_model || !exists) {
+      setDraft((p) => ({ ...p, fallback_model: fallbackProviderModels[0].value }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fallbackProviderModels]);
@@ -370,8 +390,8 @@ export default function AIPanel({ apiBase }) {
                       <option value="">{modelsLoading ? "Cargando modelos..." : "Sin modelos"}</option>
                     ) : (
                       providerModels.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
+                        <option key={m.value} value={m.value}>
+                          {m.label}
                         </option>
                       ))
                     )}
@@ -453,11 +473,11 @@ export default function AIPanel({ apiBase }) {
                   disabled={fallbackProviderModels.length === 0}
                 >
                   {fallbackProviderModels.length === 0 ? (
-                    <option value="">Sin modelos</option>
+                    <option value="">{modelsLoading ? "Cargando..." : "Sin modelos"}</option>
                   ) : (
                     fallbackProviderModels.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
+                      <option key={m.value} value={m.value}>
+                        {m.label}
                       </option>
                     ))
                   )}
@@ -554,7 +574,16 @@ export default function AIPanel({ apiBase }) {
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Archivos ({kbFiles.length})</div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflow: "auto", paddingRight: 6 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                maxHeight: 420,
+                overflow: "auto",
+                paddingRight: 6,
+              }}
+            >
               {kbFiles.map((f) => (
                 <div key={f.id} style={fileRowStyle}>
                   <div style={{ minWidth: 0 }}>
@@ -564,9 +593,7 @@ export default function AIPanel({ apiBase }) {
                     <div style={{ fontSize: 12, opacity: 0.8 }}>
                       {f.mime_type} • {f.size_bytes} bytes • {f.is_active ? "activo" : "inactivo"}
                     </div>
-                    {f.notes ? (
-                      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>📝 {f.notes}</div>
-                    ) : null}
+                    {f.notes ? <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>📝 {f.notes}</div> : null}
                     <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>upd: {String(f.updated_at || "")}</div>
                   </div>
 

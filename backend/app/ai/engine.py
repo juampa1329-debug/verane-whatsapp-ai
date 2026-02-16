@@ -16,38 +16,20 @@ from app.db import engine as db_engine
 # =========================================================
 
 def _get_settings() -> Dict[str, Any]:
-    with db_engine.begin() as conn:
-        r = conn.execute(text("""
-            SELECT
-                is_enabled,
-                provider,
-                model,
-                system_prompt,
-                max_tokens,
-                temperature,
-                COALESCE(fallback_provider, '') AS fallback_provider,
-                COALESCE(fallback_model, '') AS fallback_model,
-                COALESCE(timeout_sec, 25) AS timeout_sec,
-                COALESCE(max_retries, 1) AS max_retries,
+    """
+    Lee settings desde DB.
 
-                -- ✅ humanize (si aún no existe la columna, en algunos DB puede fallar)
-                -- Por eso lo mantenemos opcional: si no está, lo seteamos abajo con defaults
-                -- (lo agregaremos formalmente luego en ensure_schema/main.py)
-                COALESCE(humanize_enabled, FALSE) AS humanize_enabled,
-                COALESCE(humanize_delay_ms, 650) AS humanize_delay_ms,
-                COALESCE(humanize_jitter_ms, 250) AS humanize_jitter_ms,
-                COALESCE(humanize_paragraph_min_chars, 180) AS humanize_paragraph_min_chars,
-                COALESCE(humanize_max_chunks, 4) AS humanize_max_chunks
-            FROM ai_settings
-            ORDER BY id ASC
-            LIMIT 1
-        """)).mappings().first()
+    IMPORTANTE:
+    - Postgres lanza ERROR si una columna NO existe, aunque uses COALESCE(col, default).
+    - Por eso aquí intentamos primero con columnas humanize_* y si falla, hacemos fallback
+      a un SELECT sin esas columnas y completamos defaults en Python.
+    """
+    r = None
 
-    # Si la DB aún no tiene las columnas humanize_* puede tirar error.
-    # En ese caso, hacemos un fallback con una query simple.
-    if r is None:
+    # 1) Intentar SELECT completo (con humanize_*)
+    try:
         with db_engine.begin() as conn:
-            r2 = conn.execute(text("""
+            r = conn.execute(text("""
                 SELECT
                     is_enabled,
                     provider,
@@ -58,11 +40,46 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(fallback_provider, '') AS fallback_provider,
                     COALESCE(fallback_model, '') AS fallback_model,
                     COALESCE(timeout_sec, 25) AS timeout_sec,
-                    COALESCE(max_retries, 1) AS max_retries
+                    COALESCE(max_retries, 1) AS max_retries,
+
+                    COALESCE(humanize_enabled, FALSE) AS humanize_enabled,
+                    COALESCE(humanize_delay_ms, 650) AS humanize_delay_ms,
+                    COALESCE(humanize_jitter_ms, 250) AS humanize_jitter_ms,
+                    COALESCE(humanize_paragraph_min_chars, 180) AS humanize_paragraph_min_chars,
+                    COALESCE(humanize_max_chunks, 4) AS humanize_max_chunks
                 FROM ai_settings
                 ORDER BY id ASC
                 LIMIT 1
             """)).mappings().first()
+    except Exception:
+        # Si falla (por ejemplo: columna no existe), seguimos con fallback
+        r = None
+
+    # 2) Fallback: SELECT básico (sin columnas humanize_*)
+    if r is None:
+        r2 = None
+        try:
+            with db_engine.begin() as conn:
+                r2 = conn.execute(text("""
+                    SELECT
+                        is_enabled,
+                        provider,
+                        model,
+                        system_prompt,
+                        max_tokens,
+                        temperature,
+                        COALESCE(fallback_provider, '') AS fallback_provider,
+                        COALESCE(fallback_model, '') AS fallback_model,
+                        COALESCE(timeout_sec, 25) AS timeout_sec,
+                        COALESCE(max_retries, 1) AS max_retries
+                    FROM ai_settings
+                    ORDER BY id ASC
+                    LIMIT 1
+                """)).mappings().first()
+        except Exception:
+            r2 = None
+
+        # 2.1) Si no hay fila o no se puede leer, usar defaults
         if not r2:
             return {
                 "is_enabled": True,
@@ -81,20 +98,32 @@ def _get_settings() -> Dict[str, Any]:
                 "humanize_paragraph_min_chars": 180,
                 "humanize_max_chunks": 4,
             }
+
         d = dict(r2)
+
+        # Defaults humanize cuando DB no tiene columnas
         d["humanize_enabled"] = False
         d["humanize_delay_ms"] = 650
         d["humanize_jitter_ms"] = 250
         d["humanize_paragraph_min_chars"] = 180
         d["humanize_max_chunks"] = 4
 
+        # Normalizar
         d["system_prompt"] = (d.get("system_prompt") or "").strip()
         d["provider"] = (d.get("provider") or "").strip().lower()
         d["model"] = (d.get("model") or "").strip()
         d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
         d["fallback_model"] = (d.get("fallback_model") or "").strip()
+
+        # Valores numéricos seguros
+        d["timeout_sec"] = int(d.get("timeout_sec") or 25)
+        d["max_retries"] = int(d.get("max_retries") or 1)
+        d["max_tokens"] = int(d.get("max_tokens") or 512)
+        d["temperature"] = float(d.get("temperature") or 0.7)
+
         return d
 
+    # 3) Si sí funcionó el SELECT completo, normalizar todo
     d = dict(r)
 
     d["system_prompt"] = (d.get("system_prompt") or "").strip()
@@ -102,6 +131,11 @@ def _get_settings() -> Dict[str, Any]:
     d["model"] = (d.get("model") or "").strip()
     d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
     d["fallback_model"] = (d.get("fallback_model") or "").strip()
+
+    d["timeout_sec"] = int(d.get("timeout_sec") or 25)
+    d["max_retries"] = int(d.get("max_retries") or 1)
+    d["max_tokens"] = int(d.get("max_tokens") or 512)
+    d["temperature"] = float(d.get("temperature") or 0.7)
 
     d["humanize_enabled"] = bool(d.get("humanize_enabled") or False)
     d["humanize_delay_ms"] = int(d.get("humanize_delay_ms") or 650)
@@ -263,13 +297,10 @@ def _split_into_chunks(text: str, min_chars: int = 180, max_chunks: int = 4) -> 
     if not t:
         return []
 
-    # Normalizar saltos
     t = t.replace("\r\n", "\n").replace("\r", "\n")
 
-    # Si ya viene por párrafos, usarlo
     paras = [p.strip() for p in t.split("\n\n") if p.strip()]
     if len(paras) <= 1:
-        # Fallback: partir por oraciones
         sentences = re.split(r"(?<=[\.\!\?])\s+", t)
         sentences = [s.strip() for s in sentences if s.strip()]
         paras = []
@@ -287,13 +318,11 @@ def _split_into_chunks(text: str, min_chars: int = 180, max_chunks: int = 4) -> 
         if buf:
             paras.append(buf)
 
-    # Limitar cantidad
     out: List[str] = []
     for p in paras:
         if p and len(out) < max_chunks:
             out.append(p)
 
-    # Si quedó vacío por alguna razón, devolver todo
     if not out:
         return [t]
 
@@ -320,8 +349,6 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
     meta = meta or {}
     user_text = (text or "").strip()
 
-    # ✅ NO DUPLICAR RAG:
-    # Si build_ai_meta ya envió meta["context"] (CRM + historial + KB), NO volvemos a meter KB.
     existing_ctx = (meta.get("context") or "").strip() if isinstance(meta, dict) else ""
     if not existing_ctx:
         kb_ctx = _build_context_from_kb(user_text=user_text, max_chunks=6, max_chars=4000)
@@ -521,10 +548,6 @@ def _system_text(messages: list[Dict[str, str]]) -> str:
 
 
 def _all_user_text(messages: list[Dict[str, str]]) -> str:
-    """
-    Junta TODOS los mensajes role=user para providers que no soportan chat multi-turn bien.
-    Esto corrige el tema de 'se pierde el contexto' en Google.
-    """
     parts: List[str] = []
     for m in messages:
         if m.get("role") == "user":
@@ -543,10 +566,6 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     sys = _system_text(messages)
-
-    # ✅ IMPORTANTE:
-    # Antes estabas enviando SOLO el último user -> se perdía el "Contexto adicional".
-    # Ahora enviamos TODO el contenido user concatenado.
     user_all = _all_user_text(messages)
 
     payload: Dict[str, Any] = {
@@ -572,7 +591,6 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
         content = (cands[0] or {}).get("content") or {}
         parts = content.get("parts") or []
 
-        # ✅ FIX "CUT": concatenar TODOS los parts, no solo parts[0]
         if parts and isinstance(parts, list):
             out = []
             for p in parts:

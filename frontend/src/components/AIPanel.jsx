@@ -737,6 +737,12 @@ export default function AIPanel({ apiBase }) {
 const panelStyle = {
   width: "100%",
   padding: 18,
+
+  // ✅ FIX: permitir scroll sin hacer zoom out
+  height: "calc(100vh - 24px)",
+  overflowY: "auto",
+  overflowX: "hidden",
+  boxSizing: "border-box",
 };
 
 const gridStyle = {

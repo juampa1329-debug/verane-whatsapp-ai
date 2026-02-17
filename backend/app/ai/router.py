@@ -254,8 +254,8 @@ class AISettingsUpdate(BaseModel):
 
     # ✅ humanización (ajustable en frontend)
     reply_chunk_chars: Optional[int] = Field(default=None, ge=120, le=2000)
-    reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=6000)
-    typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=6000)
+    reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
+    typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
 
 
 class AIProcessRequest(BaseModel):

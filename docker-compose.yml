@@ -29,7 +29,6 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # ESTO FALTABA: Conecta las variables de Coolify con el contenedor
       DATABASE_URL: ${DATABASE_URL}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -40,6 +39,8 @@ services:
       WC_BASE_URL: ${WC_BASE_URL}
       WC_CONSUMER_KEY: ${WC_CONSUMER_KEY}
       WC_CONSUMER_SECRET: ${WC_CONSUMER_SECRET}
+    volumes:
+      - /data/verane/storage:/storage
     expose:
       - "8000"
     labels:
@@ -59,7 +60,6 @@ services:
       - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowHeaders=*
       - traefik.http.middlewares.verane_api_cors.headers.accessControlAllowCredentials=false
       - traefik.http.middlewares.verane_api_cors.headers.addVaryHeader=true
-
 
   frontend:
     build: ./frontend
@@ -87,6 +87,8 @@ services:
       BACKEND_BASE_URL: "http://api:8000"
       AI_ENABLED: "true"
       AI_ALLOWLIST: ""
+    volumes:
+      - /data/verane/storage:/storage
     expose:
       - "9000"
 

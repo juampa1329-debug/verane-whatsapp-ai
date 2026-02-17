@@ -352,8 +352,10 @@ def build_ai_meta(
     if notes:
         crm_lines.append(f"Notas: {notes}")
     ai_state = _clean_text(crm.get("ai_state") or "")
-    if ai_state:
+# Evitar que la IA normal “vea” estados internos tipo wc_await
+    if ai_state and not ai_state.startswith("wc_await:"):
         crm_lines.append(f"AI_STATE: {ai_state}")
+
 
     # KB context (solo si el usuario dijo algo)
     kb_ctx = ""

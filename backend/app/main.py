@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import requests
 import asyncio
 from datetime import datetime
@@ -462,7 +463,6 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
     if not chunks:
         chunks = [""]
 
-    # typing delay antes del primer envío
     if typing_delay > 0:
         await asyncio.sleep(typing_delay)
 
@@ -472,7 +472,6 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
     last_wa_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
 
     for idx, chunk in enumerate(chunks):
-        # 1) Guardar chunk como mensaje OUT
         with engine.begin() as conn:
             local_out_id = save_message(
                 conn,
@@ -483,7 +482,6 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
             )
         local_ids.append(local_out_id)
 
-        # 2) Enviar chunk por WhatsApp
         wa_resp = await send_whatsapp_text(phone, chunk)
         last_wa_resp = wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
 
@@ -494,7 +492,6 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
             if wa_message_id:
                 wa_ids.append(str(wa_message_id))
 
-        # 3) Actualizar DB con resultado
         with engine.begin() as conn:
             if last_wa_resp.get("sent") is True and wa_message_id:
                 set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
@@ -502,7 +499,6 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
                 err = last_wa_resp.get("whatsapp_body") or last_wa_resp.get("reason") or last_wa_resp.get("error") or "WhatsApp send failed"
                 set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
 
-        # 4) Delay entre chunks (no después del último)
         if idx < len(chunks) - 1 and reply_delay > 0:
             await asyncio.sleep(reply_delay)
 
@@ -522,12 +518,366 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
 
 
 # =========================================================
+# AI STATE helpers (WooCommerce selection)
+# =========================================================
+
+def _get_ai_state(phone: str) -> str:
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT COALESCE(ai_state,'') AS ai_state
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+        return str((r or {}).get("ai_state") or "")
+    except Exception:
+        return ""
+
+
+def _set_ai_state(phone: str, state: str) -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO conversations (phone, ai_state, updated_at)
+                VALUES (:phone, :ai_state, :updated_at)
+                ON CONFLICT (phone)
+                DO UPDATE SET ai_state = EXCLUDED.ai_state,
+                              updated_at = EXCLUDED.updated_at
+            """), {"phone": phone, "ai_state": state or "", "updated_at": datetime.utcnow()})
+    except Exception:
+        return
+
+
+def _clear_ai_state(phone: str) -> None:
+    _set_ai_state(phone, "")
+
+
+def _norm(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = re.sub(r"[^a-z0-9áéíóúñü\s]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+# =========================================================
+# WOOCOMMERCE (CATÁLOGO + ENVÍO COMO ADJUNTO REAL)
+# =========================================================
+
+WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
+WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
+WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
+
+def _wc_enabled() -> bool:
+    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
+
+def _wc_get(path: str, params: dict | None = None):
+    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
+        raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
+
+    url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
+    params = params or {}
+    params["consumer_key"] = WC_CONSUMER_KEY
+    params["consumer_secret"] = WC_CONSUMER_SECRET
+
+    try:
+        r = requests.get(url, params=params, timeout=20)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text}")
+
+    return r.json()
+
+def _pick_first_image(product: dict) -> str | None:
+    imgs = product.get("images") or []
+    if imgs and isinstance(imgs, list):
+        src = (imgs[0] or {}).get("src")
+        return src
+    return None
+
+def _extract_aromas(product: dict) -> list[str]:
+    out: list[str] = []
+    attrs = product.get("attributes") or []
+    for a in attrs:
+        if not isinstance(a, dict):
+            continue
+        name = (a.get("name") or "").strip().lower()
+        if name == "aromas":
+            opts = a.get("options") or []
+            if isinstance(opts, list):
+                out = [str(x).strip() for x in opts if str(x).strip()]
+    return out
+
+def _extract_brand(product: dict) -> str:
+    for md in (product.get("meta_data") or []):
+        if not isinstance(md, dict):
+            continue
+        k = (md.get("key") or "").lower().strip()
+        if k in ("brand", "_brand", "pa_brand", "product_brand", "yith_wcbm_brand"):
+            v = md.get("value")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+    for a in (product.get("attributes") or []):
+        if not isinstance(a, dict):
+            continue
+        nm = (a.get("name") or "").lower().strip()
+        if nm in ("brand", "marca"):
+            opts = a.get("options") or []
+            if isinstance(opts, list) and opts:
+                return str(opts[0]).strip()
+
+    tags = product.get("tags") or []
+    if isinstance(tags, list) and tags:
+        t0 = tags[0]
+        if isinstance(t0, dict) and (t0.get("name") or "").strip():
+            return (t0.get("name") or "").strip()
+
+    return ""
+
+def _extract_gender(product: dict) -> str:
+    cats = product.get("categories") or []
+    names = []
+    for c in cats:
+        if isinstance(c, dict) and c.get("name"):
+            names.append(str(c["name"]).lower())
+
+    if any("hombre" in n for n in names):
+        return "hombre"
+    if any("mujer" in n for n in names):
+        return "mujer"
+    if any("unisex" in n for n in names):
+        return "unisex"
+    return ""
+
+def _map_product_for_ui(product: dict) -> dict:
+    price = product.get("price") or product.get("regular_price") or ""
+    return {
+        "id": product.get("id"),
+        "name": product.get("name") or "",
+        "price": str(price),
+        "permalink": product.get("permalink") or "",
+        "featured_image": _pick_first_image(product),
+        "short_description": (product.get("short_description") or "").strip(),
+        "aromas": _extract_aromas(product),
+        "brand": _extract_brand(product),
+        "gender": _extract_gender(product),
+        "stock_status": product.get("stock_status") or "",
+    }
+
+def _wc_search_products(query: str, per_page: int = 8) -> list[dict]:
+    q = (query or "").strip()
+    if not q:
+        return []
+    params = {"search": q, "page": 1, "per_page": int(per_page), "status": "publish"}
+    data = _wc_get("/products", params=params)
+    items = [_map_product_for_ui(p) for p in (data or [])]
+    # prioriza in-stock primero
+    items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+    return items
+
+def _looks_like_product_question(user_text: str) -> bool:
+    t = _norm(user_text)
+    if not t:
+        return False
+    # señales típicas
+    triggers = [
+        "tienes", "tienen", "hay", "disponible", "disponibles",
+        "precio", "vale", "cuanto", "cuánto",
+        "nitro", "aqua", "giorgio", "perfume", "fragancia", "colonia"
+    ]
+    if any(w in t for w in triggers):
+        # evitar dispararse por saludos
+        if t in ("hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"):
+            return False
+        return True
+    # si el texto es “corto” pero parece nombre de producto
+    if len(t.split()) <= 6 and len(t) >= 6:
+        return True
+    return False
+
+def _score_product_match(query: str, product_name: str) -> int:
+    q = _norm(query)
+    n = _norm(product_name)
+    if not q or not n:
+        return 0
+    if n == q:
+        return 100
+    if q in n:
+        # más score si cubre bastante
+        cover = int(50 + min(40, (len(q) * 40) / max(1, len(n))))
+        return cover
+    # match por palabras
+    qwords = [w for w in q.split() if len(w) >= 3]
+    if not qwords:
+        return 0
+    hit = sum(1 for w in qwords if w in n)
+    if hit == 0:
+        return 0
+    return 20 + hit * 10
+
+def _parse_choice_number(user_text: str) -> int | None:
+    m = re.search(r"\b([1-9])\b", (user_text or "").strip())
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+@app.get("/api/wc/products")
+def wc_products(
+    q: str = Query("", description="texto de búsqueda"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(12, ge=1, le=50),
+):
+    params = {"search": q or "", "page": page, "per_page": per_page, "status": "publish"}
+    data = _wc_get("/products", params=params)
+    items = [_map_product_for_ui(p) for p in (data or [])]
+    return {"products": items}
+
+@app.post("/api/wc/send-product")
+async def send_wc_product(payload: dict):
+    import io
+    from PIL import Image
+    import pillow_avif  # noqa: F401
+
+    phone = payload.get("phone")
+    product_id = payload.get("product_id")
+    custom_caption = payload.get("caption", "")
+
+    if not phone or not product_id:
+        raise HTTPException(status_code=400, detail="phone and product_id required")
+
+    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
+        raise HTTPException(status_code=500, detail="WC env vars not configured")
+
+    url = f"{WC_BASE_URL}/wp-json/wc/v3/products/{product_id}"
+    params = {"consumer_key": WC_CONSUMER_KEY, "consumer_secret": WC_CONSUMER_SECRET}
+
+    r = requests.get(url, params=params, timeout=25)
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"WooCommerce product fetch failed: {r.status_code} {r.text}")
+
+    product = r.json()
+
+    images = product.get("images") or []
+    if not images:
+        raise HTTPException(status_code=400, detail="Product has no image")
+
+    featured_image = (images[0] or {}).get("src") or ""
+    real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
+
+    img_response = requests.get(featured_image, timeout=25)
+    if img_response.status_code != 200 or not img_response.content:
+        raise HTTPException(status_code=502, detail=f"Image download failed: {img_response.status_code}")
+
+    image_bytes = img_response.content
+    content_type = (img_response.headers.get("Content-Type") or "").lower()
+
+    def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
+        im = Image.open(io.BytesIO(src_bytes))
+        im = im.convert("RGB")
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+
+    lower_url = featured_image.lower()
+    needs_convert = (
+        ("image/avif" in content_type) or ("image/webp" in content_type) or
+        lower_url.endswith(".avif") or lower_url.endswith(".webp")
+    )
+
+    try:
+        if needs_convert:
+            image_bytes = _to_jpeg_bytes(image_bytes)
+            mime_type = "image/jpeg"
+        else:
+            mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
+            if mime_type not in ("image/jpeg", "image/png"):
+                image_bytes = _to_jpeg_bytes(image_bytes)
+                mime_type = "image/jpeg"
+    except Exception as e:
+        try:
+            image_bytes = _to_jpeg_bytes(image_bytes)
+            mime_type = "image/jpeg"
+        except Exception:
+            raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
+
+    from app.routes.whatsapp import upload_whatsapp_media
+    media_id = await upload_whatsapp_media(image_bytes, mime_type)
+
+    name = product.get("name", "") or ""
+    price = product.get("price") or product.get("regular_price") or ""
+    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "").strip()
+    permalink = product.get("permalink", "") or ""
+
+    brand = _extract_brand(product)
+    gender = _extract_gender(product)
+    gender_label = "Hombre" if gender == "hombre" else "Mujer" if gender == "mujer" else "Unisex" if gender == "unisex" else ""
+
+    aromas_list = _extract_aromas(product)
+    aromas = ", ".join(aromas_list) if aromas_list else ""
+
+    caption_lines = [f"✨ {name}"]
+    if gender_label:
+        caption_lines.append(f"👤 Para: {gender_label}")
+    if brand:
+        caption_lines.append(f"🏷️ Marca: {brand}")
+    if aromas:
+        caption_lines.append(f"🌿 Aromas: {aromas}")
+    if price:
+        caption_lines.append(f"💰 Precio: ${price}")
+    if short_description:
+        caption_lines.append(f"\n{short_description}")
+    if permalink:
+        caption_lines.append(f"\n🛒 Ver producto: {permalink}")
+    if real_image:
+        caption_lines.append(f"📸 Ver foto real: {real_image}")
+
+    caption = (custom_caption or "").strip() or "\n".join(caption_lines)
+
+    # Guardar en DB (OUT) + luego enviar por WhatsApp (imagen real)
+    with engine.begin() as conn:
+        local_id = save_message(
+            conn,
+            phone=phone,
+            direction="out",
+            msg_type="product",
+            text_msg=caption,
+            featured_image=featured_image,
+            real_image=real_image or None,
+            permalink=permalink,
+        )
+
+    wa_resp = await send_whatsapp_media_id(
+        to_phone=phone,
+        media_type="image",
+        media_id=media_id,
+        caption=caption
+    )
+
+    wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
+    with engine.begin() as conn:
+        if wa_resp.get("sent") is True and wa_message_id:
+            set_wa_send_result(conn, local_id, wa_message_id, True, "")
+        else:
+            err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or "WhatsApp send failed"
+            set_wa_send_result(conn, local_id, None, False, str(err)[:900])
+
+    return wa_resp
+
+
+# =========================================================
 # ENDPOINTS
 # =========================================================
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-15-ai-chunked-db-1"}
+    return {"ok": True, "build": "2026-02-16-wc-assistant-1"}
 
 
 @app.post("/api/media/upload")
@@ -840,7 +1190,6 @@ async def ingest(msg: IngestMessage):
                     WHERE phone = :phone
                 """), {"phone": msg.phone}).mappings().first()
 
-                # ✅ Consistente con engine/router: primera fila (ASC)
                 s = conn.execute(text("""
                     SELECT is_enabled
                     FROM ai_settings
@@ -851,11 +1200,107 @@ async def ingest(msg: IngestMessage):
             takeover_on = bool(c and c.get("takeover") is True)
             ai_enabled = bool(s and s.get("is_enabled") is True)
 
-            # takeover ON = humano => NO IA
-            # takeover OFF = bot => SI IA (si está habilitada)
             if (not ai_enabled) or takeover_on:
                 return {"saved": True, "sent": False, "ai": False, "reason": "ai_disabled_or_takeover_on"}
 
+            user_text = (msg.text or "").strip()
+
+            # =========================================================
+            # ✅ NUEVO: WooCommerce assistant (solo texto IN)
+            # =========================================================
+            if _wc_enabled() and msg_type == "text" and user_text:
+                # 1) si venimos esperando que el cliente elija variante
+                st = _get_ai_state(msg.phone)
+                if st.startswith("wc_await:"):
+                    try:
+                        payload = json.loads(st[len("wc_await:"):].strip() or "{}")
+                    except Exception:
+                        payload = {}
+
+                    options = payload.get("options") or []
+                    if isinstance(options, list) and options:
+                        # elección por número
+                        n = _parse_choice_number(user_text)
+                        chosen = None
+                        if n is not None and 1 <= n <= len(options):
+                            chosen = options[n - 1]
+                        else:
+                            # elección por texto
+                            ut = _norm(user_text)
+                            best = None
+                            best_score = 0
+                            for opt in options:
+                                name = str((opt or {}).get("name") or "")
+                                sc = _score_product_match(ut, name)
+                                if sc > best_score:
+                                    best_score = sc
+                                    best = opt
+                            if best and best_score >= 30:
+                                chosen = best
+
+                        if chosen and chosen.get("id"):
+                            _clear_ai_state(msg.phone)
+                            return await send_wc_product({
+                                "phone": msg.phone,
+                                "product_id": chosen.get("id"),
+                                "caption": ""
+                            })
+
+                        # si no entendimos, repreguntamos
+                        txt = "¿Cuál opción deseas? Responde con el número (1, 2, 3...) o el nombre exacto 🙂"
+                        await _send_ai_reply_in_chunks(msg.phone, txt)
+                        return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "awaiting_choice"}
+
+                # 2) detectar pregunta de producto
+                if _looks_like_product_question(user_text):
+                    items = _wc_search_products(user_text, per_page=8)
+
+                    if items:
+                        # score
+                        scored = []
+                        for it in items:
+                            sc = _score_product_match(user_text, it.get("name") or "")
+                            scored.append((sc, it))
+                        scored.sort(key=lambda x: x[0], reverse=True)
+
+                        best_score, best_item = scored[0]
+                        # match fuerte y único
+                        strong = best_score >= 65
+                        second_score = scored[1][0] if len(scored) > 1 else 0
+
+                        if strong and (best_score - second_score >= 15):
+                            # si está instock, lo enviamos directo como adjunto
+                            return await send_wc_product({
+                                "phone": msg.phone,
+                                "product_id": best_item.get("id"),
+                                "caption": ""
+                            })
+
+                        # si hay varias variantes, preguntamos cuál
+                        top = [x[1] for x in scored[:5]]
+                        lines = ["Encontré estas opciones: 👇"]
+                        opts = []
+                        for i, it in enumerate(top, start=1):
+                            name = str(it.get("name") or "")
+                            price = str(it.get("price") or "")
+                            stock = str(it.get("stock_status") or "")
+                            stock_label = "✅ disponible" if stock == "instock" else "⛔ agotado"
+                            price_label = f" — ${price}" if price else ""
+                            lines.append(f"{i}) {name}{price_label} ({stock_label})")
+                            opts.append({"id": it.get("id"), "name": name})
+
+                        lines.append("")
+                        lines.append("¿Cuál deseas? Responde con el número (1,2,3...) o el nombre exacto.")
+                        msg_out = "\n".join(lines).strip()
+
+                        _set_ai_state(msg.phone, "wc_await:" + json.dumps({"options": opts}, ensure_ascii=False))
+                        await _send_ai_reply_in_chunks(msg.phone, msg_out)
+
+                        return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "multiple_options"}
+
+            # =========================================================
+            # ✅ Flujo IA normal (si no aplicó WC)
+            # =========================================================
             meta = build_ai_meta(msg.phone, msg.text or "")
 
             ai_result = await process_message(
@@ -868,7 +1313,6 @@ async def ingest(msg: IngestMessage):
             if not reply_text:
                 return {"saved": True, "sent": False, "ai": True, "reply": ""}
 
-            # ✅ NUEVO: enviar por chunks + guardar cada chunk como mensaje OUT separado
             send_result = await _send_ai_reply_in_chunks(msg.phone, reply_text)
 
             return {
@@ -977,252 +1421,3 @@ def get_crm(phone: str):
 
     except Exception as e:
         return {"ok": False, "error": str(e), "phone": phone}
-
-# =========================================================
-# WOOCOMMERCE (CATÁLOGO + ENVÍO COMO ADJUNTO REAL)
-# =========================================================
-
-WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
-WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
-WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
-
-def _wc_enabled() -> bool:
-    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
-
-def _wc_get(path: str, params: dict | None = None):
-    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
-        raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
-
-    url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
-    params = params or {}
-    params["consumer_key"] = WC_CONSUMER_KEY
-    params["consumer_secret"] = WC_CONSUMER_SECRET
-
-    try:
-        r = requests.get(url, params=params, timeout=20)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
-
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text}")
-
-    return r.json()
-
-def _pick_first_image(product: dict) -> str | None:
-    imgs = product.get("images") or []
-    if imgs and isinstance(imgs, list):
-        src = (imgs[0] or {}).get("src")
-        return src
-    return None
-
-def _extract_aromas(product: dict) -> list[str]:
-    out: list[str] = []
-    attrs = product.get("attributes") or []
-    for a in attrs:
-        if not isinstance(a, dict):
-            continue
-        name = (a.get("name") or "").strip().lower()
-        if name == "aromas":
-            opts = a.get("options") or []
-            if isinstance(opts, list):
-                out = [str(x).strip() for x in opts if str(x).strip()]
-    return out
-
-def _extract_brand(product: dict) -> str:
-    for md in (product.get("meta_data") or []):
-        if not isinstance(md, dict):
-            continue
-        k = (md.get("key") or "").lower().strip()
-        if k in ("brand", "_brand", "pa_brand", "product_brand", "yith_wcbm_brand"):
-            v = md.get("value")
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-
-    for a in (product.get("attributes") or []):
-        if not isinstance(a, dict):
-            continue
-        nm = (a.get("name") or "").lower().strip()
-        if nm in ("brand", "marca"):
-            opts = a.get("options") or []
-            if isinstance(opts, list) and opts:
-                return str(opts[0]).strip()
-
-    tags = product.get("tags") or []
-    if isinstance(tags, list) and tags:
-        t0 = tags[0]
-        if isinstance(t0, dict) and (t0.get("name") or "").strip():
-            return (t0.get("name") or "").strip()
-
-    return ""
-
-def _extract_gender(product: dict) -> str:
-    cats = product.get("categories") or []
-    names = []
-    for c in cats:
-        if isinstance(c, dict) and c.get("name"):
-            names.append(str(c["name"]).lower())
-
-    if any("hombre" in n for n in names):
-        return "hombre"
-    if any("mujer" in n for n in names):
-        return "mujer"
-    if any("unisex" in n for n in names):
-        return "unisex"
-    return ""
-
-def _map_product_for_ui(product: dict) -> dict:
-    price = product.get("price") or product.get("regular_price") or ""
-    return {
-        "id": product.get("id"),
-        "name": product.get("name") or "",
-        "price": str(price),
-        "permalink": product.get("permalink") or "",
-        "featured_image": _pick_first_image(product),
-        "short_description": (product.get("short_description") or "").strip(),
-        "aromas": _extract_aromas(product),
-        "brand": _extract_brand(product),
-        "gender": _extract_gender(product),
-        "stock_status": product.get("stock_status") or "",
-    }
-
-@app.get("/api/wc/products")
-def wc_products(
-    q: str = Query("", description="texto de búsqueda"),
-    page: int = Query(1, ge=1),
-    per_page: int = Query(12, ge=1, le=50),
-):
-    params = {"search": q or "", "page": page, "per_page": per_page, "status": "publish"}
-    data = _wc_get("/products", params=params)
-    items = [_map_product_for_ui(p) for p in (data or [])]
-    return {"products": items}
-
-@app.post("/api/wc/send-product")
-async def send_wc_product(payload: dict):
-    import io
-    from PIL import Image
-    import pillow_avif  # noqa: F401
-
-    phone = payload.get("phone")
-    product_id = payload.get("product_id")
-    custom_caption = payload.get("caption", "")
-
-    if not phone or not product_id:
-        raise HTTPException(status_code=400, detail="phone and product_id required")
-
-    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
-        raise HTTPException(status_code=500, detail="WC env vars not configured")
-
-    url = f"{WC_BASE_URL}/wp-json/wc/v3/products/{product_id}"
-    params = {"consumer_key": WC_CONSUMER_KEY, "consumer_secret": WC_CONSUMER_SECRET}
-
-    r = requests.get(url, params=params, timeout=25)
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"WooCommerce product fetch failed: {r.status_code} {r.text}")
-
-    product = r.json()
-
-    images = product.get("images") or []
-    if not images:
-        raise HTTPException(status_code=400, detail="Product has no image")
-
-    featured_image = (images[0] or {}).get("src") or ""
-    real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
-
-    img_response = requests.get(featured_image, timeout=25)
-    if img_response.status_code != 200 or not img_response.content:
-        raise HTTPException(status_code=502, detail=f"Image download failed: {img_response.status_code}")
-
-    image_bytes = img_response.content
-    content_type = (img_response.headers.get("Content-Type") or "").lower()
-
-    def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
-        im = Image.open(io.BytesIO(src_bytes))
-        im = im.convert("RGB")
-        out = io.BytesIO()
-        im.save(out, format="JPEG", quality=88, optimize=True)
-        return out.getvalue()
-
-    lower_url = featured_image.lower()
-    needs_convert = (
-        ("image/avif" in content_type) or ("image/webp" in content_type) or
-        lower_url.endswith(".avif") or lower_url.endswith(".webp")
-    )
-
-    try:
-        if needs_convert:
-            image_bytes = _to_jpeg_bytes(image_bytes)
-            mime_type = "image/jpeg"
-        else:
-            mime_type = content_type if content_type.startswith("image/") else "image/jpeg"
-            if mime_type not in ("image/jpeg", "image/png"):
-                image_bytes = _to_jpeg_bytes(image_bytes)
-                mime_type = "image/jpeg"
-    except Exception as e:
-        try:
-            image_bytes = _to_jpeg_bytes(image_bytes)
-            mime_type = "image/jpeg"
-        except Exception:
-            raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
-
-    from app.routes.whatsapp import upload_whatsapp_media
-    media_id = await upload_whatsapp_media(image_bytes, mime_type)
-
-    name = product.get("name", "") or ""
-    price = product.get("price") or product.get("regular_price") or ""
-    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "").strip()
-    permalink = product.get("permalink", "") or ""
-
-    brand = _extract_brand(product)
-    gender = _extract_gender(product)
-    gender_label = "Hombre" if gender == "hombre" else "Mujer" if gender == "mujer" else "Unisex" if gender == "unisex" else ""
-
-    aromas_list = _extract_aromas(product)
-    aromas = ", ".join(aromas_list) if aromas_list else ""
-
-    caption_lines = [f"✨ {name}"]
-    if gender_label:
-        caption_lines.append(f"👤 Para: {gender_label}")
-    if brand:
-        caption_lines.append(f"🏷️ Marca: {brand}")
-    if aromas:
-        caption_lines.append(f"🌿 Aromas: {aromas}")
-    if price:
-        caption_lines.append(f"💰 Precio: ${price}")
-    if short_description:
-        caption_lines.append(f"\n{short_description}")
-    if permalink:
-        caption_lines.append(f"\n🛒 Ver producto: {permalink}")
-    if real_image:
-        caption_lines.append(f"📸 Ver foto real: {real_image}")
-
-    caption = (custom_caption or "").strip() or "\n".join(caption_lines)
-
-    # Guardar en DB (OUT) + luego enviar por WhatsApp (imagen real)
-    with engine.begin() as conn:
-        local_id = save_message(
-            conn,
-            phone=phone,
-            direction="out",
-            msg_type="product",
-            text_msg=caption,
-            featured_image=featured_image,
-            real_image=real_image or None,
-            permalink=permalink,
-        )
-
-    wa_resp = await send_whatsapp_media_id(
-        to_phone=phone,
-        media_type="image",
-        media_id=media_id,
-        caption=caption
-    )
-
-    wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
-    with engine.begin() as conn:
-        if wa_resp.get("sent") is True and wa_message_id:
-            set_wa_send_result(conn, local_id, wa_message_id, True, "")
-        else:
-            err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or "WhatsApp send failed"
-            set_wa_send_result(conn, local_id, None, False, str(err)[:900])
-
-    return wa_resp

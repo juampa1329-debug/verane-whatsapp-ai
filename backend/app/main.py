@@ -1234,6 +1234,9 @@ async def ingest(msg: IngestMessage):
 
             user_text = (msg.text or "").strip()
 
+            print("DEBUG WC CHECK:", _wc_enabled(), msg_type, user_text)
+
+
             # =========================================================
             # ✅ WooCommerce assistant (solo texto IN)
             # =========================================================
@@ -1333,6 +1336,9 @@ async def ingest(msg: IngestMessage):
                     pass
                 except Exception:
                     pass
+                
+                print("DEBUG WC TRIGGERED")
+
 
             # =========================================================
             # ✅ Flujo IA normal (si no aplicó WC)

@@ -312,7 +312,7 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
 
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, json=payload, headers=headers)
 
     if r.status_code >= 400:

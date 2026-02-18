@@ -1,4 +1,4 @@
-# app/ai/wc_assistant.py
+# backend/app/ai/wc_assistant.py
 import json
 import re
 from typing import Callable, Awaitable, Any
@@ -84,7 +84,17 @@ def _is_generic_order_intent(user_text: str) -> bool:
 
     # frases directas típicas
     t = _norm(user_text)
-    if any(p in t for p in ("hacer el pedido", "quiero hacer el pedido", "quiero llevarlo", "lo quiero", "quiero comprar", "quiero pedir")):
+    if any(
+        p in t
+        for p in (
+            "hacer el pedido",
+            "quiero hacer el pedido",
+            "quiero llevarlo",
+            "lo quiero",
+            "quiero comprar",
+            "quiero pedir",
+        )
+    ):
         return True
 
     return False
@@ -104,18 +114,26 @@ def _looks_like_product_intent(user_text: str) -> bool:
         return False
 
     # pregunta por ciudad/envío sin producto => no dispares woo
-    if any(x in t for x in ("para que ciudad", "para qué ciudad", "ciudad seria", "ciudad sería", "envio a", "envío a")) and len(_tokenize(t)) <= 2:
+    if any(
+        x in t
+        for x in (
+            "para que ciudad",
+            "para qué ciudad",
+            "ciudad seria",
+            "ciudad sería",
+            "envio a",
+            "envío a",
+        )
+    ) and len(_tokenize(t)) <= 2:
         return False
 
     # si hay triggers, casi seguro es catálogo
     if any(w in t.split() for w in _TRIGGERS):
         return True
 
-    # ✅ antes: “mensaje corto = woo”
-    # ahora: solo si el mensaje corto no es genérico (ya filtrado) y parece nombre
+    # ✅ “mensaje corto = woo”, pero evitando genéricos
     toks = _tokenize(t)
     if 1 <= len(toks) <= 6 and len(t) >= 5:
-        # si los tokens parecen todos genéricos => no
         if all(x in _GENERIC_ORDER_TOKENS for x in toks):
             return False
         return True
@@ -126,13 +144,13 @@ def _looks_like_product_intent(user_text: str) -> bool:
 def _extract_product_query(user_text: str) -> str:
     raw = _norm(user_text)
 
+    # normaliza variantes típicas de “acqua di gio”
     raw = raw.replace("aqua de gio", "acqua di gio")
     raw = raw.replace("acqua de gio", "acqua di gio")
     raw = raw.replace("aqua di gio", "acqua di gio")
     raw = raw.replace("aqua", "acqua")
 
     toks = _tokenize(raw)
-
     if not toks:
         return raw.strip()
 
@@ -177,7 +195,7 @@ async def _wc_search_products_smart(user_text: str, per_page: int = 12) -> list[
     q_clean = _extract_product_query(user_text)
     q_raw = _norm(user_text)
 
-    queries = []
+    queries: list[str] = []
     if q_clean and len(q_clean) >= 3:
         queries.append(q_clean)
     if q_raw and q_raw not in queries and len(q_raw) >= 3:
@@ -228,6 +246,9 @@ async def handle_wc_if_applicable(
 
     send_product_fn: Callable[[str, int, str], Awaitable[dict]],
     send_text_fn: Callable[[str, str], Awaitable[dict]],
+
+    # ✅ NUEVO: hook opcional para persistir opciones en DB (evita crash por kwarg)
+    save_options_fn: Callable[[str, list[dict]], None] | None = None,
 ) -> dict[str, Any]:
 
     if not wc_enabled():
@@ -313,7 +334,7 @@ async def handle_wc_if_applicable(
 
     # 5) múltiples opciones -> preguntar
     lines = ["Encontré estas opciones: 👇"]
-    opts = []
+    opts: list[dict] = []
     for i, it in enumerate(top, start=1):
         name = str(it.get("name") or "")
         price = str(it.get("price") or "")
@@ -326,6 +347,13 @@ async def handle_wc_if_applicable(
     lines.append("")
     lines.append("¿Cuál deseas? Responde con el número (1,2,3...) o el nombre exacto.")
     msg_out = "\n".join(lines).strip()
+
+    # ✅ hook para DB (si existe); nunca debe tumbar el flujo
+    if callable(save_options_fn):
+        try:
+            save_options_fn(phone, opts)
+        except Exception:
+            pass
 
     set_state(phone, "wc_await:" + json.dumps({"options": opts}, ensure_ascii=False))
     await send_text_fn(phone, msg_out)

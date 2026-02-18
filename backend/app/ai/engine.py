@@ -12,21 +12,22 @@ from app.db import engine as db_engine
 
 
 # =========================================================
-# Settings
+# Settings (Option A: no humanize_* inside engine)
 # =========================================================
 
 def _get_settings() -> Dict[str, Any]:
     """
     Lee settings desde DB.
 
-    IMPORTANTE:
-    - Postgres lanza ERROR si una columna NO existe, aunque uses COALESCE(col, default).
-    - Por eso aquí intentamos primero con columnas humanize_* y si falla, hacemos fallback
-      a un SELECT sin esas columnas y completamos defaults en Python.
-    """
-    r = None
+    Opción A:
+    - engine solo devuelve reply_text.
+    - chunking/delays (humanización WhatsApp) se hace en main.py
+      usando reply_chunk_chars / reply_delay_ms / typing_delay_ms.
 
-    # 1) Intentar SELECT completo (con humanize_*)
+    Nota:
+    - Aquí NO se leen ni se usan columnas humanize_*.
+    """
+
     try:
         with db_engine.begin() as conn:
             r = conn.execute(text("""
@@ -40,108 +41,43 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(fallback_provider, '') AS fallback_provider,
                     COALESCE(fallback_model, '') AS fallback_model,
                     COALESCE(timeout_sec, 25) AS timeout_sec,
-                    COALESCE(max_retries, 1) AS max_retries,
-
-                    COALESCE(humanize_enabled, FALSE) AS humanize_enabled,
-                    COALESCE(humanize_delay_ms, 650) AS humanize_delay_ms,
-                    COALESCE(humanize_jitter_ms, 250) AS humanize_jitter_ms,
-                    COALESCE(humanize_paragraph_min_chars, 180) AS humanize_paragraph_min_chars,
-                    COALESCE(humanize_max_chunks, 4) AS humanize_max_chunks
+                    COALESCE(max_retries, 1) AS max_retries
                 FROM ai_settings
                 ORDER BY id ASC
                 LIMIT 1
             """)).mappings().first()
     except Exception:
-        # Si falla (por ejemplo: columna no existe), seguimos con fallback
         r = None
 
-    # 2) Fallback: SELECT básico (sin columnas humanize_*)
-    if r is None:
-        r2 = None
-        try:
-            with db_engine.begin() as conn:
-                r2 = conn.execute(text("""
-                    SELECT
-                        is_enabled,
-                        provider,
-                        model,
-                        system_prompt,
-                        max_tokens,
-                        temperature,
-                        COALESCE(fallback_provider, '') AS fallback_provider,
-                        COALESCE(fallback_model, '') AS fallback_model,
-                        COALESCE(timeout_sec, 25) AS timeout_sec,
-                        COALESCE(max_retries, 1) AS max_retries
-                    FROM ai_settings
-                    ORDER BY id ASC
-                    LIMIT 1
-                """)).mappings().first()
-        except Exception:
-            r2 = None
+    # Defaults seguros si no hay fila o falla lectura
+    if not r:
+        return {
+            "is_enabled": True,
+            "provider": "google",
+            "model": "gemma-3-4b-it",
+            "system_prompt": "",
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "fallback_provider": "groq",
+            "fallback_model": "llama-3.1-8b-instant",
+            "timeout_sec": 25,
+            "max_retries": 1,
+        }
 
-        # 2.1) Si no hay fila o no se puede leer, usar defaults
-        if not r2:
-            return {
-                "is_enabled": True,
-                "provider": "google",
-                "model": "gemma-3-4b-it",
-                "system_prompt": "",
-                "max_tokens": 512,
-                "temperature": 0.7,
-                "fallback_provider": "groq",
-                "fallback_model": "llama-3.1-8b-instant",
-                "timeout_sec": 25,
-                "max_retries": 1,
-                "humanize_enabled": False,
-                "humanize_delay_ms": 650,
-                "humanize_jitter_ms": 250,
-                "humanize_paragraph_min_chars": 180,
-                "humanize_max_chunks": 4,
-            }
-
-        d = dict(r2)
-
-        # Defaults humanize cuando DB no tiene columnas
-        d["humanize_enabled"] = False
-        d["humanize_delay_ms"] = 650
-        d["humanize_jitter_ms"] = 250
-        d["humanize_paragraph_min_chars"] = 180
-        d["humanize_max_chunks"] = 4
-
-        # Normalizar
-        d["system_prompt"] = (d.get("system_prompt") or "").strip()
-        d["provider"] = (d.get("provider") or "").strip().lower()
-        d["model"] = (d.get("model") or "").strip()
-        d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
-        d["fallback_model"] = (d.get("fallback_model") or "").strip()
-
-        # Valores numéricos seguros
-        d["timeout_sec"] = int(d.get("timeout_sec") or 25)
-        d["max_retries"] = int(d.get("max_retries") or 1)
-        d["max_tokens"] = int(d.get("max_tokens") or 512)
-        d["temperature"] = float(d.get("temperature") or 0.7)
-
-        return d
-
-    # 3) Si sí funcionó el SELECT completo, normalizar todo
     d = dict(r)
 
+    # Normalizar strings
     d["system_prompt"] = (d.get("system_prompt") or "").strip()
     d["provider"] = (d.get("provider") or "").strip().lower()
     d["model"] = (d.get("model") or "").strip()
     d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
     d["fallback_model"] = (d.get("fallback_model") or "").strip()
 
+    # Numéricos seguros
     d["timeout_sec"] = int(d.get("timeout_sec") or 25)
     d["max_retries"] = int(d.get("max_retries") or 1)
     d["max_tokens"] = int(d.get("max_tokens") or 512)
     d["temperature"] = float(d.get("temperature") or 0.7)
-
-    d["humanize_enabled"] = bool(d.get("humanize_enabled") or False)
-    d["humanize_delay_ms"] = int(d.get("humanize_delay_ms") or 650)
-    d["humanize_jitter_ms"] = int(d.get("humanize_jitter_ms") or 250)
-    d["humanize_paragraph_min_chars"] = int(d.get("humanize_paragraph_min_chars") or 180)
-    d["humanize_max_chunks"] = int(d.get("humanize_max_chunks") or 4)
 
     return d
 
@@ -253,6 +189,7 @@ def _build_context_from_kb(user_text: str, max_chunks: int = 6, max_chars: int =
     picked: List[str] = []
     total = 0
     used = 0
+
     for r in rows:
         if used >= max_chunks:
             break
@@ -289,47 +226,6 @@ def _build_context_from_kb(user_text: str, max_chunks: int = 6, max_chars: int =
 
 
 # =========================================================
-# Humanize helpers (split reply into chunks)
-# =========================================================
-
-def _split_into_chunks(text: str, min_chars: int = 180, max_chunks: int = 4) -> List[str]:
-    t = (text or "").strip()
-    if not t:
-        return []
-
-    t = t.replace("\r\n", "\n").replace("\r", "\n")
-
-    paras = [p.strip() for p in t.split("\n\n") if p.strip()]
-    if len(paras) <= 1:
-        sentences = re.split(r"(?<=[\.\!\?])\s+", t)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        paras = []
-        buf = ""
-        for s in sentences:
-            if not buf:
-                buf = s
-            else:
-                buf = (buf + " " + s).strip()
-
-            if len(buf) >= min_chars:
-                paras.append(buf)
-                buf = ""
-
-        if buf:
-            paras.append(buf)
-
-    out: List[str] = []
-    for p in paras:
-        if p and len(out) < max_chunks:
-            out.append(p)
-
-    if not out:
-        return [t]
-
-    return out
-
-
-# =========================================================
 # Public API
 # =========================================================
 
@@ -341,7 +237,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "provider": str(s.get("provider", "")),
             "model": str(s.get("model", "")),
             "reply_text": "",
-            "reply_chunks": [],
+            "reply_chunks": [],  # compat
             "used_fallback": False,
             "error": "AI disabled",
         }
@@ -350,7 +246,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
     user_text = (text or "").strip()
 
     existing_ctx = (meta.get("context") or "").strip() if isinstance(meta, dict) else ""
-    if not existing_ctx:
+    if not existing_ctx and user_text:
         kb_ctx = _build_context_from_kb(user_text=user_text, max_chunks=6, max_chars=4000)
         if kb_ctx:
             meta["context"] = kb_ctx
@@ -376,19 +272,12 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         max_retries=max_retries,
     )
     if ok and reply:
-        chunks = []
-        if bool(s.get("humanize_enabled")):
-            chunks = _split_into_chunks(
-                reply,
-                min_chars=int(s.get("humanize_paragraph_min_chars") or 180),
-                max_chunks=int(s.get("humanize_max_chunks") or 4),
-            )
         return {
             "ok": True,
             "provider": provider,
             "model": model,
             "reply_text": reply,
-            "reply_chunks": chunks,
+            "reply_chunks": [],  # Option A: engine no chunking
             "used_fallback": False,
             "error": None,
         }
@@ -407,22 +296,16 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             max_retries=max_retries,
         )
         if ok2 and reply2:
-            chunks = []
-            if bool(s.get("humanize_enabled")):
-                chunks = _split_into_chunks(
-                    reply2,
-                    min_chars=int(s.get("humanize_paragraph_min_chars") or 180),
-                    max_chunks=int(s.get("humanize_max_chunks") or 4),
-                )
             return {
                 "ok": True,
                 "provider": fb_provider,
                 "model": fb_model,
                 "reply_text": reply2,
-                "reply_chunks": chunks,
+                "reply_chunks": [],
                 "used_fallback": True,
                 "error": None,
             }
+
         return {
             "ok": False,
             "provider": fb_provider or provider,
@@ -532,13 +415,6 @@ async def _call_provider(
 # =========================================================
 # Provider implementations (HTTP)
 # =========================================================
-
-def _last_user_text(messages: list[Dict[str, str]]) -> str:
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            return str(m.get("content", "") or "")
-    return ""
-
 
 def _system_text(messages: list[Dict[str, str]]) -> str:
     for m in messages:

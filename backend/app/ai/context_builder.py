@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from sqlalchemy import text
 
@@ -85,6 +85,19 @@ def _looks_like_template_bot_answer(s: str) -> bool:
     return False
 
 
+def _wc_business_rules_block() -> str:
+    """
+    Bloque corto que ayuda a la IA a entender cómo funciona el catálogo.
+    OJO: no expone credenciales ni endpoints, solo reglas de negocio.
+    """
+    return _clean_text("""
+Reglas de tienda (WooCommerce):
+- Los perfumes/presentaciones (ej: Aqua di Gio clásico / Profumo / Profondo) pueden estar guardados como PRODUCTOS separados (no necesariamente variaciones).
+- Si el cliente pregunta por un perfume y aparecen varias opciones cercanas, primero ofrece una lista y pide que elija (por número o nombre) antes de adjuntar un producto.
+- Si hay un match único y claro, se puede adjuntar directamente el producto.
+""").strip()
+
+
 # =========================================================
 # DB accessors
 # =========================================================
@@ -139,6 +152,7 @@ def _get_recent_messages(phone: str, limit: int = 14) -> List[Dict[str, Any]]:
 # =========================================================
 
 _KB_SCHEMA_READY = False
+
 
 def _ensure_kb_schema_safe() -> None:
     """
@@ -293,8 +307,8 @@ def build_ai_meta(
 ) -> Dict[str, Any]:
     """
     Construye meta para engine.process_message:
-    - meta["context"]: mezcla CRM + ai_state + historial + KB (PDF chunks)
-    - meta["crm"]: objeto estructurado (para tools futuro)
+    - meta["context"]: mezcla CRM + historial + KB
+    - meta["crm"]: objeto estructurado
     """
 
     phone = (phone or "").strip()
@@ -351,11 +365,15 @@ def build_ai_meta(
     notes = _clean_text(crm.get("notes") or "")
     if notes:
         crm_lines.append(f"Notas: {notes}")
-    ai_state = _clean_text(crm.get("ai_state") or "")
-# Evitar que la IA normal “vea” estados internos tipo wc_await
-    if ai_state and not ai_state.startswith("wc_await:"):
-        crm_lines.append(f"AI_STATE: {ai_state}")
 
+    ai_state = _clean_text(crm.get("ai_state") or "")
+
+    # ✅ IMPORTANTE:
+    # Evitar que la IA “vea” estados internos tipo wc_await (solo lo marcamos en flags)
+    wc_awaiting_choice = bool(ai_state.startswith("wc_await:"))
+
+    if ai_state and (not wc_awaiting_choice):
+        crm_lines.append(f"AI_STATE: {ai_state}")
 
     # KB context (solo si el usuario dijo algo)
     kb_ctx = ""
@@ -363,6 +381,10 @@ def build_ai_meta(
         kb_ctx = _kb_retrieve(user_text=user_text, max_chunks=6, max_chars=kb_max_chars)
 
     blocks: List[str] = []
+
+    # Regla de negocio WC (compacta y útil para la IA)
+    blocks.append("Reglas del negocio:\n" + _wc_business_rules_block())
+
     if crm_lines:
         blocks.append("CRM (perfil del cliente):\n" + "\n".join(crm_lines))
     if history_block:
@@ -370,16 +392,17 @@ def build_ai_meta(
     if kb_ctx:
         blocks.append("Knowledge Base (referencia):\n" + kb_ctx)
 
-    context = "\n\n".join(blocks).strip()
+    context = "\n\n".join([b for b in blocks if (b or "").strip()]).strip()
 
     # meta estructurado
     meta: Dict[str, Any] = {"crm": crm}
 
-    # añadimos señales útiles explícitas (sin ensuciar el prompt)
+    # añadimos señales útiles explícitas
     meta["flags"] = {
         "takeover": bool(crm.get("takeover") or False),
         "has_kb": bool(kb_ctx),
         "has_history": bool(history_block),
+        "wc_awaiting_choice": wc_awaiting_choice,
     }
 
     if context:

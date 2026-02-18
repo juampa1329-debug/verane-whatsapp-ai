@@ -102,6 +102,15 @@ def ensure_schema():
             )
         """))
 
+        # ✅ Extraccion de datos
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS extracted_text TEXT"""))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_meta JSONB"""))
+
+        # ✅ Control de tráfico
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at ON messages (phone, created_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at ON messages (phone, direction, created_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
+
         # ✅ Media extra
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_id TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS mime_type TEXT"""))
@@ -145,7 +154,7 @@ def ensure_schema():
             )
         """))
 
-        # ✅ NUEVO: settings humanización (router.py ya los usa)
+        # ✅ settings humanización (para envío por chunks)
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER"""))
@@ -739,15 +748,18 @@ def wc_products(
     items = [_map_product_for_ui(p) for p in (data or [])]
     return {"products": items}
 
-@app.post("/api/wc/send-product")
-async def send_wc_product(payload: dict):
+
+# =========================================================
+# ✅ FUNCIÓN INTERNA ROBUSTA (no llamar endpoint como función)
+# =========================================================
+async def _wc_send_product_internal(phone: str, product_id: int, custom_caption: str = "") -> dict:
     import io
     from PIL import Image
-    import pillow_avif  # noqa: F401
 
-    phone = payload.get("phone")
-    product_id = payload.get("product_id")
-    custom_caption = payload.get("caption", "")
+    try:
+        import pillow_avif  # noqa: F401
+    except Exception:
+        pillow_avif = None  # noqa: F841
 
     if not phone or not product_id:
         raise HTTPException(status_code=400, detail="phone and product_id required")
@@ -862,13 +874,30 @@ async def send_wc_product(payload: dict):
 
     wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
     with engine.begin() as conn:
-        if wa_resp.get("sent") is True and wa_message_id:
+        if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
             set_wa_send_result(conn, local_id, wa_message_id, True, "")
         else:
-            err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or "WhatsApp send failed"
+            err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") or "WhatsApp send failed"
             set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
-    return wa_resp
+    return wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
+
+
+@app.post("/api/wc/send-product")
+async def send_wc_product(payload: dict):
+    phone = payload.get("phone")
+    product_id = payload.get("product_id")
+    custom_caption = payload.get("caption", "")
+
+    if not phone or not product_id:
+        raise HTTPException(status_code=400, detail="phone and product_id required")
+
+    wa = await _wc_send_product_internal(
+        phone=str(phone),
+        product_id=int(product_id),
+        custom_caption=str(custom_caption or "")
+    )
+    return {"ok": True, "sent": bool(wa.get("sent")), "wa": wa}
 
 
 # =========================================================
@@ -1167,13 +1196,13 @@ async def ingest(msg: IngestMessage):
                 wa_message_id = wa_resp.get("wa_message_id")
 
             with engine.begin() as conn:
-                if wa_resp.get("sent") is True and wa_message_id:
+                if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
                     set_wa_send_result(conn, local_id, wa_message_id, True, "")
                 else:
-                    err = wa_resp.get("whatsapp_body") or wa_resp.get("reason") or wa_resp.get("error") or "WhatsApp send failed"
+                    err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") or "WhatsApp send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
-            return {"saved": True, "sent": bool(wa_resp.get("sent")), "wa": wa_resp}
+            return {"saved": True, "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp}
 
         except Exception as e:
             with engine.begin() as conn:
@@ -1206,97 +1235,104 @@ async def ingest(msg: IngestMessage):
             user_text = (msg.text or "").strip()
 
             # =========================================================
-            # ✅ NUEVO: WooCommerce assistant (solo texto IN)
+            # ✅ WooCommerce assistant (solo texto IN)
             # =========================================================
             if _wc_enabled() and msg_type == "text" and user_text:
-                # 1) si venimos esperando que el cliente elija variante
-                st = _get_ai_state(msg.phone)
-                if st.startswith("wc_await:"):
-                    try:
-                        payload = json.loads(st[len("wc_await:"):].strip() or "{}")
-                    except Exception:
-                        payload = {}
+                try:
+                    # 1) si venimos esperando que el cliente elija variante
+                    st = _get_ai_state(msg.phone)
+                    if st.startswith("wc_await:"):
+                        try:
+                            payload = json.loads(st[len("wc_await:"):].strip() or "{}")
+                        except Exception:
+                            payload = {}
 
-                    options = payload.get("options") or []
-                    if isinstance(options, list) and options:
-                        # elección por número
-                        n = _parse_choice_number(user_text)
-                        chosen = None
-                        if n is not None and 1 <= n <= len(options):
-                            chosen = options[n - 1]
-                        else:
-                            # elección por texto
-                            ut = _norm(user_text)
-                            best = None
-                            best_score = 0
-                            for opt in options:
-                                name = str((opt or {}).get("name") or "")
-                                sc = _score_product_match(ut, name)
-                                if sc > best_score:
-                                    best_score = sc
-                                    best = opt
-                            if best and best_score >= 30:
-                                chosen = best
+                        options = payload.get("options") or []
+                        if isinstance(options, list) and options:
+                            # elección por número
+                            n = _parse_choice_number(user_text)
+                            chosen = None
+                            if n is not None and 1 <= n <= len(options):
+                                chosen = options[n - 1]
+                            else:
+                                # elección por texto
+                                ut = _norm(user_text)
+                                best = None
+                                best_score = 0
+                                for opt in options:
+                                    name = str((opt or {}).get("name") or "")
+                                    sc = _score_product_match(ut, name)
+                                    if sc > best_score:
+                                        best_score = sc
+                                        best = opt
+                                if best and best_score >= 30:
+                                    chosen = best
 
-                        if chosen and chosen.get("id"):
-                            _clear_ai_state(msg.phone)
-                            return await send_wc_product({
-                                "phone": msg.phone,
-                                "product_id": chosen.get("id"),
-                                "caption": ""
-                            })
+                            if chosen and chosen.get("id"):
+                                _clear_ai_state(msg.phone)
+                                wa = await _wc_send_product_internal(
+                                    phone=msg.phone,
+                                    product_id=int(chosen.get("id")),
+                                    custom_caption=""
+                                )
+                                return {"saved": True, "sent": bool(wa.get("sent")), "ai": False, "wc": True, "reason": "choice_send", "wa": wa}
 
-                        # si no entendimos, repreguntamos
-                        txt = "¿Cuál opción deseas? Responde con el número (1, 2, 3...) o el nombre exacto 🙂"
-                        await _send_ai_reply_in_chunks(msg.phone, txt)
-                        return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "awaiting_choice"}
+                            # si no entendimos, repreguntamos
+                            txt = "¿Cuál opción deseas? Responde con el número (1, 2, 3...) o el nombre exacto 🙂"
+                            await _send_ai_reply_in_chunks(msg.phone, txt)
+                            return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "awaiting_choice"}
 
-                # 2) detectar pregunta de producto
-                if _looks_like_product_question(user_text):
-                    items = _wc_search_products(user_text, per_page=8)
+                    # 2) detectar pregunta de producto
+                    if _looks_like_product_question(user_text):
+                        items = _wc_search_products(user_text, per_page=8)
 
-                    if items:
-                        # score
-                        scored = []
-                        for it in items:
-                            sc = _score_product_match(user_text, it.get("name") or "")
-                            scored.append((sc, it))
-                        scored.sort(key=lambda x: x[0], reverse=True)
+                        if items:
+                            # score
+                            scored = []
+                            for it in items:
+                                sc = _score_product_match(user_text, it.get("name") or "")
+                                scored.append((sc, it))
+                            scored.sort(key=lambda x: x[0], reverse=True)
 
-                        best_score, best_item = scored[0]
-                        # match fuerte y único
-                        strong = best_score >= 65
-                        second_score = scored[1][0] if len(scored) > 1 else 0
+                            best_score, best_item = scored[0]
+                            strong = best_score >= 65
+                            second_score = scored[1][0] if len(scored) > 1 else 0
 
-                        if strong and (best_score - second_score >= 15):
-                            # si está instock, lo enviamos directo como adjunto
-                            return await send_wc_product({
-                                "phone": msg.phone,
-                                "product_id": best_item.get("id"),
-                                "caption": ""
-                            })
+                            if strong and (best_score - second_score >= 15):
+                                wa = await _wc_send_product_internal(
+                                    phone=msg.phone,
+                                    product_id=int(best_item.get("id")),
+                                    custom_caption=""
+                                )
+                                return {"saved": True, "sent": bool(wa.get("sent")), "ai": False, "wc": True, "reason": "strong_match_send", "wa": wa}
 
-                        # si hay varias variantes, preguntamos cuál
-                        top = [x[1] for x in scored[:5]]
-                        lines = ["Encontré estas opciones: 👇"]
-                        opts = []
-                        for i, it in enumerate(top, start=1):
-                            name = str(it.get("name") or "")
-                            price = str(it.get("price") or "")
-                            stock = str(it.get("stock_status") or "")
-                            stock_label = "✅ disponible" if stock == "instock" else "⛔ agotado"
-                            price_label = f" — ${price}" if price else ""
-                            lines.append(f"{i}) {name}{price_label} ({stock_label})")
-                            opts.append({"id": it.get("id"), "name": name})
+                            # si hay varias variantes, preguntamos cuál
+                            top = [x[1] for x in scored[:5]]
+                            lines = ["Encontré estas opciones: 👇"]
+                            opts = []
+                            for i, it in enumerate(top, start=1):
+                                name = str(it.get("name") or "")
+                                price = str(it.get("price") or "")
+                                stock = str(it.get("stock_status") or "")
+                                stock_label = "✅ disponible" if stock == "instock" else "⛔ agotado"
+                                price_label = f" — ${price}" if price else ""
+                                lines.append(f"{i}) {name}{price_label} ({stock_label})")
+                                opts.append({"id": it.get("id"), "name": name})
 
-                        lines.append("")
-                        lines.append("¿Cuál deseas? Responde con el número (1,2,3...) o el nombre exacto.")
-                        msg_out = "\n".join(lines).strip()
+                            lines.append("")
+                            lines.append("¿Cuál deseas? Responde con el número (1,2,3...) o el nombre exacto.")
+                            msg_out = "\n".join(lines).strip()
 
-                        _set_ai_state(msg.phone, "wc_await:" + json.dumps({"options": opts}, ensure_ascii=False))
-                        await _send_ai_reply_in_chunks(msg.phone, msg_out)
+                            _set_ai_state(msg.phone, "wc_await:" + json.dumps({"options": opts}, ensure_ascii=False))
+                            await _send_ai_reply_in_chunks(msg.phone, msg_out)
 
-                        return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "multiple_options"}
+                            return {"saved": True, "sent": True, "ai": False, "wc": True, "reason": "multiple_options"}
+
+                except HTTPException:
+                    # Si WooCommerce falla, NO se cae el chat: seguimos al flujo IA normal
+                    pass
+                except Exception:
+                    pass
 
             # =========================================================
             # ✅ Flujo IA normal (si no aplicó WC)

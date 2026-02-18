@@ -12,6 +12,55 @@ from app.db import engine as db_engine
 
 
 # =========================================================
+# Model name mapping (UI label -> API model id)
+# =========================================================
+
+MODEL_MAP_GOOGLE: Dict[str, str] = {
+    # Labels típicos del UI -> IDs reales para Google Generative Language API
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
+    "Gemini 2.5 Pro": "gemini-2.5-pro",
+    "Gemini 2.5 Flash Preview TTS": "gemini-2.5-flash-preview-tts",
+    "Gemini 2.5 Pro Preview TTS": "gemini-2.5-pro-preview-tts",
+
+    "Gemini 2.0 Flash": "gemini-2.0-flash",
+    "Gemini 2.0 Flash 001": "gemini-2.0-flash-001",
+    "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
+    "Gemini 2.0 Flash-Lite 001": "gemini-2.0-flash-lite-001",
+
+    # Experimental / image gen (si lo usas en UI; ojo: puede no estar habilitado en tu cuenta)
+    "Gemini 2.0 Flash (Image Generation) Experimental": "gemini-2.0-flash-exp",
+
+    # Gemma (si tu UI lo lista así)
+    "Gemma 3 1B": "gemma-3-1b-it",
+    "Gemma 3 4B": "gemma-3-4b-it",
+    "Gemma 3 12B": "gemma-3-12b-it",
+    "Gemma 3 27B": "gemma-3-27b-it",
+    "Gemma 3n E4B": "gemma-3n-e4b",
+    "Gemma 3n E2B": "gemma-3n-e2b",
+}
+
+
+def _resolve_google_model(model: str) -> str:
+    """
+    Convierte el valor guardado en DB (que puede venir como label del UI)
+    a un model id válido para:
+      https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+
+    Si ya viene como gemini-* o gemma-* lo respeta.
+    """
+    m = (model or "").strip()
+    if not m:
+        return "gemini-2.0-flash"
+
+    low = m.lower().strip()
+    if low.startswith(("gemini-", "gemma-")):
+        return low
+
+    # si viene como label, mapear
+    return MODEL_MAP_GOOGLE.get(m, m)
+
+
+# =========================================================
 # Settings (Option A: no humanize_* inside engine)
 # =========================================================
 
@@ -398,7 +447,9 @@ async def _call_provider(
     provider = (provider or "").strip().lower()
 
     if provider == "google":
-        return await _call_google_gemma(model, messages, max_tokens, temperature, timeout_sec)
+        # ✅ CLAVE: aceptar labels del UI y convertir a model id real
+        resolved = _resolve_google_model(model)
+        return await _call_google_gemma(resolved, messages, max_tokens, temperature, timeout_sec)
 
     if provider == "groq":
         return await _call_groq(model, messages, max_tokens, temperature, timeout_sec)
@@ -438,7 +489,7 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
     if not api_key:
         raise RuntimeError("GOOGLE_AI_API_KEY is not set")
 
-    model = (model or "gemma-3-4b-it").strip()
+    model = (model or "gemini-2.0-flash").strip()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     sys = _system_text(messages)

@@ -984,7 +984,10 @@ async def ingest(msg: IngestMessage):
                 if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
                     set_wa_send_result(conn, local_id, wa_message_id, True, "")
                 else:
-                    err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") or "WhatsApp send failed"
+                    err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
+                          or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
+                          or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
+                          or "WhatsApp send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
             return {"saved": True, "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp}
@@ -994,7 +997,7 @@ async def ingest(msg: IngestMessage):
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
-    # 3) Disparar IA si es IN, IA habilitada, y takeover está OFF (bot mode)
+    # 3) Disparar IA/Woo si es IN, IA habilitada, y takeover está OFF (bot mode)
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -1019,14 +1022,19 @@ async def ingest(msg: IngestMessage):
 
             user_text = (msg.text or "").strip()
 
+            # ✅ Robustez: si hay texto útil, lo tratamos como "text" a nivel de intención
+            eff_msg_type = "text" if user_text else msg_type
+
             # =========================================================
-            # ✅ WooCommerce assistant (A1) módulo separado
+            # ✅ WooCommerce assistant (A1)
+            # - YA NO depende de msg_type=="text"
+            # - depende de que haya user_text (intención)
             # =========================================================
-            if wc_enabled() and msg_type == "text" and user_text:
+            if wc_enabled() and user_text:
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-                    msg_type=msg_type,
+                    msg_type=eff_msg_type,
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,
                     clear_state=_clear_ai_state,
@@ -1047,11 +1055,11 @@ async def ingest(msg: IngestMessage):
             # =========================================================
             # ✅ Flujo IA normal (si no aplicó WC)
             # =========================================================
-            meta = build_ai_meta(msg.phone, msg.text or "")
+            meta = build_ai_meta(msg.phone, user_text)
 
             ai_result = await process_message(
                 phone=msg.phone,
-                text=(msg.text or ""),
+                text=user_text,
                 meta=meta,
             )
 
@@ -1081,6 +1089,7 @@ async def ingest(msg: IngestMessage):
             return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}
+
 
 
 @app.post("/api/conversations/takeover")

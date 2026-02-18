@@ -40,8 +40,9 @@ async def wc_get(path: str, params: dict | None = None):
     params["consumer_secret"] = WC_CONSUMER_SECRET
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "verane-bot/1.0"}) as client:
             r = await client.get(url, params=params)
+
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
 
@@ -137,11 +138,43 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     q = (query or "").strip()
     if not q:
         return []
-    params = {"search": q, "page": 1, "per_page": int(per_page), "status": "publish"}
-    data = await wc_get("/products", params=params)
-    items = [map_product_for_ui(p) for p in (data or [])]
-    items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
-    return items
+
+    async def _search_once(qx: str) -> List[dict]:
+        params = {"search": qx, "page": 1, "per_page": int(per_page), "status": "publish"}
+        data = await wc_get("/products", params=params)
+        items = [map_product_for_ui(p) for p in (data or [])]
+        items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+        return items
+
+    # 1) intento normal
+    items = await _search_once(q)
+    if items:
+        return items
+
+    # 2) fallback: normaliza variaciones comunes (aqua/acqua, gio/giò, di/de)
+    q2 = _norm(q)
+    q2 = q2.replace("aqua de gio", "acqua di gio")
+    q2 = q2.replace("acqua de gio", "acqua di gio")
+    q2 = q2.replace("aqua di gio", "acqua di gio")
+    q2 = q2.replace("aqua", "acqua")
+    q2 = q2.replace(" de ", " di ")
+
+    if q2 and q2 != q:
+        items = await _search_once(q2)
+        if items:
+            return items
+
+    # 3) fallback: intenta por tokens clave (2-3 palabras)
+    toks = [t for t in q2.split() if len(t) >= 2]
+    if len(toks) >= 2:
+        q3 = " ".join(toks[:3])
+        if q3 and q3 not in (q, q2):
+            items = await _search_once(q3)
+            if items:
+                return items
+
+    return []
+
 
 
 def looks_like_product_question(user_text: str) -> bool:

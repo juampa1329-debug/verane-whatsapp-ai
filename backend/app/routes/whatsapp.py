@@ -116,19 +116,12 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
 
 def _normalize_text(s: str) -> str:
     s = (s or "").strip()
-    # Normaliza saltos de línea exagerados
     s = re.sub(r"\r\n", "\n", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
 
 def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
-    """
-    Chunking inteligente:
-    1) divide por párrafos (doble salto)
-    2) si un párrafo queda largo, divide por oraciones
-    3) si aún queda largo, divide por longitud fija
-    """
     text_msg = _normalize_text(text_msg)
     if not text_msg:
         return [""]
@@ -136,7 +129,6 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
     if max_chars <= 0:
         return [text_msg]
 
-    # 1) párrafos
     paras = [p.strip() for p in text_msg.split("\n\n") if p.strip()]
     out: list[str] = []
 
@@ -150,10 +142,8 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
             out.append(piece)
             return
 
-        # 2) oraciones
         sents = sentence_split_re.split(piece)
         if len(sents) <= 1:
-            # 3) fijo
             i = 0
             while i < len(piece):
                 chunk = piece[i:i + max_chars].strip()
@@ -176,7 +166,6 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
                 if len(s) <= max_chars:
                     buf = s
                 else:
-                    # si una oración sola es gigante, corto fijo
                     j = 0
                     while j < len(s):
                         c = s[j:j + max_chars].strip()
@@ -187,7 +176,6 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
         if buf:
             out.append(buf)
 
-    # junta párrafos tratando de llenar hasta max_chars sin romper sentido
     buf = ""
     for p in paras:
         if not buf:
@@ -212,19 +200,11 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
     if buf:
         out.append(buf)
 
-    # WhatsApp a veces odia cuerpos vacíos o con espacios raros
     out = [x.strip() for x in out if x.strip()]
     return out or [""]
 
 
 async def send_whatsapp_text_humanized(to_phone: str, text_msg: str) -> dict:
-    """
-    Envío humanizado:
-    - divide respuestas largas en chunks
-    - espera typing_delay antes del primer envío
-    - espera reply_delay entre chunks
-    Devuelve el resultado del último chunk y el listado de ids.
-    """
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
@@ -240,7 +220,6 @@ async def send_whatsapp_text_humanized(to_phone: str, text_msg: str) -> dict:
     wa_ids: list[str] = []
     last_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
 
-    # typing delay antes del primer mensaje
     if typing_delay > 0:
         await asyncio.sleep(typing_delay)
 
@@ -251,7 +230,6 @@ async def send_whatsapp_text_humanized(to_phone: str, text_msg: str) -> dict:
             if mid:
                 wa_ids.append(str(mid))
 
-        # delay entre mensajes (no después del último)
         if idx < len(chunks) - 1 and reply_delay > 0:
             await asyncio.sleep(reply_delay)
 
@@ -370,15 +348,6 @@ async def _forward_to_targets(raw_body: bytes):
 
 
 def _update_status_in_db(status_obj: dict):
-    """
-    status_obj típico:
-    {
-      "id": "wamid....",
-      "status": "delivered" | "read" | "failed" | "sent",
-      "timestamp": "1700000000",
-      "errors": [...]
-    }
-    """
     wa_id = status_obj.get("id")
     st = (status_obj.get("status") or "").lower().strip()
     ts = status_obj.get("timestamp")
@@ -436,18 +405,48 @@ def _update_status_in_db(status_obj: dict):
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
 
-async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: str | None = None):
+def _extract_text_from_incoming(m: dict) -> tuple[str, str, str | None]:
     """
-    En vez de escribir directo a DB, usamos el pipeline único:
-    /api/messages/ingest (llamado directo como función).
+    Devuelve: (effective_msg_type, text_msg, media_id)
+    - Si hay texto útil (text / interactive / button / caption), effective_msg_type = "text"
+    - Si no, mantiene el tipo original.
+    """
+    msg_type = (m.get("type") or "text").strip().lower()
+    text_msg = ""
+    media_id = None
 
-    NOTA IMPORTANTE:
-    La lógica de takeover se decide dentro de main.ingest:
-      - takeover=True  => humano => NO IA
-      - takeover=False => bot => SI IA (si ai_settings.is_enabled)
-    """
+    if msg_type == "text":
+        text_msg = (m.get("text") or {}).get("body", "") or ""
+
+    elif msg_type == "interactive":
+        inter = m.get("interactive") or {}
+        # list_reply o button_reply
+        lr = inter.get("list_reply") or {}
+        br = inter.get("button_reply") or {}
+        text_msg = (lr.get("title") or lr.get("description") or lr.get("id") or
+                    br.get("title") or br.get("id") or "") or ""
+
+    elif msg_type == "button":
+        btn = m.get("button") or {}
+        text_msg = (btn.get("text") or btn.get("payload") or "") or ""
+
+    elif msg_type in ("image", "video", "audio", "document"):
+        media_obj = m.get(msg_type) or {}
+        media_id = media_obj.get("id")
+        caption = media_obj.get("caption") or ""
+        text_msg = caption or ""
+
+    else:
+        # otros tipos: puedes mapear más aquí si lo necesitas
+        text_msg = ""
+
+    text_msg = (text_msg or "").strip()
+    effective_type = "text" if text_msg else msg_type
+    return effective_type, text_msg, media_id
+
+
+async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: str | None = None):
     try:
-        # Import local para evitar circular imports al cargar módulos
         from app.main import ingest, IngestMessage  # type: ignore
 
         payload = IngestMessage(
@@ -465,8 +464,15 @@ async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: s
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
+    print("WA_WEBHOOK_HIT ✅")
 
-    # ✅ Evita loops fanout
+    try:
+        from app.integrations.woocommerce import wc_enabled
+        print("WC_ENABLED_RUNTIME:", wc_enabled())
+    except Exception as e:
+        print("WC_ENABLED_ERROR:", str(e))
+
+
     if request.headers.get("X-Verane-Forwarded") != "1":
         asyncio.create_task(_forward_to_targets(raw))
 
@@ -488,27 +494,20 @@ async def whatsapp_receive(request: Request):
         # 2) Mensajes entrantes -> pasan por ingest (pipeline único)
         messages = value.get("messages") or []
         for m in messages:
-            phone = m.get("from")
-            msg_type = (m.get("type") or "text").strip().lower()
+            phone = (m.get("from") or "").strip()
+            eff_type, text_msg, media_id = _extract_text_from_incoming(m)
 
-            text_msg = ""
-            media_id = None
+            # fallback si no hay phone
+            if not phone:
+                continue
 
-            if msg_type == "text":
-                text_msg = (m.get("text") or {}).get("body", "") or ""
-
-            elif msg_type in ("image", "video", "audio", "document"):
-                media_obj = m.get(msg_type) or {}
-                media_id = media_obj.get("id")
-                caption = media_obj.get("caption") or ""
-                text_msg = caption or f"[{msg_type}]"
-
-            else:
-                text_msg = f"[{msg_type}]"
+            # si no hay texto útil, guardamos un placeholder
+            if not text_msg and eff_type != "text":
+                text_msg = f"[{eff_type}]"
 
             await _ingest_internal(
                 phone=phone,
-                msg_type=msg_type,
+                msg_type=eff_type,
                 text_msg=text_msg,
                 media_id=media_id,
             )

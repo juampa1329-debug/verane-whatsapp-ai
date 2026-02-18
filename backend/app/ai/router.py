@@ -1,3 +1,4 @@
+# app/ai/router.py
 from __future__ import annotations
 
 import os
@@ -28,6 +29,9 @@ AIProvider = Literal["google", "groq", "mistral", "openrouter"]
 MODEL_CATALOG: Dict[str, List[str]] = {
     "google": [
         "gemma-3-4b-it",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
     ],
     "groq": [
         "llama-3.1-8b-instant",
@@ -143,6 +147,57 @@ def _provider_supports_live(p: str) -> bool:
     return p in ("google", "groq", "mistral", "openrouter")
 
 
+# =========================================================
+# ✅ Model normalization (fix UI saving label instead of id)
+# =========================================================
+
+MODEL_MAP_GOOGLE_LABEL_TO_ID: Dict[str, str] = {
+    "Gemini 2.5 Flash": "gemini-2.5-flash",
+    "Gemini 2.5 Pro": "gemini-2.5-pro",
+    "Gemini 2.5 Flash Preview TTS": "gemini-2.5-flash-preview-tts",
+    "Gemini 2.5 Pro Preview TTS": "gemini-2.5-pro-preview-tts",
+    "Gemini 2.0 Flash": "gemini-2.0-flash",
+    "Gemini 2.0 Flash 001": "gemini-2.0-flash-001",
+    "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
+    "Gemini 2.0 Flash-Lite 001": "gemini-2.0-flash-lite-001",
+    # Gemma (si el UI lo muestra así)
+    "Gemma 3 1B": "gemma-3-1b-it",
+    "Gemma 3 4B": "gemma-3-4b-it",
+    "Gemma 3 12B": "gemma-3-12b-it",
+    "Gemma 3 27B": "gemma-3-27b-it",
+    "Gemma 3n E4B": "gemma-3n-e4b",
+    "Gemma 3n E2B": "gemma-3n-e2b",
+}
+
+
+def _resolve_model_for_provider(provider: str, model: str) -> str:
+    """
+    Acepta:
+    - 'models/gemini-2.5-flash'  -> 'gemini-2.5-flash'
+    - 'Gemini 2.5 Flash'         -> 'gemini-2.5-flash'   (UI label)
+    - 'gemini-2.5-flash'         -> 'gemini-2.5-flash'
+    """
+    p = (provider or "").strip().lower()
+    m = (model or "").strip()
+    if not m:
+        return m
+
+    if p == "google":
+        m = _strip_google_model_prefix(m)
+        low = m.lower().strip()
+
+        # si ya viene en formato id
+        if low.startswith(("gemini-", "gemma-")):
+            return low
+
+        # si viene como label del UI
+        mapped = MODEL_MAP_GOOGLE_LABEL_TO_ID.get(m)
+        return (mapped or m).strip()
+
+    # otros providers: usualmente el id ya viene bien
+    return m
+
+
 def _validate_model_flex(provider: str, model: str) -> None:
     """
     FLEX validation:
@@ -158,7 +213,7 @@ def _validate_model_flex(provider: str, model: str) -> None:
         raise HTTPException(status_code=400, detail="model is required")
 
     if p == "google":
-        m2 = _strip_google_model_prefix(m)
+        m2 = _strip_google_model_prefix(m).strip().lower()
         if not (m2.startswith("gemini-") or m2.startswith("gemma-")):
             raise HTTPException(status_code=400, detail=f"Invalid google model format: {m}")
         return
@@ -177,10 +232,6 @@ def _get_settings_row(conn) -> Dict[str, Any]:
     """
     OJO: Estos campos (reply_chunk_chars, reply_delay_ms, typing_delay_ms)
     deben existir en la tabla ai_settings.
-    Si aún no existen, agrégalos en main.ensure_schema():
-      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER;
-      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER;
-      ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER;
     """
     r = conn.execute(text("""
         SELECT
@@ -231,9 +282,9 @@ class AISettingsOut(BaseModel):
     max_retries: int = 1
 
     # ✅ humanización
-    reply_chunk_chars: int = 480         # tamaño por “párrafo”/chunk
-    reply_delay_ms: int = 900            # delay entre chunks
-    typing_delay_ms: int = 450           # delay inicial antes de enviar el primer chunk
+    reply_chunk_chars: int = 480
+    reply_delay_ms: int = 900
+    typing_delay_ms: int = 450
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -334,12 +385,11 @@ def update_ai_settings(payload: AISettingsUpdate):
                 detail=f"Invalid provider: {new_vals['provider']}. Allowed: ['google','groq','mistral','openrouter']",
             )
 
-        # FLEX validation
-        _validate_model_flex(new_vals["provider"], new_vals["model"])
+        # ✅ Resolver modelo (label -> id / models/xxx -> xxx) ANTES de validar
+        new_vals["model"] = _resolve_model_for_provider(new_vals["provider"], new_vals["model"])
 
-        # normalize google "models/xxx" -> "xxx"
-        if new_vals["provider"] == "google":
-            new_vals["model"] = _strip_google_model_prefix(new_vals["model"])
+        # FLEX validation (ya con id real)
+        _validate_model_flex(new_vals["provider"], new_vals["model"])
 
         # fallback optional, validate too
         fb_p = (new_vals.get("fallback_provider") or "").strip().lower()
@@ -351,10 +401,11 @@ def update_ai_settings(payload: AISettingsUpdate):
                     status_code=400,
                     detail=f"Invalid fallback_provider: {fb_p}. Allowed: ['google','groq','mistral','openrouter']",
                 )
+
             if fb_m:
-                _validate_model_flex(fb_p, fb_m)
-                if fb_p == "google":
-                    new_vals["fallback_model"] = _strip_google_model_prefix(fb_m)
+                resolved_fb_m = _resolve_model_for_provider(fb_p, fb_m)
+                new_vals["fallback_model"] = resolved_fb_m
+                _validate_model_flex(fb_p, resolved_fb_m)
 
         conn.execute(text("""
             UPDATE ai_settings
@@ -523,7 +574,6 @@ def debug_prompt(
             "temperature": float(s.get("temperature") or 0.7),
             "timeout_sec": int(s.get("timeout_sec") or 25),
             "max_retries": int(s.get("max_retries") or 1),
-
             "reply_chunk_chars": int(s.get("reply_chunk_chars") or 480),
             "reply_delay_ms": int(s.get("reply_delay_ms") or 900),
             "typing_delay_ms": int(s.get("typing_delay_ms") or 450),

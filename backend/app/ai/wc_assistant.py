@@ -24,7 +24,7 @@ _STOPWORDS = {
     "quiero", "busco", "necesito", "dame", "envio", "envío", "ciudad",
     "informacion", "información",
 
-    # ✅ NUEVO: intención de “foto/imagen”
+    # intención de “foto/imagen”
     "muestrame", "muéstrame", "muestra", "mostrar", "ver", "adjunta", "mandame", "envia", "envía",
     "foto", "fotos", "imagen", "imagenes", "imágenes", "real",
 }
@@ -33,15 +33,22 @@ _TRIGGERS = {
     "tienes", "tienen", "hay", "disponible", "disponibles",
     "precio", "vale", "cuanto", "cuánto", "cuesta", "valor",
 
-    # ✅ NUEVO: intención de “foto/imagen”
     "foto", "imagen", "muestrame", "muestra", "mostrar", "ver", "adjunta", "real",
 
     "perfume", "perfumes", "fragancia", "fragancias", "colonia", "colonias",
     "referencia", "ref",
 }
 
+# ✅ NUEVO: frases/tokens genéricos de compra que NO deben disparar búsqueda Woo
+# (esto es el bug que te activó Woo con “hacer el pedido”)
+_GENERIC_ORDER_TOKENS = {
+    "pedido", "pedir", "orden", "comprar", "compra", "pagar", "pago",
+    "llevar", "llevarlo", "llevo", "lo", "este", "ese", "esa", "eso",
+    "hacer", "hago", "quiero", "listo", "ok", "dale", "deuna", "de una",
+    "confirmo", "confirmar", "confirmacion", "confirmación",
+}
 
-# normaliza para scoring
+
 def _norm(s: str) -> str:
     s = (s or "").lower().strip()
     s = s.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u").replace("ñ", "n")
@@ -58,6 +65,31 @@ def _tokenize(s: str) -> list[str]:
     return toks
 
 
+def _is_generic_order_intent(user_text: str) -> bool:
+    """
+    Detecta mensajes tipo:
+    - "quiero llevarlo"
+    - "hacer el pedido"
+    - "lo quiero comprar"
+    Eso NO es búsqueda de catálogo; debe responder la IA (Laura).
+    """
+    toks = _tokenize(user_text)
+    if not toks:
+        return False
+
+    # si todos (o casi todos) los tokens son de intención genérica, lo bloqueamos
+    generic_hits = sum(1 for t in toks if t in _GENERIC_ORDER_TOKENS)
+    if generic_hits >= max(1, int(len(toks) * 0.7)):
+        return True
+
+    # frases directas típicas
+    t = _norm(user_text)
+    if any(p in t for p in ("hacer el pedido", "quiero hacer el pedido", "quiero llevarlo", "lo quiero", "quiero comprar", "quiero pedir")):
+        return True
+
+    return False
+
+
 def _looks_like_product_intent(user_text: str) -> bool:
     t = _norm(user_text)
     if not t:
@@ -65,6 +97,10 @@ def _looks_like_product_intent(user_text: str) -> bool:
 
     # saludos “puros”
     if t in ("hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"):
+        return False
+
+    # ✅ si es intención genérica de comprar/pedir => NO disparar woo
+    if _is_generic_order_intent(user_text):
         return False
 
     # pregunta por ciudad/envío sin producto => no dispares woo
@@ -75,46 +111,36 @@ def _looks_like_product_intent(user_text: str) -> bool:
     if any(w in t.split() for w in _TRIGGERS):
         return True
 
-    # si el mensaje es corto, normalmente es nombre/consulta de referencia
+    # ✅ antes: “mensaje corto = woo”
+    # ahora: solo si el mensaje corto no es genérico (ya filtrado) y parece nombre
     toks = _tokenize(t)
     if 1 <= len(toks) <= 6 and len(t) >= 5:
+        # si los tokens parecen todos genéricos => no
+        if all(x in _GENERIC_ORDER_TOKENS for x in toks):
+            return False
         return True
 
     return False
 
 
 def _extract_product_query(user_text: str) -> str:
-    """
-    Saca una query “limpia” para Woo:
-    - quita stopwords
-    - corrige variantes comunes (aqua/acqua, gio, etc.)
-    """
     raw = _norm(user_text)
 
-    # normaliza variantes típicas de “acqua di gio”
     raw = raw.replace("aqua de gio", "acqua di gio")
     raw = raw.replace("acqua de gio", "acqua di gio")
     raw = raw.replace("aqua di gio", "acqua di gio")
-    raw = raw.replace("aqua", "acqua")  # ayuda en tu caso
+    raw = raw.replace("aqua", "acqua")
 
     toks = _tokenize(raw)
 
-    # si queda vacío, usa el raw
     if not toks:
         return raw.strip()
 
-    # intenta armar query corta de 2-5 tokens (los más informativos)
     toks = toks[:5]
     return " ".join(toks).strip()
 
 
 def _score_match(query: str, name: str) -> int:
-    """
-    Score simple:
-    - exact match alto
-    - substring alto
-    - overlap por tokens
-    """
     q = _norm(query)
     n = _norm(name)
     if not q or not n:
@@ -122,7 +148,6 @@ def _score_match(query: str, name: str) -> int:
     if q == n:
         return 100
     if q in n:
-        # cubrimiento
         cover = int(60 + min(35, (len(q) * 35) / max(1, len(n))))
         return cover
 
@@ -135,7 +160,6 @@ def _score_match(query: str, name: str) -> int:
     if hit == 0:
         return 0
 
-    # base + hits
     return 30 + hit * 12
 
 
@@ -150,13 +174,6 @@ def _parse_choice_number(user_text: str) -> int | None:
 
 
 async def _wc_search_products_smart(user_text: str, per_page: int = 12) -> list[dict]:
-    """
-    3 intentos:
-    1) query limpio
-    2) query original (norm)
-    3) query por tokens claves (2-3)
-    Dedupe por id, luego rank por score.
-    """
     q_clean = _extract_product_query(user_text)
     q_raw = _norm(user_text)
 
@@ -185,7 +202,6 @@ async def _wc_search_products_smart(user_text: str, per_page: int = 12) -> list[
 
     items = list(results_by_id.values())
 
-    # prioriza instock + score
     scored = []
     for it in items:
         sc = _score_match(q_clean or user_text, it.get("name") or "")
@@ -213,11 +229,6 @@ async def handle_wc_if_applicable(
     send_product_fn: Callable[[str, int, str], Awaitable[dict]],
     send_text_fn: Callable[[str, str], Awaitable[dict]],
 ) -> dict[str, Any]:
-    """
-    Devuelve:
-      {"handled": True, ...} si ya resolvió Woo
-      {"handled": False} si NO aplica
-    """
 
     if not wc_enabled():
         return {"handled": False}
@@ -248,7 +259,6 @@ async def handle_wc_if_applicable(
         if n is not None and 1 <= n <= len(options):
             chosen = options[n - 1]
         else:
-            # match por texto
             ut = _extract_product_query(text_in)
             best = None
             best_score = 0
@@ -262,6 +272,7 @@ async def handle_wc_if_applicable(
                 chosen = best
 
         if chosen and chosen.get("id"):
+            # ✅ importantísimo: salir del modo woo apenas manda producto
             clear_state(phone)
             wa = await send_product_fn(phone, int(chosen["id"]), "")
             return {"handled": True, "wc": True, "reason": "choice_send", "wa": wa}
@@ -282,15 +293,12 @@ async def handle_wc_if_applicable(
         return {"handled": False}
 
     if not items:
-        # no manejamos “no stock por cantidad”; pero sí podemos decir que no encontramos
         await send_text_fn(phone, "No la encontré con ese nombre 😕 ¿Me confirmas la referencia exacta o una foto?")
         return {"handled": True, "wc": True, "reason": "no_results"}
 
     # 4) decidir envío directo vs opciones
-    # rank ya viene ordenado
     top = items[:5]
 
-    # fuerte si el #1 le saca ventaja al #2 o score alto
     q_clean = _extract_product_query(text_in)
     s1 = _score_match(q_clean, top[0].get("name") or "")
     s2 = _score_match(q_clean, top[1].get("name") or "") if len(top) > 1 else 0
@@ -298,6 +306,8 @@ async def handle_wc_if_applicable(
     strong = (s1 >= 70) or (s1 >= 60 and (s1 - s2) >= 15)
 
     if strong and top[0].get("id"):
+        # ✅ salir del modo woo al mandar producto
+        clear_state(phone)
         wa = await send_product_fn(phone, int(top[0]["id"]), "")
         return {"handled": True, "wc": True, "reason": "strong_match_send", "wa": wa}
 

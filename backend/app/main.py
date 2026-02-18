@@ -179,6 +179,11 @@ def ensure_schema():
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER"""))
 
+        # ✅ Woo recovery cache
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options JSONB"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options_at TIMESTAMP"""))
+
+
         # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
             INSERT INTO ai_settings (
@@ -567,6 +572,79 @@ def _set_ai_state(phone: str, state: str) -> None:
 
 def _clear_ai_state(phone: str) -> None:
     _set_ai_state(phone, "")
+
+from datetime import timedelta
+
+def _save_wc_options(phone: str, options: list[dict]) -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO conversations (phone, wc_last_options, wc_last_options_at, updated_at)
+                VALUES (:phone, :opts::jsonb, NOW(), :updated_at)
+                ON CONFLICT (phone)
+                DO UPDATE SET
+                    wc_last_options = EXCLUDED.wc_last_options,
+                    wc_last_options_at = EXCLUDED.wc_last_options_at,
+                    updated_at = EXCLUDED.updated_at
+            """), {
+                "phone": phone,
+                "opts": json.dumps(options, ensure_ascii=False),
+                "updated_at": datetime.utcnow(),
+            })
+    except Exception:
+        return
+
+
+def _load_recent_wc_options(phone: str, max_age_sec: int = 180) -> list[dict]:
+    """
+    Recupera opciones mostradas recientemente (por ejemplo 3 minutos).
+    Esto permite que aunque el TTL del ai_state sea 10s, el usuario aún pueda responder '2'.
+    """
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT wc_last_options, wc_last_options_at
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+
+        if not r:
+            return []
+
+        ts = r.get("wc_last_options_at")
+        opts = r.get("wc_last_options")
+
+        if not ts or not opts:
+            return []
+
+        # age check
+        now = datetime.utcnow()
+        # ts puede venir naive, tratamos como UTC
+        age = (now - ts).total_seconds()
+        if age > float(max_age_sec):
+            return []
+
+        if isinstance(opts, list):
+            return opts
+        if isinstance(opts, dict) and isinstance(opts.get("options"), list):
+            return opts["options"]
+        return []
+    except Exception:
+        return []
+
+
+def _clear_wc_options(phone: str) -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE conversations
+                SET wc_last_options = NULL,
+                    wc_last_options_at = NULL
+                WHERE phone = :phone
+            """), {"phone": phone})
+    except Exception:
+        return
 
 
 # =========================================================
@@ -1034,15 +1112,22 @@ async def ingest(msg: IngestMessage):
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-                    msg_type=eff_msg_type,
+                    msg_type=msg_type,
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,
                     clear_state=_clear_ai_state,
+
+                    # ✅ NUEVO: cache DB opciones
+                    save_options_fn=_save_wc_options,
+                    load_recent_options_fn=lambda p: _load_recent_wc_options(p, max_age_sec=180),
+                    clear_options_fn=_clear_wc_options,
+
                     send_product_fn=lambda phone, product_id, caption="": _wc_send_product_internal(
                         phone=phone, product_id=product_id, custom_caption=caption
                     ),
                     send_text_fn=lambda phone, text: _send_ai_reply_in_chunks(phone, text),
                 )
+
 
                 if wc_result.get("handled") is True:
                     return {

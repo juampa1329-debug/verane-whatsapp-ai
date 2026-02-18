@@ -1109,25 +1109,36 @@ async def ingest(msg: IngestMessage):
             # - depende de que haya user_text (intención)
             # =========================================================
             if wc_enabled() and user_text:
+                # ✅ si hay texto útil, tratamos intención como "text"
+                eff_msg_type = "text"
+
+                async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
+                    wa = await _wc_send_product_internal(phone=phone, product_id=product_id, custom_caption=caption)
+                    # ✅ importantísimo: al mandar producto, limpiamos cache de opciones
+                    _clear_wc_options(phone)
+                    return wa
+
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-                    msg_type=msg_type,
+
+                    # ✅ clave: pasar eff_msg_type para que no se bloquee por msg_type
+                    msg_type=eff_msg_type,
+
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,
                     clear_state=_clear_ai_state,
 
-                    # ✅ NUEVO: cache DB opciones
+                    # ✅ cache DB opciones (recuperación)
                     save_options_fn=_save_wc_options,
                     load_recent_options_fn=lambda p: _load_recent_wc_options(p, max_age_sec=180),
-                    clear_options_fn=_clear_wc_options,
 
-                    send_product_fn=lambda phone, product_id, caption="": _wc_send_product_internal(
-                        phone=phone, product_id=product_id, custom_caption=caption
-                    ),
+                    # ✅ manda producto + cleanup (para que vuelva a Laura y no quede “pegado”)
+                    send_product_fn=_send_product_and_cleanup,
+
+                    # ✅ textos por chunks
                     send_text_fn=lambda phone, text: _send_ai_reply_in_chunks(phone, text),
                 )
-
 
                 if wc_result.get("handled") is True:
                     return {
@@ -1136,6 +1147,7 @@ async def ingest(msg: IngestMessage):
                         "ai": False,
                         **{k: v for k, v in wc_result.items() if k != "handled"}
                     }
+
 
             # =========================================================
             # ✅ Flujo IA normal (si no aplicó WC)

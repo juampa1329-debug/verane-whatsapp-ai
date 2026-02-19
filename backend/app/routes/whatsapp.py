@@ -488,7 +488,7 @@ async def _ingest_internal(
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
-    print("WA_WEBHOOK_HIT ✅")
+    print("WA_WEBHOOK_RAW:", raw.decode("utf-8"))
 
     if request.headers.get("X-Verane-Forwarded") != "1":
         asyncio.create_task(_forward_to_targets(raw))

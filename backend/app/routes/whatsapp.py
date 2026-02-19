@@ -1,10 +1,13 @@
+# app/routes/whatsapp.py
+from __future__ import annotations
+
 import os
 import json
 import asyncio
 import httpx
 import re
 from datetime import datetime
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse
@@ -25,7 +28,7 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
 # =========================================================
-# Settings helpers (ai_settings)
+# Settings helpers (ai_settings) - humanized sends
 # =========================================================
 
 def _get_ai_send_settings() -> dict:
@@ -54,7 +57,7 @@ def _get_ai_send_settings() -> dict:
 
 
 # =========================================================
-# WhatsApp utils
+# WhatsApp send utils
 # =========================================================
 
 def _extract_wa_message_id(resp_json: dict) -> str | None:
@@ -256,7 +259,7 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
         "messaging_product": "whatsapp",
         "to": to_phone,
         "type": media_type,
-        media_type: {"id": media_id}
+        media_type: {"id": media_id},
     }
 
     if caption and media_type in ("image", "video", "document"):
@@ -315,6 +318,10 @@ async def download_whatsapp_media_bytes(media_id: str) -> tuple[bytes, str]:
     return (r_bin.content or b""), ct
 
 
+# =========================================================
+# Webhook verify
+# =========================================================
+
 @router.get("/api/whatsapp/webhook")
 async def whatsapp_verify(request: Request):
     qp = request.query_params
@@ -327,6 +334,10 @@ async def whatsapp_verify(request: Request):
 
     raise HTTPException(status_code=403, detail="Verification failed")
 
+
+# =========================================================
+# Forward raw webhook to other URLs (optional)
+# =========================================================
 
 def _parse_forward_urls() -> list[str]:
     urls = []
@@ -355,6 +366,10 @@ async def _forward_to_targets(raw_body: bytes):
     async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
         await asyncio.gather(*[_post_one(client, u) for u in urls])
 
+
+# =========================================================
+# Status updates -> DB
+# =========================================================
 
 def _update_status_in_db(status_obj: dict):
     wa_id = status_obj.get("id")
@@ -414,49 +429,59 @@ def _update_status_in_db(status_obj: dict):
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
 
-def _extract_incoming(m: dict) -> Tuple[str, str, str, Optional[str], Optional[str]]:
+# =========================================================
+# ✅ Incoming extraction (CRITICAL FIX)
+# - We ALWAYS keep original msg_type (audio/image/...)
+# - We still pass caption/text separately, but DO NOT convert msg_type to "text"
+#   because main.py only triggers multimodal when msg_type is audio/image and media_id exists.
+# =========================================================
+
+def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
     """
     Returns:
-      (original_msg_type, effective_msg_type, text_msg, media_id, mime_type)
+      (msg_type, text_msg, media_id, mime_type)
 
-    - original_msg_type: el tipo real (audio/image/video/document/text/etc.)
-    - effective_msg_type: "text" si hay texto útil; si no, el original.
+    msg_type: text | audio | image | video | document | interactive | button | other
     """
-    original_type = (m.get("type") or "text").strip().lower()
+    msg_type = (m.get("type") or "text").strip().lower()
     text_msg = ""
     media_id = None
     mime_type = None
 
-    if original_type == "text":
+    if msg_type == "text":
         text_msg = (m.get("text") or {}).get("body", "") or ""
 
-    elif original_type == "interactive":
+    elif msg_type == "interactive":
         inter = m.get("interactive") or {}
         lr = inter.get("list_reply") or {}
         br = inter.get("button_reply") or {}
+        # treat as text message
         text_msg = (
             lr.get("title") or lr.get("description") or lr.get("id") or
             br.get("title") or br.get("id") or ""
         ) or ""
+        msg_type = "text"
 
-    elif original_type == "button":
+    elif msg_type == "button":
         btn = m.get("button") or {}
         text_msg = (btn.get("text") or btn.get("payload") or "") or ""
+        msg_type = "text"
 
-    elif original_type in ("image", "video", "audio", "document"):
-        media_obj = m.get(original_type) or {}
+    elif msg_type in ("image", "video", "audio", "document"):
+        media_obj = m.get(msg_type) or {}
         media_id = media_obj.get("id")
         text_msg = (media_obj.get("caption") or "") or ""
-
-        # WhatsApp a veces manda mime_type dentro del objeto (no siempre)
         mime_type = (media_obj.get("mime_type") or "").strip() or None
 
+        # ✅ IMPORTANT:
+        # keep msg_type as image/audio/etc even if caption exists
+        # (caption will be sent in text field; main.py can still use it)
+
     else:
+        # unknown types: ignore text, keep type
         text_msg = ""
 
-    text_msg = (text_msg or "").strip()
-    effective_type = "text" if text_msg else original_type
-    return original_type, effective_type, text_msg, media_id, mime_type
+    return msg_type, (text_msg or "").strip(), media_id, mime_type
 
 
 async def _ingest_internal(
@@ -478,8 +503,19 @@ async def _ingest_internal(
             msg_type=msg_type or "text",
             text=text_msg or "",
             media_id=media_id,
-            mime_type=mime_type,
+            mime_type=(mime_type or None),
         )
+
+        # ✅ debug mínimo para confirmar que llega media_id
+        print("INGEST_PAYLOAD:", {
+            "phone": phone,
+            "direction": "in",
+            "msg_type": msg_type,
+            "text_len": len(text_msg or ""),
+            "media_id": media_id,
+            "mime_type": mime_type,
+        })
+
         await ingest(payload)
     except Exception as e:
         print("INGEST_INTERNAL_ERROR:", str(e)[:300])
@@ -488,8 +524,12 @@ async def _ingest_internal(
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
-    print("WA_WEBHOOK_RAW:", raw.decode("utf-8"))
+    try:
+        print("WA_WEBHOOK_RAW:", raw.decode("utf-8"))
+    except Exception:
+        print("WA_WEBHOOK_RAW: <non-utf8 body>")
 
+    # Forward raw webhook (optional)
     if request.headers.get("X-Verane-Forwarded") != "1":
         asyncio.create_task(_forward_to_targets(raw))
 
@@ -515,21 +555,21 @@ async def whatsapp_receive(request: Request):
             if not phone:
                 continue
 
-            original_type, eff_type, text_msg, media_id, mime_type = _extract_incoming(m)
+            msg_type, text_msg, media_id, mime_type = _extract_incoming(m)
 
-            # ✅ IMPORTANTE:
-            # - Si hay caption/botón/etc: eff_type="text", pero AÚN enviamos media_id (si existe)
-            # - Si NO hay texto: eff_type=audio/image/etc y media_id para multimodal en main.py
+            # ✅ CRITICAL:
+            # - audio/image MUST arrive as msg_type audio/image + media_id
+            # - caption is still carried in text field
             await _ingest_internal(
                 phone=phone,
-                msg_type=eff_type,
+                msg_type=msg_type,
                 text_msg=text_msg or "",
                 media_id=media_id,
                 mime_type=mime_type,
             )
 
     except Exception as e:
-        print("WEBHOOK_ERROR:", str(e))
+        print("WEBHOOK_ERROR:", str(e)[:900])
 
     return {"ok": True}
 

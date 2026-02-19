@@ -28,7 +28,6 @@ from app.ai.tts import tts_synthesize
 # ✅ WhatsApp upload (para subir el audio y obtener media_id)
 from app.routes.whatsapp import upload_whatsapp_media
 
-
 # ✅ (Recomendado) Montar router IA (/api/ai/settings, /api/ai/knowledge, etc.)
 try:
     from app.ai.router import router as ai_router
@@ -84,7 +83,6 @@ app.include_router(whatsapp_router)
 
 if ai_router is not None:
     app.include_router(ai_router, prefix="/api/ai")
-
 
 # =========================================================
 # DATABASE
@@ -205,7 +203,6 @@ def ensure_schema():
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
-
         # ✅ settings humanización (para envío por chunks)
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
@@ -245,7 +242,6 @@ def ensure_schema():
 
 
 ensure_schema()
-
 
 # =========================================================
 # MODELS
@@ -379,20 +375,44 @@ def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str]
     """), {"id": local_message_id, "wa_message_id": wa_message_id})
 
 
-def set_extracted_text(conn, message_id: int, extracted_text: str, ai_meta: Optional[dict] = None) -> None:
+def _merge_ai_meta(conn, message_id: int, patch: dict) -> None:
+    """
+    Merge seguro de JSONB: ai_meta = COALESCE(ai_meta,'{}') || patch
+    """
     try:
         conn.execute(text("""
             UPDATE messages
-            SET extracted_text = :t,
-                ai_meta = COALESCE(:m::jsonb, ai_meta)
+            SET ai_meta = COALESCE(ai_meta, '{}'::jsonb) || :p::jsonb
+            WHERE id = :id
+        """), {
+            "id": int(message_id),
+            "p": json.dumps(patch or {}, ensure_ascii=False),
+        })
+    except Exception as e:
+        print("AI_META_MERGE_ERROR:", str(e)[:300])
+
+
+def set_extracted_text(conn, message_id: int, extracted_text: str, ai_meta: Optional[dict] = None) -> None:
+    """
+    ✅ Arreglado: antes COALESCE(:m, ai_meta) no mergeaba y además se tragaba fallos sin rastro.
+    Ahora:
+      - actualiza extracted_text
+      - si ai_meta viene, lo mergea a ai_meta existente
+    """
+    try:
+        conn.execute(text("""
+            UPDATE messages
+            SET extracted_text = :t
             WHERE id = :id
         """), {
             "id": int(message_id),
             "t": (extracted_text or ""),
-            "m": json.dumps(ai_meta or {}, ensure_ascii=False) if ai_meta is not None else None
         })
-    except Exception:
-        return
+    except Exception as e:
+        print("SET_EXTRACTED_TEXT_ERROR:", str(e)[:300])
+
+    if ai_meta is not None:
+        _merge_ai_meta(conn, int(message_id), ai_meta)
 
 
 def _parse_tags_param(tags: str) -> List[str]:
@@ -583,6 +603,7 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
         },
     }
 
+
 def _get_voice_settings() -> dict:
     defaults = {
         "voice_enabled": False,
@@ -614,6 +635,7 @@ def _get_voice_settings() -> dict:
         return d
     except Exception:
         return defaults
+
 
 async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     text_to_say = (text_to_say or "").strip()
@@ -1303,6 +1325,9 @@ async def ingest(msg: IngestMessage):
                 import base64
                 b64 = base64.b64encode(media_bytes).decode("utf-8")
 
+                # ✅ FIX: Gemini se puede morir si mime viene con "; codecs=opus"
+                mime_clean = (mime_type or "application/octet-stream").split(";")[0].strip()
+
                 if kind == "audio":
                     prompt = (
                         "Transcribe exactamente el audio en español (si aplica). "
@@ -1316,56 +1341,72 @@ async def ingest(msg: IngestMessage):
                     )
 
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-                import base64
-
-            b64 = base64.b64encode(media_bytes).decode("utf-8")
-
-            # ✅ FIX: Gemini falla si el mime viene con parámetros tipo "; codecs=opus"
-            mime_clean = (mime_type or "application/octet-stream").split(";")[0].strip()
-
-            body = {
-                "contents": [{
-                    "role": "user",
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": mime_clean, "data": b64}}
-                    ]
-                }],
-                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
-            }
-
-            async with httpx.AsyncClient(timeout=35) as client:
-                r = await client.post(url, json=body)
-
-            if r.status_code >= 400:
-                return "", {
-                    "ok": False,
-                    "status": r.status_code,
-                    "body": r.text[:900],
-                    "model": model,
-                    "mime_type": mime_clean,
+                body = {
+                    "contents": [{
+                        "role": "user",
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": mime_clean, "data": b64}}
+                        ]
+                    }],
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
                 }
 
-            j = r.json() or {}
-            out_text = ""
-            try:
-                cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
-                texts = []
-                for p in cand_parts:
-                    tx = (p or {}).get("text")
-                    if tx:
-                        texts.append(str(tx))
-                out_text = "\n".join(texts).strip()
-            except Exception:
+                async with httpx.AsyncClient(timeout=35) as client:
+                    r = await client.post(url, json=body)
+
+                if r.status_code >= 400:
+                    return "", {
+                        "ok": False,
+                        "status": r.status_code,
+                        "body": r.text[:900],
+                        "model": model,
+                        "mime_type": mime_clean,
+                    }
+
+                j = r.json() or {}
                 out_text = ""
+                try:
+                    cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
+                    texts = []
+                    for p in cand_parts:
+                        tx = (p or {}).get("text")
+                        if tx:
+                            texts.append(str(tx))
+                    out_text = "\n".join(texts).strip()
+                except Exception:
+                    out_text = ""
 
-            return out_text, {"ok": True, "model": model, "mime_type": mime_clean}
+                return out_text, {"ok": True, "model": model, "mime_type": mime_clean}
 
-
+            # ✅ Multimodal: con rastreo en DB por stages (para que NO vuelva a quedar vacío)
             if (not user_text) and msg_type in ("audio", "image") and msg.media_id:
+                # stage: start
+                with engine.begin() as conn:
+                    _merge_ai_meta(conn, local_id, {
+                        "multimodal": {
+                            "stage": "start",
+                            "msg_type": msg_type,
+                            "media_id": msg.media_id,
+                            "mime_type_in": msg.mime_type,
+                            "has_user_text": bool(user_text),
+                        }
+                    })
+
                 try:
                     media_bytes, real_mime = await download_whatsapp_media_bytes(msg.media_id)
-                    if media_bytes:
+
+                    if not media_bytes:
+                        with engine.begin() as conn:
+                            set_extracted_text(conn, local_id, "", ai_meta={
+                                "multimodal": {
+                                    "ok": False,
+                                    "stage": "download",
+                                    "reason": "empty_media_bytes",
+                                    "real_mime": real_mime,
+                                }
+                            })
+                    else:
                         extracted, meta_mm = await _gemini_generate_text_from_media(
                             kind=msg_type,
                             media_bytes=media_bytes,
@@ -1380,11 +1421,24 @@ async def ingest(msg: IngestMessage):
                                 conn,
                                 local_id,
                                 extracted or "",
-                                ai_meta={"multimodal": meta_mm, "mime_type": real_mime}
+                                ai_meta={
+                                    "multimodal": {
+                                        **(meta_mm or {}),
+                                        "stage": "gemini_done",
+                                        "real_mime": real_mime,
+                                        "extracted_len": len(extracted or ""),
+                                    }
+                                }
                             )
                 except Exception as e:
                     with engine.begin() as conn:
-                        set_extracted_text(conn, local_id, "", ai_meta={"multimodal": {"ok": False, "error": str(e)[:300]}})
+                        set_extracted_text(conn, local_id, "", ai_meta={
+                            "multimodal": {
+                                "ok": False,
+                                "stage": "exception",
+                                "error": str(e)[:500],
+                            }
+                        })
 
             # Re-chequeo placeholder
             if _is_placeholder_text(user_text):
@@ -1457,7 +1511,6 @@ async def ingest(msg: IngestMessage):
 
             # si no, manda texto humanizado por chunks (lo que ya tenías)
             send_result = await _send_ai_reply_in_chunks(msg.phone, reply_text)
-
 
             return {
                 "saved": True,

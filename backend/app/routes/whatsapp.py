@@ -23,6 +23,10 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
+# Debug: si quieres imprimir RAW completo del webhook, activa:
+# export WA_DEBUG_RAW=true
+WA_DEBUG_RAW = os.getenv("WA_DEBUG_RAW", "false").lower() == "true"
+
 
 # =========================================================
 # Settings helpers (ai_settings)
@@ -226,8 +230,11 @@ async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
     url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
 
-    files = {"file": ("upload", file_bytes, mime_type)}
-    data = {"messaging_product": "whatsapp", "type": mime_type}
+    # limpiar mime
+    mt = (mime_type or "application/octet-stream").split(";")[0].strip().lower()
+
+    files = {"file": ("upload", file_bytes, mt)}
+    data = {"messaging_product": "whatsapp", "type": mt}
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(url, headers=headers, data=data, files=files)
@@ -300,7 +307,7 @@ async def download_whatsapp_media_bytes(media_id: str) -> tuple[bytes, str]:
     """
     meta = await get_whatsapp_media_metadata(media_id)
     dl_url = meta.get("url")
-    ct = (meta.get("mime_type") or "application/octet-stream").split(";")[0].strip()
+    ct = (meta.get("mime_type") or "application/octet-stream").split(";")[0].strip().lower()
 
     if not dl_url:
         raise HTTPException(status_code=502, detail=f"No url in meta: {str(meta)[:400]}")
@@ -423,8 +430,9 @@ def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
     Returns:
       (msg_type, text_msg, media_id, mime_type)
 
-    ✅ FIX: Nunca convertir msg_type a "text" para media.
-    - Si hay caption, se manda como text_msg pero msg_type queda audio/image/etc.
+    ✅ Importante:
+    - Si es media (audio/image/video/doc), msg_type NO se convierte a text.
+    - El caption (si existe) se manda en text_msg para que IA lo use si aplica.
     """
     msg_type = (m.get("type") or "text").strip().lower()
     text_msg = ""
@@ -442,7 +450,7 @@ def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
             lr.get("title") or lr.get("description") or lr.get("id") or
             br.get("title") or br.get("id") or ""
         ) or ""
-        msg_type = "text"  # aquí sí es texto puro
+        msg_type = "text"
 
     elif msg_type == "button":
         btn = m.get("button") or {}
@@ -455,15 +463,33 @@ def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
         text_msg = (media_obj.get("caption") or "") or ""
         mime_type = (media_obj.get("mime_type") or "").strip() or None
         if mime_type:
-            mime_type = mime_type.split(";")[0].strip()
+            mime_type = mime_type.split(";")[0].strip().lower()
+
+    elif msg_type == "sticker":
+        # sticker no trae texto útil
+        text_msg = ""
+        msg_type = "sticker"
+
+    elif msg_type == "location":
+        loc = m.get("location") or {}
+        # convertimos a texto útil para IA
+        text_msg = f"Ubicación: {loc.get('name') or ''} {loc.get('address') or ''} {loc.get('latitude') or ''},{loc.get('longitude') or ''}".strip()
+        msg_type = "text"
+
+    elif msg_type == "contacts":
+        text_msg = "El usuario envió un contacto."
+        msg_type = "text"
 
     else:
-        # otros tipos (sticker, etc.)
         text_msg = ""
 
     text_msg = (text_msg or "").strip()
     return msg_type, text_msg, media_id, mime_type
 
+
+# =========================================================
+# Ingest internal call
+# =========================================================
 
 async def _ingest_internal(
     phone: str,
@@ -476,6 +502,8 @@ async def _ingest_internal(
     Llama el pipeline único (/api/messages/ingest) dentro del mismo proceso.
     """
     try:
+        # Import local para evitar ciclos. Si tu app importa whatsapp_router desde app.main,
+        # esto puede funcionar pero a veces se rompe si hay ciclos. Lo manejamos con try.
         from app.main import ingest, IngestMessage  # type: ignore
 
         payload = IngestMessage(
@@ -488,20 +516,41 @@ async def _ingest_internal(
         )
         await ingest(payload)
     except Exception as e:
-        print("INGEST_INTERNAL_ERROR:", str(e)[:300])
+        print("INGEST_INTERNAL_ERROR:", str(e)[:300], "| phone:", phone, "| type:", msg_type, "| media_id:", (media_id or ""))
 
+
+# =========================================================
+# Webhook receiver
+# =========================================================
 
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
-    print("WA_WEBHOOK_RAW:", raw.decode("utf-8"))
+
+    if WA_DEBUG_RAW:
+        print("WA_WEBHOOK_RAW:", raw.decode("utf-8", errors="ignore")[:8000])
+    else:
+        # log resumido
+        try:
+            d = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+            entry = (d.get("entry") or [None])[0] or {}
+            change = ((entry.get("changes") or [None])[0] or {})
+            value = (change.get("value") or {})
+            msg_count = len(value.get("messages") or [])
+            st_count = len(value.get("statuses") or [])
+            print(f"WA_WEBHOOK: messages={msg_count} statuses={st_count}")
+        except Exception:
+            print("WA_WEBHOOK: (unparsed)")
 
     # forward (evita loop)
-    if request.headers.get("X-Verane-Forwarded") != "1":
-        asyncio.create_task(_forward_to_targets(raw))
+    if FORWARD_ENABLED and request.headers.get("X-Verane-Forwarded") != "1":
+        # Nota: hacerlo con await es más confiable que create_task en algunos deploys.
+        await _forward_to_targets(raw)
+        # Si prefieres background, puedes cambiar a:
+        # asyncio.create_task(_forward_to_targets(raw))
 
     try:
-        data = json.loads(raw.decode("utf-8") or "{}")
+        data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
     except Exception:
         return {"ok": True}
 
@@ -533,7 +582,7 @@ async def whatsapp_receive(request: Request):
             )
 
     except Exception as e:
-        print("WEBHOOK_ERROR:", str(e))
+        print("WEBHOOK_ERROR:", str(e)[:900])
 
     return {"ok": True}
 

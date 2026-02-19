@@ -1316,37 +1316,51 @@ async def ingest(msg: IngestMessage):
                     )
 
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-                body = {
-                    "contents": [{
-                        "role": "user",
-                        "parts": [
-                            {"text": prompt},
-                            {"inline_data": {"mime_type": (mime_type or "application/octet-stream"), "data": b64}}
-                        ]
-                    }],
-                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
+                import base64
+
+            b64 = base64.b64encode(media_bytes).decode("utf-8")
+
+            # ✅ FIX: Gemini falla si el mime viene con parámetros tipo "; codecs=opus"
+            mime_clean = (mime_type or "application/octet-stream").split(";")[0].strip()
+
+            body = {
+                "contents": [{
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": mime_clean, "data": b64}}
+                    ]
+                }],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
+            }
+
+            async with httpx.AsyncClient(timeout=35) as client:
+                r = await client.post(url, json=body)
+
+            if r.status_code >= 400:
+                return "", {
+                    "ok": False,
+                    "status": r.status_code,
+                    "body": r.text[:900],
+                    "model": model,
+                    "mime_type": mime_clean,
                 }
 
-                async with httpx.AsyncClient(timeout=35) as client:
-                    r = await client.post(url, json=body)
-
-                if r.status_code >= 400:
-                    return "", {"ok": False, "status": r.status_code, "body": r.text[:900], "model": model}
-
-                j = r.json() or {}
+            j = r.json() or {}
+            out_text = ""
+            try:
+                cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
+                texts = []
+                for p in cand_parts:
+                    tx = (p or {}).get("text")
+                    if tx:
+                        texts.append(str(tx))
+                out_text = "\n".join(texts).strip()
+            except Exception:
                 out_text = ""
-                try:
-                    cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
-                    texts = []
-                    for p in cand_parts:
-                        tx = (p or {}).get("text")
-                        if tx:
-                            texts.append(str(tx))
-                    out_text = "\n".join(texts).strip()
-                except Exception:
-                    out_text = ""
 
-                return out_text, {"ok": True, "model": model}
+            return out_text, {"ok": True, "model": model, "mime_type": mime_clean}
+
 
             if (not user_text) and msg_type in ("audio", "image") and msg.media_id:
                 try:

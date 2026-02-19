@@ -805,6 +805,89 @@ async def _gemini_generate_with_file_uri(prompt: str, file_uri: str, mime_type: 
 
     return out_text, {"ok": True, "stage": "generate", "model": model, "mime_type": mime_clean}
 
+async def _gemini_generate_text_from_media(kind: str, media_bytes: bytes, mime_type: str) -> Tuple[str, dict]:
+    """
+    Usa Gemini API con GOOGLE_AI_API_KEY para:
+    - audio: transcripción
+    - image: descripción + texto visible
+    """
+    api_key = os.getenv("GOOGLE_AI_API_KEY", "").strip()
+    if not api_key:
+        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
+
+    model = "gemini-2.0-flash"
+
+    import base64
+    b64 = base64.b64encode(media_bytes).decode("utf-8")
+
+    if kind == "audio":
+        prompt = (
+            "Transcribe exactamente el audio en español. "
+            "Devuelve SOLO el texto transcrito."
+        )
+    else:
+        prompt = (
+            "Describe la imagen con detalle útil para un asesor comercial. "
+            "Si hay texto visible, extráelo. "
+            "Devuelve solo la descripción."
+        )
+
+    mime_clean = (mime_type or "application/octet-stream").split(";")[0].strip()
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    body = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": mime_clean,
+                        "data": b64
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 512
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=40) as client:
+        r = await client.post(url, json=body)
+
+    if r.status_code >= 400:
+        return "", {
+            "ok": False,
+            "status": r.status_code,
+            "body": r.text[:900],
+            "model": model,
+            "mime_type": mime_clean,
+        }
+
+    j = r.json() or {}
+    out_text = ""
+
+    try:
+        parts = (
+            ((j.get("candidates") or [])[0] or {})
+            .get("content", {})
+            .get("parts", [])
+        )
+
+        texts = []
+        for p in parts:
+            if p.get("text"):
+                texts.append(p["text"])
+
+        out_text = "\n".join(texts).strip()
+    except Exception:
+        out_text = ""
+
+    return out_text, {"ok": True, "model": model}
+
 
 async def _gemini_generate_from_image_inline(prompt: str, media_bytes: bytes, mime_type: str, model: str) -> Tuple[str, dict]:
     """

@@ -4,6 +4,7 @@ import asyncio
 import httpx
 import re
 from datetime import datetime
+from typing import Optional, Tuple, Dict, Any
 
 from fastapi import APIRouter, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse
@@ -28,16 +29,7 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 # =========================================================
 
 def _get_ai_send_settings() -> dict:
-    """
-    Lee settings de envío/humanización desde ai_settings.
-    Importante: consistente con engine/router => ORDER BY id ASC LIMIT 1.
-    """
-    defaults = {
-        "reply_chunk_chars": 480,
-        "reply_delay_ms": 900,
-        "typing_delay_ms": 450,
-    }
-
+    defaults = {"reply_chunk_chars": 480, "reply_delay_ms": 900, "typing_delay_ms": 450}
     try:
         with engine.begin() as conn:
             r = conn.execute(text("""
@@ -53,7 +45,6 @@ def _get_ai_send_settings() -> dict:
             return defaults
 
         d = dict(r)
-        # hard safety bounds
         d["reply_chunk_chars"] = int(max(120, min(int(d.get("reply_chunk_chars") or 480), 2000)))
         d["reply_delay_ms"] = int(max(0, min(int(d.get("reply_delay_ms") or 900), 15000)))
         d["typing_delay_ms"] = int(max(0, min(int(d.get("typing_delay_ms") or 450), 15000)))
@@ -67,36 +58,26 @@ def _get_ai_send_settings() -> dict:
 # =========================================================
 
 def _extract_wa_message_id(resp_json: dict) -> str | None:
-    """
-    WhatsApp Cloud API suele devolver:
-    { "messages": [ { "id": "wamid...." } ] }
-    """
     try:
         msgs = resp_json.get("messages") or []
         if msgs and isinstance(msgs, list):
-            mid = (msgs[0] or {}).get("id")
-            return mid
+            return (msgs[0] or {}).get("id")
     except Exception:
         pass
     return None
 
 
 async def send_whatsapp_text(to_phone: str, text_msg: str):
-    """
-    Envío simple (sin chunking). Se mantiene para compatibilidad.
-    """
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
         return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
     url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-
     payload = {
         "messaging_product": "whatsapp",
         "to": to_phone,
         "type": "text",
         "text": {"body": text_msg},
     }
-
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=15) as client:
@@ -106,12 +87,7 @@ async def send_whatsapp_text(to_phone: str, text_msg: str):
         return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
 
     j = r.json()
-    return {
-        "saved": True,
-        "sent": True,
-        "wa_message_id": _extract_wa_message_id(j),
-        "whatsapp": j
-    }
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
 
 
 def _normalize_text(s: str) -> str:
@@ -131,7 +107,6 @@ def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
 
     paras = [p.strip() for p in text_msg.split("\n\n") if p.strip()]
     out: list[str] = []
-
     sentence_split_re = re.compile(r"(?<=[\.\!\?])\s+")
 
     def _push_piece(piece: str):
@@ -277,7 +252,6 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
         return {"saved": True, "sent": False, "reason": f"Unsupported media_type: {media_type}"}
 
     url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-
     payload = {
         "messaging_product": "whatsapp",
         "to": to_phone,
@@ -297,12 +271,48 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
         return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
 
     j = r.json()
-    return {
-        "saved": True,
-        "sent": True,
-        "wa_message_id": _extract_wa_message_id(j),
-        "whatsapp": j
-    }
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
+
+
+# =========================================================
+# ✅ Download media bytes from WhatsApp
+# =========================================================
+
+async def get_whatsapp_media_metadata(media_id: str) -> dict:
+    if not WHATSAPP_TOKEN:
+        raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN not configured")
+
+    meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(meta_url, headers=headers)
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Graph meta failed: {r.status_code} {r.text[:900]}")
+
+    return r.json() or {}
+
+
+async def download_whatsapp_media_bytes(media_id: str) -> tuple[bytes, str]:
+    """
+    Returns (bytes, mime_type).
+    """
+    meta = await get_whatsapp_media_metadata(media_id)
+    dl_url = meta.get("url")
+    ct = (meta.get("mime_type") or "application/octet-stream").split(";")[0].strip()
+
+    if not dl_url:
+        raise HTTPException(status_code=502, detail=f"No url in meta: {str(meta)[:400]}")
+
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r_bin = await client.get(dl_url, headers=headers)
+
+    if r_bin.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text[:900]}")
+
+    return (r_bin.content or b""), ct
 
 
 @router.get("/api/whatsapp/webhook")
@@ -330,7 +340,6 @@ def _parse_forward_urls() -> list[str]:
 async def _forward_to_targets(raw_body: bytes):
     if not FORWARD_ENABLED:
         return
-
     urls = _parse_forward_urls()
     if not urls:
         return
@@ -405,47 +414,61 @@ def _update_status_in_db(status_obj: dict):
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
 
-def _extract_text_from_incoming(m: dict) -> tuple[str, str, str | None]:
+def _extract_incoming(m: dict) -> Tuple[str, str, str, Optional[str], Optional[str]]:
     """
-    Devuelve: (effective_msg_type, text_msg, media_id)
-    - Si hay texto útil (text / interactive / button / caption), effective_msg_type = "text"
-    - Si no, mantiene el tipo original.
+    Returns:
+      (original_msg_type, effective_msg_type, text_msg, media_id, mime_type)
+
+    - original_msg_type: el tipo real (audio/image/video/document/text/etc.)
+    - effective_msg_type: "text" si hay texto útil; si no, el original.
     """
-    msg_type = (m.get("type") or "text").strip().lower()
+    original_type = (m.get("type") or "text").strip().lower()
     text_msg = ""
     media_id = None
+    mime_type = None
 
-    if msg_type == "text":
+    if original_type == "text":
         text_msg = (m.get("text") or {}).get("body", "") or ""
 
-    elif msg_type == "interactive":
+    elif original_type == "interactive":
         inter = m.get("interactive") or {}
-        # list_reply o button_reply
         lr = inter.get("list_reply") or {}
         br = inter.get("button_reply") or {}
-        text_msg = (lr.get("title") or lr.get("description") or lr.get("id") or
-                    br.get("title") or br.get("id") or "") or ""
+        text_msg = (
+            lr.get("title") or lr.get("description") or lr.get("id") or
+            br.get("title") or br.get("id") or ""
+        ) or ""
 
-    elif msg_type == "button":
+    elif original_type == "button":
         btn = m.get("button") or {}
         text_msg = (btn.get("text") or btn.get("payload") or "") or ""
 
-    elif msg_type in ("image", "video", "audio", "document"):
-        media_obj = m.get(msg_type) or {}
+    elif original_type in ("image", "video", "audio", "document"):
+        media_obj = m.get(original_type) or {}
         media_id = media_obj.get("id")
-        caption = media_obj.get("caption") or ""
-        text_msg = caption or ""
+        text_msg = (media_obj.get("caption") or "") or ""
+
+        # WhatsApp a veces manda mime_type dentro del objeto (no siempre)
+        mime_type = (media_obj.get("mime_type") or "").strip() or None
 
     else:
-        # otros tipos: puedes mapear más aquí si lo necesitas
         text_msg = ""
 
     text_msg = (text_msg or "").strip()
-    effective_type = "text" if text_msg else msg_type
-    return effective_type, text_msg, media_id
+    effective_type = "text" if text_msg else original_type
+    return original_type, effective_type, text_msg, media_id, mime_type
 
 
-async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: str | None = None):
+async def _ingest_internal(
+    phone: str,
+    msg_type: str,
+    text_msg: str,
+    media_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
+):
+    """
+    Llama el pipeline único (/api/messages/ingest) dentro del mismo proceso.
+    """
     try:
         from app.main import ingest, IngestMessage  # type: ignore
 
@@ -455,6 +478,7 @@ async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: s
             msg_type=msg_type or "text",
             text=text_msg or "",
             media_id=media_id,
+            mime_type=mime_type,
         )
         await ingest(payload)
     except Exception as e:
@@ -465,13 +489,6 @@ async def _ingest_internal(phone: str, msg_type: str, text_msg: str, media_id: s
 async def whatsapp_receive(request: Request):
     raw = await request.body()
     print("WA_WEBHOOK_HIT ✅")
-
-    try:
-        from app.integrations.woocommerce import wc_enabled
-        print("WC_ENABLED_RUNTIME:", wc_enabled())
-    except Exception as e:
-        print("WC_ENABLED_ERROR:", str(e))
-
 
     if request.headers.get("X-Verane-Forwarded") != "1":
         asyncio.create_task(_forward_to_targets(raw))
@@ -495,21 +512,20 @@ async def whatsapp_receive(request: Request):
         messages = value.get("messages") or []
         for m in messages:
             phone = (m.get("from") or "").strip()
-            eff_type, text_msg, media_id = _extract_text_from_incoming(m)
-
-            # fallback si no hay phone
             if not phone:
                 continue
 
-            # si no hay texto útil, guardamos un placeholder
-            if not text_msg and eff_type != "text":
-                text_msg = f"[{eff_type}]"
+            original_type, eff_type, text_msg, media_id, mime_type = _extract_incoming(m)
 
+            # ✅ IMPORTANTE:
+            # - Si hay caption/botón/etc: eff_type="text", pero AÚN enviamos media_id (si existe)
+            # - Si NO hay texto: eff_type=audio/image/etc y media_id para multimodal en main.py
             await _ingest_internal(
                 phone=phone,
                 msg_type=eff_type,
-                text_msg=text_msg,
+                text_msg=text_msg or "",
                 media_id=media_id,
+                mime_type=mime_type,
             )
 
     except Exception as e:
@@ -520,25 +536,5 @@ async def whatsapp_receive(request: Request):
 
 @router.get("/api/media/proxy/{media_id}")
 async def proxy_media(media_id: str):
-    if not (WHATSAPP_TOKEN and WHATSAPP_GRAPH_VERSION):
-        raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN not configured")
-
-    meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-
-    async with httpx.AsyncClient(timeout=20) as client:
-        r_meta = await client.get(meta_url, headers=headers)
-        if r_meta.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Graph meta failed: {r_meta.status_code} {r_meta.text}")
-
-        meta = r_meta.json()
-        dl_url = meta.get("url")
-        ct = meta.get("mime_type") or "application/octet-stream"
-        if not dl_url:
-            raise HTTPException(status_code=502, detail=f"No url in meta: {meta}")
-
-        r_bin = await client.get(dl_url, headers=headers)
-        if r_bin.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text}")
-
-        return StreamingResponse(iter([r_bin.content]), media_type=ct)
+    content, ct = await download_whatsapp_media_bytes(media_id)
+    return StreamingResponse(iter([content]), media_type=ct)

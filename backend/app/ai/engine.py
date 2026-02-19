@@ -16,7 +16,6 @@ from app.db import engine as db_engine
 # =========================================================
 
 MODEL_MAP_GOOGLE: Dict[str, str] = {
-    # Labels típicos del UI -> IDs reales para Google Generative Language API
     "Gemini 2.5 Flash": "gemini-2.5-flash",
     "Gemini 2.5 Pro": "gemini-2.5-pro",
     "Gemini 2.5 Flash Preview TTS": "gemini-2.5-flash-preview-tts",
@@ -27,10 +26,8 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
     "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
     "Gemini 2.0 Flash-Lite 001": "gemini-2.0-flash-lite-001",
 
-    # Experimental / image gen (si lo usas en UI; ojo: puede no estar habilitado en tu cuenta)
     "Gemini 2.0 Flash (Image Generation) Experimental": "gemini-2.0-flash-exp",
 
-    # Gemma (si tu UI lo lista así)
     "Gemma 3 1B": "gemma-3-1b-it",
     "Gemma 3 4B": "gemma-3-4b-it",
     "Gemma 3 12B": "gemma-3-12b-it",
@@ -41,13 +38,6 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
 
 
 def _resolve_google_model(model: str) -> str:
-    """
-    Convierte el valor guardado en DB (que puede venir como label del UI)
-    a un model id válido para:
-      https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-
-    Si ya viene como gemini-* o gemma-* lo respeta.
-    """
     m = (model or "").strip()
     if not m:
         return "gemini-2.0-flash"
@@ -56,29 +46,95 @@ def _resolve_google_model(model: str) -> str:
     if low.startswith(("gemini-", "gemma-")):
         return low
 
-    # si viene como label, mapear
     return MODEL_MAP_GOOGLE.get(m, m)
 
 
 # =========================================================
-# Settings (Option A: no humanize_* inside engine)
+# Voice prompt builder
+# =========================================================
+
+def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
+    try:
+        n = int(v)
+    except Exception:
+        return default
+    return max(lo, min(hi, n))
+
+
+def _truthy(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = str(v or "").strip().lower()
+    return s in ("1", "true", "yes", "y", "on", "si", "sí")
+
+
+def _build_voice_style_block(s: Dict[str, Any]) -> str:
+    """
+    Esto NO genera audio.
+    Solo “entrena” el texto para que suene como voz con estilo/acentos.
+    """
+    enabled = _truthy(s.get("voice_enabled", False))
+    if not enabled:
+        return ""
+
+    gender = (s.get("voice_gender") or "neutral").strip().lower()  # male|female|neutral
+    lang = (s.get("voice_language") or "es-CO").strip()           # ej: es-CO, es-MX, es-ES
+    accent = (s.get("voice_accent") or "colombiano").strip()
+    speaking_rate = float(s.get("voice_speaking_rate") or 1.0)
+    speaking_rate = max(0.6, min(1.4, speaking_rate))
+
+    max_voice_notes = _clamp_int(s.get("voice_max_notes_per_reply", 1), 0, 5, 1)
+    prefer_voice = _truthy(s.get("voice_prefer_voice", False))  # si quieres priorizar nota de voz (decisión final en main.py)
+
+    style_prompt = (s.get("voice_style_prompt") or "").strip()
+
+    # Bloque que ayuda a que el texto salga “hablable”
+    lines = [
+        "VOICE_STYLE (guía para que el texto suene como nota de voz):",
+        f"- Idioma: {lang}",
+        f"- Acento/registro: {accent}",
+        f"- Género de la voz (referencial): {gender}",
+        f"- Ritmo objetivo (referencial): {speaking_rate}",
+        "- Escribe frases naturales, como habladas por WhatsApp.",
+        "- Evita textos demasiado largos; usa pausas naturales y párrafos cortos.",
+        "- No uses lenguaje robótico. No repitas el mensaje del usuario.",
+    ]
+
+    # Este detalle le sirve a la IA para acortar/ordenar mejor, aunque el envío real lo decide main.py
+    lines.append(f"- Máximo sugerido de segmentos de voz por respuesta: {max_voice_notes}")
+    lines.append(f"- Preferir voz sobre texto: {'sí' if prefer_voice else 'no'}")
+
+    if style_prompt:
+        lines.append("- Instrucciones personalizadas del admin (Voice Prompt):")
+        lines.append(style_prompt)
+
+    return "\n".join(lines).strip()
+
+
+def _merge_system_prompt(system_prompt: str, voice_block: str) -> str:
+    sys = (system_prompt or "").strip()
+    vb = (voice_block or "").strip()
+    if not vb:
+        return sys
+    if not sys:
+        return vb
+    return (sys + "\n\n" + vb).strip()
+
+
+# =========================================================
+# Settings (engine reads voice settings; TTS happens elsewhere)
 # =========================================================
 
 def _get_settings() -> Dict[str, Any]:
     """
     Lee settings desde DB.
 
-    Opción A:
-    - engine solo devuelve reply_text.
-    - chunking/delays (humanización WhatsApp) se hace en main.py
-      usando reply_chunk_chars / reply_delay_ms / typing_delay_ms.
-
-    Nota:
-    - Aquí NO se leen ni se usan columnas humanize_*.
+    - engine devuelve reply_text + voice settings (para que main.py decida si hace TTS).
+    - chunking/delays WhatsApp se hace en main.py.
     """
-
     try:
         with db_engine.begin() as conn:
+            # OJO: usamos COALESCE y defaults para que NO rompa si aún no creaste columnas voice_*
             r = conn.execute(text("""
                 SELECT
                     is_enabled,
@@ -90,7 +146,18 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(fallback_provider, '') AS fallback_provider,
                     COALESCE(fallback_model, '') AS fallback_model,
                     COALESCE(timeout_sec, 25) AS timeout_sec,
-                    COALESCE(max_retries, 1) AS max_retries
+                    COALESCE(max_retries, 1) AS max_retries,
+
+                    -- ✅ VOICE SETTINGS (si la columna no existe todavía, esta query fallaría)
+                    -- Para evitarlo, te recomiendo crear estas columnas en ensure_schema() antes.
+                    COALESCE(voice_enabled, FALSE) AS voice_enabled,
+                    COALESCE(voice_gender, 'neutral') AS voice_gender,
+                    COALESCE(voice_language, 'es-CO') AS voice_language,
+                    COALESCE(voice_accent, 'colombiano') AS voice_accent,
+                    COALESCE(voice_style_prompt, '') AS voice_style_prompt,
+                    COALESCE(voice_max_notes_per_reply, 1) AS voice_max_notes_per_reply,
+                    COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
+                    COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate
                 FROM ai_settings
                 ORDER BY id ASC
                 LIMIT 1
@@ -98,7 +165,6 @@ def _get_settings() -> Dict[str, Any]:
     except Exception:
         r = None
 
-    # Defaults seguros si no hay fila o falla lectura
     if not r:
         return {
             "is_enabled": True,
@@ -111,22 +177,44 @@ def _get_settings() -> Dict[str, Any]:
             "fallback_model": "llama-3.1-8b-instant",
             "timeout_sec": 25,
             "max_retries": 1,
+
+            # ✅ defaults de voz
+            "voice_enabled": False,
+            "voice_gender": "neutral",
+            "voice_language": "es-CO",
+            "voice_accent": "colombiano",
+            "voice_style_prompt": "",
+            "voice_max_notes_per_reply": 1,
+            "voice_prefer_voice": False,
+            "voice_speaking_rate": 1.0,
         }
 
     d = dict(r)
 
-    # Normalizar strings
     d["system_prompt"] = (d.get("system_prompt") or "").strip()
     d["provider"] = (d.get("provider") or "").strip().lower()
     d["model"] = (d.get("model") or "").strip()
     d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
     d["fallback_model"] = (d.get("fallback_model") or "").strip()
 
-    # Numéricos seguros
     d["timeout_sec"] = int(d.get("timeout_sec") or 25)
     d["max_retries"] = int(d.get("max_retries") or 1)
     d["max_tokens"] = int(d.get("max_tokens") or 512)
     d["temperature"] = float(d.get("temperature") or 0.7)
+
+    # voice normalize
+    d["voice_enabled"] = _truthy(d.get("voice_enabled", False))
+    d["voice_gender"] = (d.get("voice_gender") or "neutral").strip().lower()
+    d["voice_language"] = (d.get("voice_language") or "es-CO").strip()
+    d["voice_accent"] = (d.get("voice_accent") or "colombiano").strip()
+    d["voice_style_prompt"] = (d.get("voice_style_prompt") or "").strip()
+    d["voice_max_notes_per_reply"] = _clamp_int(d.get("voice_max_notes_per_reply", 1), 0, 5, 1)
+    d["voice_prefer_voice"] = _truthy(d.get("voice_prefer_voice", False))
+    try:
+        d["voice_speaking_rate"] = float(d.get("voice_speaking_rate") or 1.0)
+    except Exception:
+        d["voice_speaking_rate"] = 1.0
+    d["voice_speaking_rate"] = max(0.6, min(1.4, float(d["voice_speaking_rate"])))
 
     return d
 
@@ -286,9 +374,12 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "provider": str(s.get("provider", "")),
             "model": str(s.get("model", "")),
             "reply_text": "",
-            "reply_chunks": [],  # compat
+            "reply_chunks": [],
             "used_fallback": False,
             "error": "AI disabled",
+            "voice": {
+                "enabled": bool(s.get("voice_enabled", False)),
+            },
         }
 
     meta = meta or {}
@@ -300,8 +391,12 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         if kb_ctx:
             meta["context"] = kb_ctx
 
+    # ✅ Inject voice style into system prompt
+    voice_block = _build_voice_style_block(s)
+    merged_system = _merge_system_prompt(str(s.get("system_prompt") or ""), voice_block)
+
     messages = _build_messages(
-        system_prompt=str(s.get("system_prompt") or ""),
+        system_prompt=merged_system,
         user_text=user_text,
         meta=meta,
     )
@@ -326,9 +421,20 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "provider": provider,
             "model": model,
             "reply_text": reply,
-            "reply_chunks": [],  # Option A: engine no chunking
+            "reply_chunks": [],
             "used_fallback": False,
             "error": None,
+            # ✅ devuelvo voice settings para que main.py decida si manda nota de voz
+            "voice": {
+                "enabled": bool(s.get("voice_enabled", False)),
+                "gender": s.get("voice_gender", "neutral"),
+                "language": s.get("voice_language", "es-CO"),
+                "accent": s.get("voice_accent", "colombiano"),
+                "style_prompt": s.get("voice_style_prompt", ""),
+                "max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
+                "prefer_voice": bool(s.get("voice_prefer_voice", False)),
+                "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
+            },
         }
 
     fb_provider = (s.get("fallback_provider") or "").strip().lower()
@@ -353,6 +459,16 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
                 "reply_chunks": [],
                 "used_fallback": True,
                 "error": None,
+                "voice": {
+                    "enabled": bool(s.get("voice_enabled", False)),
+                    "gender": s.get("voice_gender", "neutral"),
+                    "language": s.get("voice_language", "es-CO"),
+                    "accent": s.get("voice_accent", "colombiano"),
+                    "style_prompt": s.get("voice_style_prompt", ""),
+                    "max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
+                    "prefer_voice": bool(s.get("voice_prefer_voice", False)),
+                    "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
+                },
             }
 
         return {
@@ -363,6 +479,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "reply_chunks": [],
             "used_fallback": True,
             "error": (err2 or err or "AI call failed")[:900],
+            "voice": {"enabled": bool(s.get("voice_enabled", False))},
         }
 
     return {
@@ -373,6 +490,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         "reply_chunks": [],
         "used_fallback": False,
         "error": (err or "AI call failed")[:900],
+        "voice": {"enabled": bool(s.get("voice_enabled", False))},
     }
 
 
@@ -447,7 +565,6 @@ async def _call_provider(
     provider = (provider or "").strip().lower()
 
     if provider == "google":
-        # ✅ CLAVE: aceptar labels del UI y convertir a model id real
         resolved = _resolve_google_model(model)
         return await _call_google_gemma(resolved, messages, max_tokens, temperature, timeout_sec)
 

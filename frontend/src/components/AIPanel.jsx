@@ -21,10 +21,20 @@ export default function AIPanel({ apiBase }) {
     timeout_sec: 25,
     max_retries: 1,
 
-    // ✅ NUEVO (humanización / separación de mensajes)
+    // ✅ humanización / separación de mensajes
     reply_chunk_chars: 480,
     reply_delay_ms: 900,
     typing_delay_ms: 450,
+
+    // ✅ VOZ / TTS (NUEVO)
+    voice_enabled: false,
+    voice_gender: "neutral", // male|female|neutral
+    voice_language: "es-CO", // es-CO, es-MX...
+    voice_accent: "colombiano",
+    voice_style_prompt: "",
+    voice_max_notes_per_reply: 1, // 0..5
+    voice_prefer_voice: false,
+    voice_speaking_rate: 1.0, // 0.5..2.0
   });
 
   // KB
@@ -39,6 +49,12 @@ export default function AIPanel({ apiBase }) {
   const [qaText, setQaText] = useState("");
   const [qaLoading, setQaLoading] = useState(false);
   const [qaOut, setQaOut] = useState(null);
+
+  // ✅ QA VOZ (stub por ahora; cuando esté el endpoint lo conectamos)
+  const [ttsText, setTtsText] = useState("");
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const [ttsStatus, setTtsStatus] = useState("");
+  const [ttsAudioUrl, setTtsAudioUrl] = useState("");
 
   const providers = useMemo(() => ["google", "groq", "mistral", "openrouter"], []);
 
@@ -126,6 +142,12 @@ export default function AIPanel({ apiBase }) {
     return Math.max(min, Math.min(max, n));
   };
 
+  const clampInt = (v, min, max, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.trunc(n)));
+  };
+
   const coalesceSettings = (data) => {
     return {
       is_enabled: !!data.is_enabled,
@@ -139,10 +161,20 @@ export default function AIPanel({ apiBase }) {
       timeout_sec: Number(data.timeout_sec ?? 25),
       max_retries: Number(data.max_retries ?? 1),
 
-      // ✅ NUEVO (si backend no lo trae, defaults)
+      // humanización
       reply_chunk_chars: clampNum(data.reply_chunk_chars ?? 480, 120, 2000, 480),
       reply_delay_ms: clampNum(data.reply_delay_ms ?? 900, 0, 15000, 900),
       typing_delay_ms: clampNum(data.typing_delay_ms ?? 450, 0, 15000, 450),
+
+      // ✅ VOZ / TTS (si backend no lo trae, defaults)
+      voice_enabled: !!(data.voice_enabled ?? false),
+      voice_gender: String(data.voice_gender ?? "neutral") || "neutral",
+      voice_language: String(data.voice_language ?? "es-CO") || "es-CO",
+      voice_accent: String(data.voice_accent ?? "colombiano") || "colombiano",
+      voice_style_prompt: String(data.voice_style_prompt ?? "") || "",
+      voice_max_notes_per_reply: clampInt(data.voice_max_notes_per_reply ?? 1, 0, 5, 1),
+      voice_prefer_voice: !!(data.voice_prefer_voice ?? false),
+      voice_speaking_rate: clampNum(data.voice_speaking_rate ?? 1.0, 0.5, 2.0, 1.0),
     };
   };
 
@@ -175,10 +207,20 @@ export default function AIPanel({ apiBase }) {
         timeout_sec: clampNum(draft.timeout_sec, 5, 120, 25),
         max_retries: clampNum(draft.max_retries, 0, 3, 1),
 
-        // ✅ NUEVO
+        // humanización
         reply_chunk_chars: clampNum(draft.reply_chunk_chars, 120, 2000, 480),
         reply_delay_ms: clampNum(draft.reply_delay_ms, 0, 15000, 900),
         typing_delay_ms: clampNum(draft.typing_delay_ms, 0, 15000, 450),
+
+        // voz
+        voice_enabled: !!draft.voice_enabled,
+        voice_gender: String(draft.voice_gender || "neutral"),
+        voice_language: String(draft.voice_language || "es-CO"),
+        voice_accent: String(draft.voice_accent || "colombiano"),
+        voice_style_prompt: String(draft.voice_style_prompt || ""),
+        voice_max_notes_per_reply: clampInt(draft.voice_max_notes_per_reply, 0, 5, 1),
+        voice_prefer_voice: !!draft.voice_prefer_voice,
+        voice_speaking_rate: clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0),
       };
 
       const r = await fetch(`${API}/api/ai/settings`, {
@@ -308,6 +350,70 @@ export default function AIPanel({ apiBase }) {
     }
   };
 
+  // ✅ TTS TEST: por ahora solo muestra mensaje si el endpoint no existe
+  const runTTS = async () => {
+    const text = (ttsText || "").trim();
+    if (!text) {
+      setTtsStatus("Escribe un texto para probar voz");
+      setTimeout(() => setTtsStatus(""), 2500);
+      return;
+    }
+    setTtsLoading(true);
+    setTtsStatus("");
+    setTtsAudioUrl("");
+
+    try {
+      // Este endpoint lo crearemos en el siguiente archivo (backend TTS).
+      // Debe devolver audio (ogg/mp3) o JSON con un media_id/url.
+      const r = await fetch(`${API}/api/ai/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          settings: {
+            voice_gender: draft.voice_gender,
+            voice_language: draft.voice_language,
+            voice_accent: draft.voice_accent,
+            voice_style_prompt: draft.voice_style_prompt,
+            voice_speaking_rate: clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0),
+          },
+        }),
+      });
+
+      const ct = r.headers.get("content-type") || "";
+      if (!r.ok) {
+        // intentamos leer json error
+        let msg = "TTS falló";
+        try {
+          const j = await r.json();
+          msg = j?.detail || j?.error || msg;
+        } catch { }
+        throw new Error(msg);
+      }
+
+      if (ct.includes("audio/")) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        setTtsAudioUrl(url);
+        setTtsStatus("Audio generado ✅");
+      } else {
+        // si devuelve JSON (ej: {media_id, url})
+        const j = await r.json();
+        if (j?.url) {
+          setTtsAudioUrl(j.url);
+          setTtsStatus("Audio generado ✅");
+        } else {
+          setTtsStatus("TTS OK (pero sin audio retornado)");
+        }
+      }
+    } catch (e) {
+      setTtsStatus(`TTS: ${String(e.message || e)}`);
+    } finally {
+      setTtsLoading(false);
+      setTimeout(() => setTtsStatus(""), 3500);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,6 +463,19 @@ export default function AIPanel({ apiBase }) {
     const t = clampNum(draft.typing_delay_ms, 0, 15000, 450);
     return `Chunks aprox: ${c} chars • Delay entre mensajes: ${d}ms • “Typing” inicial: ${t}ms`;
   }, [draft.reply_chunk_chars, draft.reply_delay_ms, draft.typing_delay_ms]);
+
+  const voicePreview = useMemo(() => {
+    const rate = clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0);
+    const mx = clampInt(draft.voice_max_notes_per_reply, 0, 5, 1);
+    return `Voz: ${draft.voice_enabled ? "ON" : "OFF"} • ${draft.voice_gender} • ${draft.voice_language} • acento=${draft.voice_accent} • rate=${rate} • max notas=${mx}`;
+  }, [
+    draft.voice_enabled,
+    draft.voice_gender,
+    draft.voice_language,
+    draft.voice_accent,
+    draft.voice_speaking_rate,
+    draft.voice_max_notes_per_reply,
+  ]);
 
   if (!API) {
     return (
@@ -547,7 +666,7 @@ export default function AIPanel({ apiBase }) {
                 />
               </div>
 
-              {/* ✅ NUEVO: Humanización / chunks */}
+              {/* Humanización / chunks */}
               <hr style={hrStyle} />
               <h4 style={{ margin: "6px 0 0 0" }}>Humanización (WhatsApp)</h4>
               <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{humanPreview}</div>
@@ -583,6 +702,122 @@ export default function AIPanel({ apiBase }) {
                   value={draft.typing_delay_ms}
                   onChange={(e) => setDraft((p) => ({ ...p, typing_delay_ms: Number(e.target.value || 0) }))}
                 />
+              </div>
+
+              {/* ✅ VOZ / TTS */}
+              <hr style={hrStyle} />
+              <h4 style={{ margin: "6px 0 0 0" }}>Voz / TTS (WhatsApp)</h4>
+              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{voicePreview}</div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Voz habilitada</label>
+                <input
+                  type="checkbox"
+                  checked={!!draft.voice_enabled}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_enabled: e.target.checked }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Preferir nota de voz</label>
+                <input
+                  type="checkbox"
+                  checked={!!draft.voice_prefer_voice}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_prefer_voice: e.target.checked }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Género</label>
+                <select
+                  value={draft.voice_gender}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_gender: e.target.value }))}
+                >
+                  <option value="neutral">neutral</option>
+                  <option value="female">female</option>
+                  <option value="male">male</option>
+                </select>
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Idioma</label>
+                <input
+                  value={draft.voice_language}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_language: e.target.value }))}
+                  placeholder="es-CO"
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Acento (etiqueta)</label>
+                <input
+                  value={draft.voice_accent}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_accent: e.target.value }))}
+                  placeholder="colombiano / mexicano / etc"
+                />
+              </div>
+
+              <div style={{ ...rowStyle, alignItems: "flex-start" }}>
+                <label style={labelStyle}>Prompt de voz</label>
+                <textarea
+                  value={draft.voice_style_prompt}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_style_prompt: e.target.value }))}
+                  rows={4}
+                  placeholder="Ej: Habla cálido, cercano, con acento paisa suave. Pausas cortas. No uses jerga técnica..."
+                  style={{ width: "100%", resize: "vertical" }}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Máx notas por respuesta</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={draft.voice_max_notes_per_reply}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_max_notes_per_reply: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Velocidad (0.5–2.0)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0.5}
+                  max={2.0}
+                  value={draft.voice_speaking_rate}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_speaking_rate: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              {/* ✅ prueba de voz */}
+              <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)" }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>Probar voz (TTS)</div>
+                {ttsStatus && (
+                  <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 8 }}>
+                    {ttsStatus}
+                  </div>
+                )}
+                <textarea
+                  value={ttsText}
+                  onChange={(e) => setTtsText(e.target.value)}
+                  rows={3}
+                  placeholder="Escribe un texto para generar audio..."
+                  style={{ width: "100%", resize: "vertical" }}
+                />
+                <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <button onClick={runTTS} disabled={ttsLoading} style={btnPrimary}>
+                    {ttsLoading ? "Generando..." : "Generar audio"}
+                  </button>
+                  {ttsAudioUrl ? (
+                    <audio controls src={ttsAudioUrl} />
+                  ) : (
+                    <span style={{ fontSize: 12, opacity: 0.75 }}>
+                      (Necesita backend <code>/api/ai/tts</code>)
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
@@ -732,13 +967,11 @@ export default function AIPanel({ apiBase }) {
   );
 }
 
-/* ===== styles inline mínimos para no tocar tu CSS (puedes migrarlos a App.css si quieres) ===== */
+/* ===== styles inline mínimos ===== */
 
 const panelStyle = {
   width: "100%",
   padding: 18,
-
-  // ✅ FIX: permitir scroll sin hacer zoom out
   height: "calc(100vh - 24px)",
   overflowY: "auto",
   overflowX: "hidden",

@@ -3,13 +3,16 @@ import re
 import json
 import requests
 import asyncio
-from datetime import datetime
-from typing import Optional, List
+from datetime import datetime, timedelta
+from typing import Optional, List, Tuple, Dict, Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
+from starlette.requests import Request as StarletteRequest
 
 # ✅ Router externo WhatsApp
 from app.routes.whatsapp import router as whatsapp_router
@@ -18,6 +21,13 @@ from app.routes.whatsapp import send_whatsapp_text, send_whatsapp_media_id
 # ✅ IA
 from app.ai.engine import process_message
 from app.ai.context_builder import build_ai_meta
+
+# ✅ TTS
+from app.ai.tts import tts_synthesize
+
+# ✅ WhatsApp upload (para subir el audio y obtener media_id)
+from app.routes.whatsapp import upload_whatsapp_media
+
 
 # ✅ (Recomendado) Montar router IA (/api/ai/settings, /api/ai/knowledge, etc.)
 try:
@@ -43,7 +53,6 @@ from app.integrations.woocommerce import (
     WC_CONSUMER_SECRET,
 )
 
-
 # =========================================================
 # APP
 # =========================================================
@@ -57,9 +66,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-from fastapi.responses import JSONResponse
-from starlette.requests import Request as StarletteRequest
 
 
 @app.exception_handler(Exception)
@@ -174,6 +180,32 @@ def ensure_schema():
             )
         """))
 
+        # ✅ VOICE settings (para TTS/nota de voz + prompt de voz)
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_gender TEXT"""))          # male|female|neutral
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_language TEXT"""))        # es-CO, es-MX...
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_accent TEXT"""))          # "colombiano", "mexicano"...
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_style_prompt TEXT"""))    # prompt libre
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_max_notes_per_reply INTEGER"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_prefer_voice BOOLEAN"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_speaking_rate DOUBLE PRECISION"""))
+
+        # ✅ Asegurar defaults si quedaron NULL (fila 1)
+        conn.execute(text("""
+            UPDATE ai_settings
+            SET
+                voice_enabled = COALESCE(voice_enabled, FALSE),
+                voice_gender = COALESCE(NULLIF(TRIM(voice_gender), ''), 'neutral'),
+                voice_language = COALESCE(NULLIF(TRIM(voice_language), ''), 'es-CO'),
+                voice_accent = COALESCE(NULLIF(TRIM(voice_accent), ''), 'colombiano'),
+                voice_style_prompt = COALESCE(voice_style_prompt, ''),
+                voice_max_notes_per_reply = COALESCE(voice_max_notes_per_reply, 1),
+                voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
+                voice_speaking_rate = COALESCE(voice_speaking_rate, 1.0)
+            WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
+        """))
+
+
         # ✅ settings humanización (para envío por chunks)
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
@@ -182,7 +214,6 @@ def ensure_schema():
         # ✅ Woo recovery cache
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options JSONB"""))
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options_at TIMESTAMP"""))
-
 
         # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
@@ -226,7 +257,6 @@ class IngestMessage(BaseModel):
     phone: str
     direction: str
     msg_type: str = "text"  # text | image | video | audio | document | product
-
     text: str = ""
 
     media_url: Optional[str] = None
@@ -347,6 +377,22 @@ def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str]
             wa_ts_sent = COALESCE(wa_ts_sent, NOW())
         WHERE id = :id
     """), {"id": local_message_id, "wa_message_id": wa_message_id})
+
+
+def set_extracted_text(conn, message_id: int, extracted_text: str, ai_meta: Optional[dict] = None) -> None:
+    try:
+        conn.execute(text("""
+            UPDATE messages
+            SET extracted_text = :t,
+                ai_meta = COALESCE(:m::jsonb, ai_meta)
+            WHERE id = :id
+        """), {
+            "id": int(message_id),
+            "t": (extracted_text or ""),
+            "m": json.dumps(ai_meta or {}, ensure_ascii=False) if ai_meta is not None else None
+        })
+    except Exception:
+        return
 
 
 def _parse_tags_param(tags: str) -> List[str]:
@@ -537,6 +583,129 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
         },
     }
 
+def _get_voice_settings() -> dict:
+    defaults = {
+        "voice_enabled": False,
+        "voice_prefer_voice": False,
+        "voice_max_notes_per_reply": 1,
+    }
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(voice_enabled, FALSE) AS voice_enabled,
+                    COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
+                    COALESCE(voice_max_notes_per_reply, 1) AS voice_max_notes_per_reply
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+
+        if not r:
+            return defaults
+
+        d = dict(r)
+        d["voice_enabled"] = bool(d.get("voice_enabled"))
+        d["voice_prefer_voice"] = bool(d.get("voice_prefer_voice"))
+        try:
+            d["voice_max_notes_per_reply"] = int(d.get("voice_max_notes_per_reply") or 1)
+        except Exception:
+            d["voice_max_notes_per_reply"] = 1
+        return d
+    except Exception:
+        return defaults
+
+async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
+    text_to_say = (text_to_say or "").strip()
+    if not text_to_say:
+        return {"sent": False, "reason": "empty text"}
+
+    # 1) generar audio con TTS
+    audio_bytes, mime, filename, meta = await tts_synthesize(text=text_to_say, provider=None)
+    if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
+        return {"sent": False, "reason": "tts_failed", "meta": meta}
+
+    # 2) subir a WhatsApp (obtener media_id)
+    media_id = await upload_whatsapp_media(audio_bytes, mime)
+
+    # 3) guardar en DB como mensaje OUT de tipo audio
+    with engine.begin() as conn:
+        local_out_id = save_message(
+            conn,
+            phone=phone,
+            direction="out",
+            msg_type="audio",
+            text_msg="",             # whatsapp audio no lleva caption
+            media_id=media_id,
+            mime_type=mime,
+            file_name=filename,
+            file_size=len(audio_bytes),
+            duration_sec=None,
+        )
+
+    # 4) enviar audio por WhatsApp (media_id)
+    wa_resp = await send_whatsapp_media_id(
+        to_phone=phone,
+        media_type="audio",
+        media_id=media_id,
+        caption=""   # para audio normalmente se ignora
+    )
+
+    wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
+
+    # 5) actualizar estado del envío
+    with engine.begin() as conn:
+        if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
+            set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
+        else:
+            err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
+                  or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
+                  or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
+                  or "WhatsApp send failed"
+            set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+
+    return {"sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp, "media_id": media_id}
+
+
+# =========================================================
+# WhatsApp media download (Graph API)
+# =========================================================
+
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
+
+
+async def download_whatsapp_media_bytes(media_id: str) -> Tuple[bytes, str]:
+    """
+    Descarga bytes reales del media_id de WhatsApp Cloud API.
+    Retorna: (bytes, mime_type)
+    """
+    if not WHATSAPP_TOKEN:
+        raise RuntimeError("WHATSAPP_TOKEN not configured")
+    if not media_id:
+        raise RuntimeError("media_id is required")
+
+    meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+
+    async with httpx.AsyncClient(timeout=25) as client:
+        r_meta = await client.get(meta_url, headers=headers)
+        if r_meta.status_code >= 400:
+            raise RuntimeError(f"Graph meta failed: {r_meta.status_code} {r_meta.text[:400]}")
+
+        meta = r_meta.json() or {}
+        dl_url = meta.get("url")
+        mime_type = (meta.get("mime_type") or "application/octet-stream").split(";")[0].strip()
+
+        if not dl_url:
+            raise RuntimeError(f"No url in meta: {str(meta)[:200]}")
+
+        r_bin = await client.get(dl_url, headers=headers)
+        if r_bin.status_code >= 400:
+            raise RuntimeError(f"Graph download failed: {r_bin.status_code} {r_bin.text[:400]}")
+
+        return (bytes(r_bin.content), mime_type)
+
 
 # =========================================================
 # AI STATE helpers (WooCommerce selection)
@@ -573,7 +742,6 @@ def _set_ai_state(phone: str, state: str) -> None:
 def _clear_ai_state(phone: str) -> None:
     _set_ai_state(phone, "")
 
-from datetime import timedelta
 
 def _save_wc_options(phone: str, options: list[dict]) -> None:
     try:
@@ -597,8 +765,8 @@ def _save_wc_options(phone: str, options: list[dict]) -> None:
 
 def _load_recent_wc_options(phone: str, max_age_sec: int = 180) -> list[dict]:
     """
-    Recupera opciones mostradas recientemente (por ejemplo 3 minutos).
-    Esto permite que aunque el TTL del ai_state sea 10s, el usuario aún pueda responder '2'.
+    Recupera opciones mostradas recientemente (ej: 3 minutos).
+    Permite responder '2' aunque el ai_state TTL sea corto.
     """
     try:
         with engine.begin() as conn:
@@ -618,9 +786,7 @@ def _load_recent_wc_options(phone: str, max_age_sec: int = 180) -> list[dict]:
         if not ts or not opts:
             return []
 
-        # age check
         now = datetime.utcnow()
-        # ts puede venir naive, tratamos como UTC
         age = (now - ts).total_seconds()
         if age > float(max_age_sec):
             return []
@@ -686,7 +852,6 @@ async def _wc_send_product_internal(phone: str, product_id: int, custom_caption:
     if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
         raise HTTPException(status_code=500, detail="WC env vars not configured")
 
-    # 1) Fetch producto (async vía módulo)
     product = await wc_fetch_product(int(product_id))
 
     images = product.get("images") or []
@@ -696,15 +861,12 @@ async def _wc_send_product_internal(phone: str, product_id: int, custom_caption:
     featured_image = (images[0] or {}).get("src") or ""
     real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
 
-    # 2) Descargar imagen (async) + compat WhatsApp
     img_bytes, content_type = await download_image_bytes(featured_image)
     img_bytes, mime_type = ensure_whatsapp_image_compat(img_bytes, content_type, featured_image)
 
-    # 3) Subir a WhatsApp
     from app.routes.whatsapp import upload_whatsapp_media
     media_id = await upload_whatsapp_media(img_bytes, mime_type)
 
-    # 4) Caption bonito
     caption = build_caption(
         product=product,
         featured_image=featured_image,
@@ -714,7 +876,6 @@ async def _wc_send_product_internal(phone: str, product_id: int, custom_caption:
 
     permalink = product.get("permalink", "") or ""
 
-    # 5) Guardar en DB (OUT)
     with engine.begin() as conn:
         local_id = save_message(
             conn,
@@ -727,7 +888,6 @@ async def _wc_send_product_internal(phone: str, product_id: int, custom_caption:
             permalink=permalink,
         )
 
-    # 6) Enviar por WhatsApp (imagen adjunta + caption)
     wa_resp = await send_whatsapp_media_id(
         to_phone=phone,
         media_type="image",
@@ -978,6 +1138,7 @@ def get_messages(phone: str):
                 id, phone, direction, msg_type, text,
                 media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
                 featured_image, real_image, permalink, created_at,
+                extracted_text, ai_meta,
                 wa_message_id, wa_status, wa_error, wa_ts_sent, wa_ts_delivered, wa_ts_read
             FROM messages
             WHERE phone = :phone
@@ -986,6 +1147,10 @@ def get_messages(phone: str):
         """), {"phone": phone}).mappings().all()
     return {"messages": [dict(r) for r in rows]}
 
+
+# =========================================================
+# Ingest (core pipeline)
+# =========================================================
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
@@ -1075,7 +1240,7 @@ async def ingest(msg: IngestMessage):
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
-    # 3) Disparar IA/Woo si es IN, IA habilitada, y takeover está OFF (bot mode)
+    # 3) Disparar IA/Woo si es IN, IA habilitada, y takeover está OFF
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -1098,45 +1263,145 @@ async def ingest(msg: IngestMessage):
             if (not ai_enabled) or takeover_on:
                 return {"saved": True, "sent": False, "ai": False, "reason": "ai_disabled_or_takeover_on"}
 
-            user_text = (msg.text or "").strip()
+            # -----------------------------
+            # ✅ 1) Ignorar placeholders tipo [audio], [image], etc
+            # -----------------------------
+            def _is_placeholder_text(t: str) -> bool:
+                t = (t or "").strip().lower()
+                placeholders = {
+                    "[audio]", "[voice]", "[nota de voz]",
+                    "[image]", "[imagen]", "[photo]", "[foto]",
+                    "[video]", "[document]", "[archivo]",
+                    "[sticker]", "[gif]",
+                }
+                t2 = re.sub(r"\s+", " ", t)
+                return t in placeholders or t2 in placeholders or re.fullmatch(r"\[[a-záéíóúñ\s]+\]", t) is not None
 
-            # ✅ Robustez: si hay texto útil, lo tratamos como "text" a nivel de intención
-            eff_msg_type = "text" if user_text else msg_type
+            user_text = (msg.text or "").strip()
+            if _is_placeholder_text(user_text):
+                user_text = ""
+
+            # -----------------------------
+            # ✅ 2) Multimodal (audio/imagen): si NO hay texto, intentamos extraerlo
+            # -----------------------------
+            extracted = ""
+
+            async def _gemini_generate_text_from_media(kind: str, media_bytes: bytes, mime_type: str) -> Tuple[str, dict]:
+                """
+                Usa Gemini API con GOOGLE_AI_API_KEY para:
+                - audio: transcripción
+                - image: descripción + texto visible
+                """
+                api_key = os.getenv("GOOGLE_AI_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+                if not api_key:
+                    return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
+
+                model_audio = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.0-flash").strip()
+                model_vision = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash").strip()
+                model = model_audio if kind == "audio" else model_vision
+
+                import base64
+                b64 = base64.b64encode(media_bytes).decode("utf-8")
+
+                if kind == "audio":
+                    prompt = (
+                        "Transcribe exactamente el audio en español (si aplica). "
+                        "No inventes. Devuelve SOLO el texto transcrito."
+                    )
+                else:
+                    prompt = (
+                        "Describe la imagen con detalle útil para un asesor comercial de perfumería. "
+                        "Si hay texto visible (etiquetas, cajas, nombres), extráelo. "
+                        "Devuelve SOLO: (1) Descripción corta. (2) Texto visible si existe."
+                    )
+
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+                body = {
+                    "contents": [{
+                        "role": "user",
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": (mime_type or "application/octet-stream"), "data": b64}}
+                        ]
+                    }],
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
+                }
+
+                async with httpx.AsyncClient(timeout=35) as client:
+                    r = await client.post(url, json=body)
+
+                if r.status_code >= 400:
+                    return "", {"ok": False, "status": r.status_code, "body": r.text[:900], "model": model}
+
+                j = r.json() or {}
+                out_text = ""
+                try:
+                    cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
+                    texts = []
+                    for p in cand_parts:
+                        tx = (p or {}).get("text")
+                        if tx:
+                            texts.append(str(tx))
+                    out_text = "\n".join(texts).strip()
+                except Exception:
+                    out_text = ""
+
+                return out_text, {"ok": True, "model": model}
+
+            if (not user_text) and msg_type in ("audio", "image") and msg.media_id:
+                try:
+                    media_bytes, real_mime = await download_whatsapp_media_bytes(msg.media_id)
+                    if media_bytes:
+                        extracted, meta_mm = await _gemini_generate_text_from_media(
+                            kind=msg_type,
+                            media_bytes=media_bytes,
+                            mime_type=real_mime or (msg.mime_type or "application/octet-stream"),
+                        )
+                        extracted = (extracted or "").strip()
+                        if extracted:
+                            user_text = extracted  # ✅ esto es lo que irá a Woo/IA
+
+                        with engine.begin() as conn:
+                            set_extracted_text(
+                                conn,
+                                local_id,
+                                extracted or "",
+                                ai_meta={"multimodal": meta_mm, "mime_type": real_mime}
+                            )
+                except Exception as e:
+                    with engine.begin() as conn:
+                        set_extracted_text(conn, local_id, "", ai_meta={"multimodal": {"ok": False, "error": str(e)[:300]}})
+
+            # Re-chequeo placeholder
+            if _is_placeholder_text(user_text):
+                user_text = ""
+
+            # ✅ Si aún no hay texto, NO dispares Woo ni IA
+            if not user_text:
+                return {"saved": True, "sent": False, "ai": False, "reason": "no_text_after_multimodal"}
 
             # =========================================================
-            # ✅ WooCommerce assistant (A1)
-            # - YA NO depende de msg_type=="text"
-            # - depende de que haya user_text (intención)
+            # ✅ WooCommerce assistant
             # =========================================================
             if wc_enabled() and user_text:
-                # ✅ si hay texto útil, tratamos intención como "text"
-                eff_msg_type = "text"
-
                 async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
                     wa = await _wc_send_product_internal(phone=phone, product_id=product_id, custom_caption=caption)
-                    # ✅ importantísimo: al mandar producto, limpiamos cache de opciones
                     _clear_wc_options(phone)
                     return wa
 
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-
-                    # ✅ clave: pasar eff_msg_type para que no se bloquee por msg_type
-                    msg_type=eff_msg_type,
+                    msg_type="text",
 
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,
                     clear_state=_clear_ai_state,
 
-                    # ✅ cache DB opciones (recuperación)
                     save_options_fn=_save_wc_options,
                     load_recent_options_fn=lambda p: _load_recent_wc_options(p, max_age_sec=180),
 
-                    # ✅ manda producto + cleanup (para que vuelva a Laura y no quede “pegado”)
                     send_product_fn=_send_product_and_cleanup,
-
-                    # ✅ textos por chunks
                     send_text_fn=lambda phone, text: _send_ai_reply_in_chunks(phone, text),
                 )
 
@@ -1148,9 +1413,8 @@ async def ingest(msg: IngestMessage):
                         **{k: v for k, v in wc_result.items() if k != "handled"}
                     }
 
-
             # =========================================================
-            # ✅ Flujo IA normal (si no aplicó WC)
+            # ✅ Flujo IA normal
             # =========================================================
             meta = build_ai_meta(msg.phone, user_text)
 
@@ -1164,14 +1428,28 @@ async def ingest(msg: IngestMessage):
             if not reply_text:
                 return {"saved": True, "sent": False, "ai": True, "reply": ""}
 
+            voice = _get_voice_settings()
+
+            if voice.get("voice_enabled") and voice.get("voice_prefer_voice"):
+                send_result = await _send_ai_reply_as_voice(msg.phone, reply_text)
+                return {
+                    "saved": True,
+                    "sent": bool(send_result.get("sent")),
+                    "ai": True,
+                    "reply": reply_text,
+                    "voice": True,
+                    "wa": send_result.get("wa") or {},
+                }
+
+            # si no, manda texto humanizado por chunks (lo que ya tenías)
             send_result = await _send_ai_reply_in_chunks(msg.phone, reply_text)
+
 
             return {
                 "saved": True,
                 "sent": bool(send_result.get("sent")),
                 "ai": True,
                 "reply": reply_text,
-                "ai_meta": True,
                 "humanized": True,
                 "chunks": {
                     "count": int(send_result.get("chunks_sent") or 0),
@@ -1186,7 +1464,6 @@ async def ingest(msg: IngestMessage):
             return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}
-
 
 
 @app.post("/api/conversations/takeover")

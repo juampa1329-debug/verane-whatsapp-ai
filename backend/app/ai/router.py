@@ -6,13 +6,17 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Literal, List
 
 import requests
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.ai.knowledge_router import router as knowledge_router
 from app.ai.context_builder import build_ai_meta
 from app.db import engine
+
+# ✅ TTS
+from app.ai.tts import tts_synthesize
 
 router = APIRouter()
 
@@ -160,7 +164,6 @@ MODEL_MAP_GOOGLE_LABEL_TO_ID: Dict[str, str] = {
     "Gemini 2.0 Flash 001": "gemini-2.0-flash-001",
     "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
     "Gemini 2.0 Flash-Lite 001": "gemini-2.0-flash-lite-001",
-    # Gemma (si el UI lo muestra así)
     "Gemma 3 1B": "gemma-3-1b-it",
     "Gemma 3 4B": "gemma-3-4b-it",
     "Gemma 3 12B": "gemma-3-12b-it",
@@ -172,9 +175,9 @@ MODEL_MAP_GOOGLE_LABEL_TO_ID: Dict[str, str] = {
 
 def _resolve_model_for_provider(provider: str, model: str) -> str:
     """
-    Acepta:
+    google:
     - 'models/gemini-2.5-flash'  -> 'gemini-2.5-flash'
-    - 'Gemini 2.5 Flash'         -> 'gemini-2.5-flash'   (UI label)
+    - 'Gemini 2.5 Flash'         -> 'gemini-2.5-flash' (label UI)
     - 'gemini-2.5-flash'         -> 'gemini-2.5-flash'
     """
     p = (provider or "").strip().lower()
@@ -185,16 +188,11 @@ def _resolve_model_for_provider(provider: str, model: str) -> str:
     if p == "google":
         m = _strip_google_model_prefix(m)
         low = m.lower().strip()
-
-        # si ya viene en formato id
         if low.startswith(("gemini-", "gemma-")):
             return low
-
-        # si viene como label del UI
         mapped = MODEL_MAP_GOOGLE_LABEL_TO_ID.get(m)
         return (mapped or m).strip()
 
-    # otros providers: usualmente el id ya viene bien
     return m
 
 
@@ -229,10 +227,6 @@ def _validate_model_flex(provider: str, model: str) -> None:
 # =========================================================
 
 def _get_settings_row(conn) -> Dict[str, Any]:
-    """
-    OJO: Estos campos (reply_chunk_chars, reply_delay_ms, typing_delay_ms)
-    deben existir en la tabla ai_settings.
-    """
     r = conn.execute(text("""
         SELECT
             id,
@@ -250,6 +244,16 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
             COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
             COALESCE(typing_delay_ms, 450) AS typing_delay_ms,
+
+            -- ✅ VOICE (TTS)
+            COALESCE(voice_enabled, FALSE) AS voice_enabled,
+            COALESCE(NULLIF(TRIM(voice_gender), ''), 'neutral') AS voice_gender,
+            COALESCE(NULLIF(TRIM(voice_language), ''), 'es-CO') AS voice_language,
+            COALESCE(NULLIF(TRIM(voice_accent), ''), 'colombiano') AS voice_accent,
+            COALESCE(voice_style_prompt, '') AS voice_style_prompt,
+            COALESCE(voice_max_notes_per_reply, 1) AS voice_max_notes_per_reply,
+            COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
+            COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate,
 
             created_at,
             updated_at
@@ -281,10 +285,19 @@ class AISettingsOut(BaseModel):
     timeout_sec: int = 25
     max_retries: int = 1
 
-    # ✅ humanización
     reply_chunk_chars: int = 480
     reply_delay_ms: int = 900
     typing_delay_ms: int = 450
+
+    # ✅ VOICE (TTS)
+    voice_enabled: bool = False
+    voice_gender: str = "neutral"          # male|female|neutral
+    voice_language: str = "es-CO"          # es-CO, es-MX...
+    voice_accent: str = "colombiano"       # libre
+    voice_style_prompt: str = ""
+    voice_max_notes_per_reply: int = 1
+    voice_prefer_voice: bool = False
+    voice_speaking_rate: float = 1.0
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -303,10 +316,19 @@ class AISettingsUpdate(BaseModel):
     timeout_sec: Optional[int] = Field(default=None, ge=5, le=120)
     max_retries: Optional[int] = Field(default=None, ge=0, le=3)
 
-    # ✅ humanización (ajustable en frontend)
     reply_chunk_chars: Optional[int] = Field(default=None, ge=120, le=2000)
     reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
     typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
+
+    # ✅ VOICE (TTS)
+    voice_enabled: Optional[bool] = None
+    voice_gender: Optional[str] = None
+    voice_language: Optional[str] = None
+    voice_accent: Optional[str] = None
+    voice_style_prompt: Optional[str] = None
+    voice_max_notes_per_reply: Optional[int] = Field(default=None, ge=1, le=5)
+    voice_prefer_voice: Optional[bool] = None
+    voice_speaking_rate: Optional[float] = Field(default=None, ge=0.6, le=1.5)
 
 
 class AIProcessRequest(BaseModel):
@@ -322,6 +344,12 @@ class AIProcessResponse(BaseModel):
     reply_text: str
     used_fallback: bool = False
     error: Optional[str] = None
+
+
+# ✅ TTS request
+class TTSRequest(BaseModel):
+    text: str = ""
+    provider: Optional[str] = None  # google | elevenlabs | piper
 
 
 # =========================================================
@@ -367,10 +395,19 @@ def update_ai_settings(payload: AISettingsUpdate):
             "timeout_sec": current.get("timeout_sec", 25) if payload.timeout_sec is None else payload.timeout_sec,
             "max_retries": current.get("max_retries", 1) if payload.max_retries is None else payload.max_retries,
 
-            # ✅ humanización
             "reply_chunk_chars": current.get("reply_chunk_chars", 480) if payload.reply_chunk_chars is None else payload.reply_chunk_chars,
             "reply_delay_ms": current.get("reply_delay_ms", 900) if payload.reply_delay_ms is None else payload.reply_delay_ms,
             "typing_delay_ms": current.get("typing_delay_ms", 450) if payload.typing_delay_ms is None else payload.typing_delay_ms,
+
+            # ✅ VOICE (TTS)
+            "voice_enabled": current.get("voice_enabled", False) if payload.voice_enabled is None else payload.voice_enabled,
+            "voice_gender": current.get("voice_gender", "neutral") if payload.voice_gender is None else (payload.voice_gender or "neutral"),
+            "voice_language": current.get("voice_language", "es-CO") if payload.voice_language is None else (payload.voice_language or "es-CO"),
+            "voice_accent": current.get("voice_accent", "colombiano") if payload.voice_accent is None else (payload.voice_accent or "colombiano"),
+            "voice_style_prompt": current.get("voice_style_prompt", "") if payload.voice_style_prompt is None else (payload.voice_style_prompt or ""),
+            "voice_max_notes_per_reply": current.get("voice_max_notes_per_reply", 1) if payload.voice_max_notes_per_reply is None else payload.voice_max_notes_per_reply,
+            "voice_prefer_voice": current.get("voice_prefer_voice", False) if payload.voice_prefer_voice is None else payload.voice_prefer_voice,
+            "voice_speaking_rate": current.get("voice_speaking_rate", 1.0) if payload.voice_speaking_rate is None else payload.voice_speaking_rate,
         }
 
         # required
@@ -387,8 +424,6 @@ def update_ai_settings(payload: AISettingsUpdate):
 
         # ✅ Resolver modelo (label -> id / models/xxx -> xxx) ANTES de validar
         new_vals["model"] = _resolve_model_for_provider(new_vals["provider"], new_vals["model"])
-
-        # FLEX validation (ya con id real)
         _validate_model_flex(new_vals["provider"], new_vals["model"])
 
         # fallback optional, validate too
@@ -425,6 +460,16 @@ def update_ai_settings(payload: AISettingsUpdate):
                 reply_delay_ms = :reply_delay_ms,
                 typing_delay_ms = :typing_delay_ms,
 
+                -- ✅ VOICE (TTS)
+                voice_enabled = :voice_enabled,
+                voice_gender = :voice_gender,
+                voice_language = :voice_language,
+                voice_accent = :voice_accent,
+                voice_style_prompt = :voice_style_prompt,
+                voice_max_notes_per_reply = :voice_max_notes_per_reply,
+                voice_prefer_voice = :voice_prefer_voice,
+                voice_speaking_rate = :voice_speaking_rate,
+
                 updated_at = NOW()
             WHERE id = :id
         """), {**new_vals, "id": sid})
@@ -438,7 +483,6 @@ def update_ai_settings(payload: AISettingsUpdate):
 async def process_ai_message(payload: AIProcessRequest):
     """
     Endpoint de prueba/manual QA.
-    NOTA: el disparo automático real ocurre desde /api/messages/ingest (o webhook real).
     """
     with engine.begin() as conn:
         s = _get_settings_row(conn)
@@ -543,7 +587,6 @@ def debug_prompt(
         s = _get_settings_row(conn)
 
     system_prompt = str(s.get("system_prompt") or "").strip()
-
     meta = build_ai_meta(phone, user_text)
 
     messages: List[Dict[str, str]] = []
@@ -577,8 +620,42 @@ def debug_prompt(
             "reply_chunk_chars": int(s.get("reply_chunk_chars") or 480),
             "reply_delay_ms": int(s.get("reply_delay_ms") or 900),
             "typing_delay_ms": int(s.get("typing_delay_ms") or 450),
+
+            # ✅ VOICE (TTS)
+            "voice_enabled": bool(s.get("voice_enabled", False)),
+            "voice_gender": str(s.get("voice_gender") or "neutral"),
+            "voice_language": str(s.get("voice_language") or "es-CO"),
+            "voice_accent": str(s.get("voice_accent") or "colombiano"),
+            "voice_style_prompt": str(s.get("voice_style_prompt") or ""),
+            "voice_max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
+            "voice_prefer_voice": bool(s.get("voice_prefer_voice", False)),
+            "voice_speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
         },
         "system_prompt": system_prompt,
         "meta": meta,
         "messages": messages,
     }
+
+
+# =========================================================
+# ✅ TTS endpoint (QA)
+# =========================================================
+
+@router.post("/tts")
+async def tts_endpoint(payload: TTSRequest = Body(...)):
+    """
+    Devuelve audio (para probar desde frontend o Postman).
+    """
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    provider = (payload.provider or "").strip() or None
+
+    audio_bytes, mime, filename, meta = await tts_synthesize(text=text, provider=provider)
+
+    if not audio_bytes or not bool(meta.get("ok", False)):
+        raise HTTPException(status_code=502, detail=meta)
+
+    headers = {"Content-Disposition": f'inline; filename="{filename}"'}
+    return StreamingResponse(iter([audio_bytes]), media_type=mime, headers=headers)

@@ -213,7 +213,7 @@ def ensure_schema():
         # ✅ Asegurar defaults si quedaron NULL (fila 1)
         conn.execute(text("""
             UPDATE ai_settings
-            SET
+                SET
                 voice_enabled = COALESCE(voice_enabled, FALSE),
                 voice_gender = COALESCE(NULLIF(TRIM(voice_gender), ''), 'neutral'),
                 voice_language = COALESCE(NULLIF(TRIM(voice_language), ''), 'es-CO'),
@@ -221,11 +221,12 @@ def ensure_schema():
                 voice_style_prompt = COALESCE(voice_style_prompt, ''),
                 voice_max_notes_per_reply = COALESCE(voice_max_notes_per_reply, 1),
                 voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
-                voice_speaking_rate = COALESCE(voice_speaking_rate, 1.0)
+                voice_speaking_rate = COALESCE(voice_speaking_rate, 1.0),
+
                 voice_tts_provider = COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google'),
                 voice_tts_voice_id = COALESCE(NULLIF(TRIM(voice_tts_voice_id), ''), ''),
-                voice_tts_model_id = COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), '')          
-            WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
+                voice_tts_model_id = COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), '')
+                WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
         # ✅ settings humanización (para envío por chunks)

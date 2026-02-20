@@ -8,19 +8,31 @@ import httpx
 
 
 # =========================================================
-# TTS Router
+# TTS Router (library)
 # =========================================================
 
-def _tts_provider() -> str:
+def _tts_provider_default() -> str:
+    """
+    Fallback global (ENV) si no se pasa provider desde DB/request.
+    OJO: En tu flujo normal, el provider “real” viene de ai_settings.voice_tts_provider.
+    """
     return (os.getenv("TTS_PROVIDER", "google") or "google").strip().lower()
 
 
-async def tts_synthesize(text: str, provider: Optional[str] = None) -> Tuple[bytes, str, str, Dict[str, Any]]:
+async def tts_synthesize(
+    text: str,
+    provider: Optional[str] = None,
+    voice_id: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bytes, str, str, Dict[str, Any]]:
     """
     Returns: (audio_bytes, mime_type, filename, meta)
     Providers: google | elevenlabs | piper
+
+    - provider: si None, usa ENV TTS_PROVIDER (fallback).
+    - voice_id/model_id: overrides (principalmente para elevenlabs). Si None, caen al ENV.
     """
-    provider = (provider or _tts_provider()).strip().lower()
+    provider = (provider or _tts_provider_default()).strip().lower()
     text = (text or "").strip()
 
     if not text:
@@ -30,7 +42,7 @@ async def tts_synthesize(text: str, provider: Optional[str] = None) -> Tuple[byt
         return await _tts_google(text)
 
     if provider == "elevenlabs":
-        return await _tts_elevenlabs(text)
+        return await _tts_elevenlabs(text, voice_id=voice_id, model_id=model_id)
 
     if provider == "piper":
         return await _tts_piper(text)
@@ -47,7 +59,12 @@ async def _tts_google(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
     Uses Google Cloud TTS API key:
       GOOGLE_CLOUD_TTS_API_KEY
 
-    Default output: OGG_OPUS (good for WhatsApp audio messages)
+    Defaults:
+      - language: GOOGLE_TTS_LANGUAGE_CODE (es-US)
+      - voice name: GOOGLE_TTS_VOICE_NAME (optional)
+      - encoding: GOOGLE_TTS_AUDIO_ENCODING (OGG_OPUS)
+      - speaking rate: GOOGLE_TTS_SPEAKING_RATE (1.0)
+      - pitch: GOOGLE_TTS_PITCH (0.0)
     """
     api_key = (os.getenv("GOOGLE_CLOUD_TTS_API_KEY", "") or "").strip()
     if not api_key:
@@ -55,21 +72,24 @@ async def _tts_google(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
 
     lang = (os.getenv("GOOGLE_TTS_LANGUAGE_CODE", "es-US") or "es-US").strip()
     voice = (os.getenv("GOOGLE_TTS_VOICE_NAME", "") or "").strip()  # optional
-    speaking_rate = float(os.getenv("GOOGLE_TTS_SPEAKING_RATE", "1.0") or 1.0)
-    pitch = float(os.getenv("GOOGLE_TTS_PITCH", "0.0") or 0.0)
 
-    # Encoding:
-    # - OGG_OPUS works well for WhatsApp "audio"
-    # - If you prefer MP3: set GOOGLE_TTS_AUDIO_ENCODING=MP3 and mime becomes audio/mpeg
+    try:
+        speaking_rate = float(os.getenv("GOOGLE_TTS_SPEAKING_RATE", "1.0") or 1.0)
+    except Exception:
+        speaking_rate = 1.0
+
+    try:
+        pitch = float(os.getenv("GOOGLE_TTS_PITCH", "0.0") or 0.0)
+    except Exception:
+        pitch = 0.0
+
     encoding = (os.getenv("GOOGLE_TTS_AUDIO_ENCODING", "OGG_OPUS") or "OGG_OPUS").strip().upper()
 
     url = f"https://texttospeech.googleapis.com/v1/text:synthesize?key={api_key}"
 
     payload: Dict[str, Any] = {
         "input": {"text": text},
-        "voice": {
-            "languageCode": lang,
-        },
+        "voice": {"languageCode": lang},
         "audioConfig": {
             "audioEncoding": encoding,
             "speakingRate": speaking_rate,
@@ -84,22 +104,40 @@ async def _tts_google(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
         r = await client.post(url, json=payload)
 
     if r.status_code >= 400:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "status": r.status_code, "body": r.text[:900]}
+        return b"", "application/octet-stream", "audio.bin", {
+            "ok": False,
+            "provider": "google",
+            "status": r.status_code,
+            "body": r.text[:900],
+        }
 
     j = r.json() or {}
     audio_b64 = j.get("audioContent") or ""
     if not audio_b64:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "no audioContent"}
+        return b"", "application/octet-stream", "audio.bin", {"ok": False, "provider": "google", "reason": "no audioContent"}
 
     try:
         audio_bytes = base64.b64decode(audio_b64)
     except Exception:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "base64 decode failed"}
+        return b"", "application/octet-stream", "audio.bin", {"ok": False, "provider": "google", "reason": "base64 decode failed"}
 
     if encoding == "MP3":
-        return audio_bytes, "audio/mpeg", "tts.mp3", {"ok": True, "provider": "google", "encoding": encoding, "language": lang, "voice": voice or None}
-    # default ogg/opus
-    return audio_bytes, "audio/ogg", "tts.ogg", {"ok": True, "provider": "google", "encoding": encoding, "language": lang, "voice": voice or None}
+        return audio_bytes, "audio/mpeg", "tts.mp3", {
+            "ok": True,
+            "provider": "google",
+            "encoding": encoding,
+            "language": lang,
+            "voice": voice or None,
+        }
+
+    # default: ogg/opus (mejor para WhatsApp audio)
+    return audio_bytes, "audio/ogg", "tts.ogg", {
+        "ok": True,
+        "provider": "google",
+        "encoding": encoding,
+        "language": lang,
+        "voice": voice or None,
+    }
 
 
 # =========================================================
@@ -120,16 +158,20 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
+async def _tts_elevenlabs(
+    text: str,
+    voice_id: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bytes, str, str, Dict[str, Any]]:
     """
     Env vars:
       ELEVENLABS_API_KEY
-      ELEVENLABS_VOICE_ID
-      ELEVENLABS_MODEL_ID (default: eleven_multilingual_v2)
+      ELEVENLABS_VOICE_ID           (fallback si no pasas voice_id)
+      ELEVENLABS_MODEL_ID           (fallback si no pasas model_id) default: eleven_multilingual_v2
 
     Optional controls:
-      ELEVENLABS_OUTPUT_FORMAT (default: mp3_44100_128)  # query param output_format :contentReference[oaicite:2]{index=2}
-      ELEVENLABS_APPLY_TEXT_NORMALIZATION (auto|on|off, default: auto) :contentReference[oaicite:3]{index=3}
+      ELEVENLABS_OUTPUT_FORMAT (default: mp3_44100_128)
+      ELEVENLABS_APPLY_TEXT_NORMALIZATION (auto|on|off, default: auto)
       ELEVENLABS_ENABLE_LOGGING (true|false, default: true)
       ELEVENLABS_OPTIMIZE_STREAMING_LATENCY (0..4, optional)
 
@@ -139,23 +181,24 @@ async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
       ELEVENLABS_USE_SPEAKER_BOOST (true|false, optional)
 
     Output:
-      - Usually MP3. WhatsApp accepts audio/mpeg.
+      - Normalmente MP3. WhatsApp acepta audio/mpeg.
     """
     api_key = (os.getenv("ELEVENLABS_API_KEY", "") or "").strip()
-    voice_id = (os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
-
     if not api_key:
         return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "ELEVENLABS_API_KEY missing"}
+
+    # ✅ override primero; si no, ENV
+    voice_id = (voice_id or os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
     if not voice_id:
         return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "ELEVENLABS_VOICE_ID missing"}
 
-    model_id = (os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
+    model_id = (model_id or os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
 
-    # Stream endpoint (recommended; supports output_format/apply_text_normalization as query params) :contentReference[oaicite:4]{index=4}
     base_url = "https://api.elevenlabs.io"
     url = f"{base_url}/v1/text-to-speech/{voice_id}/stream"
 
     output_format = (os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128") or "mp3_44100_128").strip()
+
     apply_norm = (os.getenv("ELEVENLABS_APPLY_TEXT_NORMALIZATION", "auto") or "auto").strip().lower()
     if apply_norm not in ("auto", "on", "off"):
         apply_norm = "auto"
@@ -197,8 +240,6 @@ async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
     headers = {
         "xi-api-key": api_key,
         "Content-Type": "application/json",
-        # NOTA: ElevenLabs devuelve el audio según output_format.
-        # Para mp3: Accept audio/mpeg
         "Accept": "audio/mpeg",
     }
 
@@ -219,13 +260,13 @@ async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
 
     audio_bytes = r.content or b""
     if not audio_bytes:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "empty audio"}
+        return b"", "application/octet-stream", "audio.bin", {"ok": False, "provider": "elevenlabs", "reason": "empty audio"}
 
-    # mime según formato (por ahora: mp3 -> audio/mpeg)
-    # Si luego eliges un output_format diferente, lo ajustamos (ej: pcm, ulaw, etc).
+    # Por defecto: mp3
     mime = "audio/mpeg"
     filename = "tts.mp3"
 
+    # (si luego soportas otros output_format, ajustamos mime/filename aquí)
     return audio_bytes, mime, filename, {
         "ok": True,
         "provider": "elevenlabs",
@@ -247,15 +288,16 @@ async def _tts_piper(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
     Env:
       PIPER_BASE_URL (example: http://piper:8000)
 
-    We keep this prepared. When you deploy piper, make sure it returns audio/ogg (opus)
-    or audio/wav and we can convert.
+    Expected endpoint example:
+      GET /tts?text=...
+
+    Return audio as:
+      audio/ogg (opus) or audio/wav
     """
     base_url = (os.getenv("PIPER_BASE_URL", "") or "").strip()
     if not base_url:
         return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "PIPER_BASE_URL missing"}
 
-    # Example endpoint (we'll match whatever you deploy):
-    # GET /tts?text=...
     url = f"{base_url.rstrip('/')}/tts"
     params = {"text": text}
 
@@ -263,16 +305,21 @@ async def _tts_piper(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
         r = await client.get(url, params=params)
 
     if r.status_code >= 400:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "status": r.status_code, "body": r.text[:900]}
+        return b"", "application/octet-stream", "audio.bin", {
+            "ok": False,
+            "provider": "piper",
+            "status": r.status_code,
+            "body": r.text[:900],
+        }
 
     ct = (r.headers.get("content-type") or "audio/ogg").split(";")[0].strip().lower()
     audio_bytes = r.content or b""
     if not audio_bytes:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "empty audio"}
+        return b"", "application/octet-stream", "audio.bin", {"ok": False, "provider": "piper", "reason": "empty audio"}
 
-    # Default guess
     if ct in ("audio/ogg", "audio/opus"):
         return audio_bytes, "audio/ogg", "tts.ogg", {"ok": True, "provider": "piper", "content_type": ct}
+
     if ct in ("audio/wav", "audio/x-wav"):
         return audio_bytes, "audio/wav", "tts.wav", {"ok": True, "provider": "piper", "content_type": ct}
 

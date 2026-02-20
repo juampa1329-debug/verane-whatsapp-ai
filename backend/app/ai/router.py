@@ -594,7 +594,69 @@ def list_ai_models():
             "voice_tts_model_id": "",
         },
     }
+# =========================================================
+# ✅ ElevenLabs catalog endpoints (voices + models)
+# =========================================================
 
+def _elevenlabs_key() -> str:
+    return (os.getenv("ELEVENLABS_API_KEY", "") or "").strip()
+
+
+@router.get("/tts/elevenlabs/voices")
+def elevenlabs_list_voices():
+    api_key = _elevenlabs_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing ELEVENLABS_API_KEY")
+
+    url = "https://api.elevenlabs.io/v1/voices"
+    r = requests.get(url, headers={"xi-api-key": api_key}, timeout=20)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"elevenlabs voices error {r.status_code}: {r.text[:300]}")
+
+    data = r.json() or {}
+    voices = data.get("voices") or []
+
+    out = []
+    for v in voices:
+        vid = (v.get("voice_id") or "").strip()
+        name = (v.get("name") or "").strip()
+        if not vid:
+            continue
+        out.append({
+            "id": vid,
+            "label": name or vid,
+            "raw": v,
+        })
+
+    return {"provider": "elevenlabs", "voices": out}
+
+
+@router.get("/tts/elevenlabs/models")
+def elevenlabs_list_models():
+    api_key = _elevenlabs_key()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing ELEVENLABS_API_KEY")
+
+    url = "https://api.elevenlabs.io/v1/models"
+    r = requests.get(url, headers={"xi-api-key": api_key}, timeout=20)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"elevenlabs models error {r.status_code}: {r.text[:300]}")
+
+    items = r.json() or []
+    # respuesta típica: lista [{model_id,name,can_be_finetuned,...}, ...]
+    out = []
+    for it in items:
+        mid = (it.get("model_id") or it.get("id") or "").strip()
+        name = (it.get("name") or "").strip()
+        if not mid:
+            continue
+        out.append({
+            "id": mid,
+            "label": name or mid,
+            "raw": it,
+        })
+
+    return {"provider": "elevenlabs", "models": out}
 
 @router.get("/models/live")
 def list_ai_models_live(
@@ -702,10 +764,6 @@ def debug_prompt(
 
 @router.post("/tts")
 async def tts_endpoint(payload: TTSRequest = Body(...)):
-    """
-    Devuelve audio (para probar desde frontend o Postman).
-    - provider opcional: si no lo mandas, usa ai_settings.voice_tts_provider
-    """
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -713,15 +771,20 @@ async def tts_endpoint(payload: TTSRequest = Body(...)):
     with engine.begin() as conn:
         s = _get_settings_row(conn)
 
-    # 1) provider override (request) o DB default
     provider = (payload.provider or "").strip().lower() or str(s.get("voice_tts_provider") or "google").strip().lower()
-
     if not _is_valid_tts_provider(provider):
         raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
 
-    # 2) (opcional) si luego implementas override voice_id/model_id por request,
-    # aquí podrías setear env temporales o pasar params a tts_synthesize.
-    audio_bytes, mime, filename, meta = await tts_synthesize(text=text, provider=provider)
+    # ✅ voice/model: request override > DB settings
+    voice_id = (payload.voice_id or "").strip() or str(s.get("voice_tts_voice_id") or "").strip()
+    model_id = (payload.model_id or "").strip() or str(s.get("voice_tts_model_id") or "").strip()
+
+    audio_bytes, mime, filename, meta = await tts_synthesize(
+        text=text,
+        provider=provider,
+        voice_id=voice_id or None,
+        model_id=model_id or None,
+    )
 
     if not audio_bytes or not bool(meta.get("ok", False)):
         raise HTTPException(status_code=502, detail=meta)

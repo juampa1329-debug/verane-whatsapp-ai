@@ -68,6 +68,12 @@ export default function AIPanel({ apiBase }) {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState("");
 
+  // ✅ ElevenLabs catalog
+  const [elVoices, setElVoices] = useState([]);
+  const [elModels, setElModels] = useState([]);
+  const [elLoading, setElLoading] = useState(false);
+  const [elError, setElError] = useState("");
+
   // ===== helpers para soportar modelos string o {id,label,raw} =====
   const normalizeModels = (list) => {
     if (!Array.isArray(list)) return [];
@@ -153,6 +159,42 @@ export default function AIPanel({ apiBase }) {
     return Math.max(min, Math.min(max, Math.trunc(n)));
   };
 
+  const loadElevenlabsCatalog = async () => {
+    setElLoading(true);
+    setElError("");
+    try {
+      const [rv, rm] = await Promise.all([
+        fetch(`${API}/api/ai/tts/elevenlabs/voices`),
+        fetch(`${API}/api/ai/tts/elevenlabs/models`),
+      ]);
+
+      const dv = await rv.json();
+      const dm = await rm.json();
+
+      if (!rv.ok) throw new Error(dv?.detail || "No se pudieron cargar voices de ElevenLabs");
+      if (!rm.ok) throw new Error(dm?.detail || "No se pudieron cargar models de ElevenLabs");
+
+      const voices = Array.isArray(dv?.voices) ? dv.voices : [];
+      const models = Array.isArray(dm?.models) ? dm.models : [];
+
+      setElVoices(voices);
+      setElModels(models);
+
+      // ✅ si no hay seleccionado, setea defaults razonables
+      setDraft((p) => {
+        const next = { ...p };
+        if (!next.voice_tts_voice_id && voices[0]?.id) next.voice_tts_voice_id = voices[0].id;
+        if (!next.voice_tts_model_id && models[0]?.id) next.voice_tts_model_id = models[0].id;
+        return next;
+      });
+    } catch (e) {
+      setElError(String(e.message || e));
+      setElVoices([]);
+      setElModels([]);
+    } finally {
+      setElLoading(false);
+    }
+  };
   const coalesceSettings = (data) => {
     return {
       is_enabled: !!data.is_enabled,
@@ -386,6 +428,8 @@ export default function AIPanel({ apiBase }) {
           text,
           // ✅ usa el selector del panel
           provider: draft.voice_tts_provider || "google",
+          voice_id: draft.voice_tts_voice_id || "",
+          model_id: draft.voice_tts_model_id || "",
           // (si tu backend luego quiere leer ids de elevenlabs desde settings, no hace falta mandarlos aquí)
         }),
       });
@@ -421,6 +465,18 @@ export default function AIPanel({ apiBase }) {
       setTimeout(() => setTtsStatus(""), 3500);
     }
   };
+
+  useEffect(() => {
+    const p = String(draft.voice_tts_provider || "").toLowerCase();
+    if (p === "elevenlabs") {
+      loadElevenlabsCatalog();
+    } else {
+      setElVoices([]);
+      setElModels([]);
+      setElError("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.voice_tts_provider]);
 
   useEffect(() => {
     loadSettings();
@@ -751,31 +807,89 @@ export default function AIPanel({ apiBase }) {
               </div>
 
               {/* ✅ NUEVO: ids para ElevenLabs */}
-              {String(draft.voice_tts_provider || "").toLowerCase() === "elevenlabs" && (
-                <>
-                  <div style={rowStyle}>
-                    <label style={labelStyle}>ElevenLabs voice_id</label>
-                    <input
-                      value={draft.voice_tts_voice_id}
-                      onChange={(e) => setDraft((p) => ({ ...p, voice_tts_voice_id: e.target.value }))}
-                      placeholder="Ej: 21m00Tcm4TlvDq8ikWAM"
-                    />
-                  </div>
+                {String(draft.voice_tts_provider || "").toLowerCase() === "elevenlabs" && (
+                  <>
+                    {elError && (
+                      <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>
+                        ElevenLabs: {elError}
+                      </div>
+                    )}
 
-                  <div style={rowStyle}>
-                    <label style={labelStyle}>ElevenLabs model_id</label>
-                    <input
-                      value={draft.voice_tts_model_id}
-                      onChange={(e) => setDraft((p) => ({ ...p, voice_tts_model_id: e.target.value }))}
-                      placeholder="Ej: eleven_multilingual_v2"
-                    />
-                  </div>
+                    <div style={rowStyle}>
+                      <label style={labelStyle}>ElevenLabs Voice</label>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <select
+                          value={draft.voice_tts_voice_id || ""}
+                          onChange={(e) => setDraft((p) => ({ ...p, voice_tts_voice_id: e.target.value }))}
+                          disabled={elLoading}
+                          style={{ width: "100%" }}
+                        >
+                          {elVoices.length === 0 ? (
+                            <option value="">{elLoading ? "Cargando voices..." : "Sin voices (usa ID manual)"}</option>
+                          ) : (
+                            elVoices.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.label}
+                              </option>
+                            ))
+                          )}
+                        </select>
 
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                    Nota: estos IDs quedan guardados en settings; el backend los puede usar al sintetizar.
-                  </div>
-                </>
-              )}
+                        <button
+                          type="button"
+                          style={{ ...btnGhost, padding: "8px 10px" }}
+                          onClick={loadElevenlabsCatalog}
+                          title="Refrescar ElevenLabs"
+                        >
+                          ↻
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Fallback manual si quieres */}
+                    <div style={rowStyle}>
+                      <label style={labelStyle}>Voice ID (manual)</label>
+                      <input
+                        value={draft.voice_tts_voice_id}
+                        onChange={(e) => setDraft((p) => ({ ...p, voice_tts_voice_id: e.target.value }))}
+                        placeholder="Ej: 21m00Tcm4TlvDq8ikWAM"
+                      />
+                    </div>
+
+                    <div style={rowStyle}>
+                      <label style={labelStyle}>ElevenLabs Model</label>
+                      <select
+                        value={draft.voice_tts_model_id || ""}
+                        onChange={(e) => setDraft((p) => ({ ...p, voice_tts_model_id: e.target.value }))}
+                        disabled={elLoading}
+                      >
+                        {elModels.length === 0 ? (
+                          <option value="">{elLoading ? "Cargando modelos..." : "Sin modelos (usa ID manual)"}</option>
+                        ) : (
+                          elModels.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.label}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+
+                    {/* Fallback manual si quieres */}
+                    <div style={rowStyle}>
+                      <label style={labelStyle}>Model ID (manual)</label>
+                      <input
+                        value={draft.voice_tts_model_id}
+                        onChange={(e) => setDraft((p) => ({ ...p, voice_tts_model_id: e.target.value }))}
+                        placeholder="Ej: eleven_multilingual_v2"
+                      />
+                    </div>
+
+                    <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+                      Guardar settings persistirá estos IDs para que el backend los use en TTS.
+                    </div>
+                  </>
+                )}
 
               <div style={rowStyle}>
                 <label style={labelStyle}>Género</label>

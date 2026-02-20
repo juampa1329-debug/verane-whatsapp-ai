@@ -106,11 +106,40 @@ async def _tts_google(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
 # Provider: ElevenLabs
 # =========================================================
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = (os.getenv(name, "") or "").strip().lower()
+    if v == "":
+        return default
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)) or default)
+    except Exception:
+        return default
+
+
 async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
     """
     Env vars:
       ELEVENLABS_API_KEY
       ELEVENLABS_VOICE_ID
+      ELEVENLABS_MODEL_ID (default: eleven_multilingual_v2)
+
+    Optional controls:
+      ELEVENLABS_OUTPUT_FORMAT (default: mp3_44100_128)  # query param output_format :contentReference[oaicite:2]{index=2}
+      ELEVENLABS_APPLY_TEXT_NORMALIZATION (auto|on|off, default: auto) :contentReference[oaicite:3]{index=3}
+      ELEVENLABS_ENABLE_LOGGING (true|false, default: true)
+      ELEVENLABS_OPTIMIZE_STREAMING_LATENCY (0..4, optional)
+
+      ELEVENLABS_STABILITY (0..1, default 0.5)
+      ELEVENLABS_SIMILARITY_BOOST (0..1, default 0.75)
+      ELEVENLABS_STYLE (0..1, optional)
+      ELEVENLABS_USE_SPEAKER_BOOST (true|false, optional)
+
+    Output:
+      - Usually MP3. WhatsApp accepts audio/mpeg.
     """
     api_key = (os.getenv("ELEVENLABS_API_KEY", "") or "").strip()
     voice_id = (os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
@@ -120,38 +149,92 @@ async def _tts_elevenlabs(text: str) -> Tuple[bytes, str, str, Dict[str, Any]]:
     if not voice_id:
         return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "ELEVENLABS_VOICE_ID missing"}
 
-    # Output format:
-    # - MP3 is simplest and WhatsApp accepts audio/mpeg
-    # If you want opus, we can later change to an opus endpoint variant.
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     model_id = (os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
+
+    # Stream endpoint (recommended; supports output_format/apply_text_normalization as query params) :contentReference[oaicite:4]{index=4}
+    base_url = "https://api.elevenlabs.io"
+    url = f"{base_url}/v1/text-to-speech/{voice_id}/stream"
+
+    output_format = (os.getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128") or "mp3_44100_128").strip()
+    apply_norm = (os.getenv("ELEVENLABS_APPLY_TEXT_NORMALIZATION", "auto") or "auto").strip().lower()
+    if apply_norm not in ("auto", "on", "off"):
+        apply_norm = "auto"
+
+    enable_logging = _env_bool("ELEVENLABS_ENABLE_LOGGING", True)
+
+    params: Dict[str, Any] = {
+        "output_format": output_format,
+        "enable_logging": "true" if enable_logging else "false",
+        "apply_text_normalization": apply_norm,
+    }
+
+    opt_lat = (os.getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "") or "").strip()
+    if opt_lat != "":
+        params["optimize_streaming_latency"] = opt_lat
+
+    voice_settings: Dict[str, Any] = {
+        "stability": _env_float("ELEVENLABS_STABILITY", 0.5),
+        "similarity_boost": _env_float("ELEVENLABS_SIMILARITY_BOOST", 0.75),
+    }
+
+    style = (os.getenv("ELEVENLABS_STYLE", "") or "").strip()
+    if style != "":
+        try:
+            voice_settings["style"] = float(style)
+        except Exception:
+            pass
+
+    use_speaker_boost = (os.getenv("ELEVENLABS_USE_SPEAKER_BOOST", "") or "").strip().lower()
+    if use_speaker_boost in ("1", "true", "yes", "y", "on", "0", "false", "no", "n", "off"):
+        voice_settings["use_speaker_boost"] = use_speaker_boost in ("1", "true", "yes", "y", "on")
 
     payload: Dict[str, Any] = {
         "text": text,
         "model_id": model_id,
-        "voice_settings": {
-            "stability": float(os.getenv("ELEVENLABS_STABILITY", "0.5") or 0.5),
-            "similarity_boost": float(os.getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75") or 0.75),
-        }
+        "voice_settings": voice_settings,
     }
 
     headers = {
         "xi-api-key": api_key,
         "Content-Type": "application/json",
+        # NOTA: ElevenLabs devuelve el audio según output_format.
+        # Para mp3: Accept audio/mpeg
         "Accept": "audio/mpeg",
     }
 
-    async with httpx.AsyncClient(timeout=45) as client:
-        r = await client.post(url, json=payload, headers=headers)
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, params=params, json=payload, headers=headers)
 
     if r.status_code >= 400:
-        return b"", "application/octet-stream", "audio.bin", {"ok": False, "status": r.status_code, "body": r.text[:900]}
+        return b"", "application/octet-stream", "audio.bin", {
+            "ok": False,
+            "status": r.status_code,
+            "body": r.text[:900],
+            "provider": "elevenlabs",
+            "voice_id": voice_id,
+            "model_id": model_id,
+            "output_format": output_format,
+            "apply_text_normalization": apply_norm,
+        }
 
     audio_bytes = r.content or b""
     if not audio_bytes:
         return b"", "application/octet-stream", "audio.bin", {"ok": False, "reason": "empty audio"}
 
-    return audio_bytes, "audio/mpeg", "tts.mp3", {"ok": True, "provider": "elevenlabs", "voice_id": voice_id, "model_id": model_id}
+    # mime según formato (por ahora: mp3 -> audio/mpeg)
+    # Si luego eliges un output_format diferente, lo ajustamos (ej: pcm, ulaw, etc).
+    mime = "audio/mpeg"
+    filename = "tts.mp3"
+
+    return audio_bytes, mime, filename, {
+        "ok": True,
+        "provider": "elevenlabs",
+        "voice_id": voice_id,
+        "model_id": model_id,
+        "output_format": output_format,
+        "apply_text_normalization": apply_norm,
+        "enable_logging": enable_logging,
+    }
 
 
 # =========================================================

@@ -23,8 +23,12 @@ router = APIRouter()
 # KB endpoints quedan bajo /api/ai/knowledge/*
 router.include_router(knowledge_router, prefix="/knowledge")
 
-# Providers soportados
+# Providers soportados (LLM)
 AIProvider = Literal["google", "groq", "mistral", "openrouter"]
+
+# ✅ Providers soportados (TTS)
+TTSProvider = Literal["google", "elevenlabs", "piper"]
+
 
 # =========================================================
 # Static catalog (safe defaults) - optional fallback
@@ -50,9 +54,22 @@ MODEL_CATALOG: Dict[str, List[str]] = {
     ],
 }
 
+TTS_CATALOG: Dict[str, Any] = {
+    "providers": ["google", "elevenlabs", "piper"],
+    "defaults": {
+        "voice_tts_provider": "google",
+        "voice_tts_voice_id": "",
+        "voice_tts_model_id": "",
+    }
+}
+
 
 def _is_valid_provider(p: str) -> bool:
     return (p or "").strip().lower() in ("google", "groq", "mistral", "openrouter")
+
+
+def _is_valid_tts_provider(p: str) -> bool:
+    return (p or "").strip().lower() in ("google", "elevenlabs", "piper")
 
 
 # =========================================================
@@ -174,12 +191,6 @@ MODEL_MAP_GOOGLE_LABEL_TO_ID: Dict[str, str] = {
 
 
 def _resolve_model_for_provider(provider: str, model: str) -> str:
-    """
-    google:
-    - 'models/gemini-2.5-flash'  -> 'gemini-2.5-flash'
-    - 'Gemini 2.5 Flash'         -> 'gemini-2.5-flash' (label UI)
-    - 'gemini-2.5-flash'         -> 'gemini-2.5-flash'
-    """
     p = (provider or "").strip().lower()
     m = (model or "").strip()
     if not m:
@@ -197,11 +208,6 @@ def _resolve_model_for_provider(provider: str, model: str) -> str:
 
 
 def _validate_model_flex(provider: str, model: str) -> None:
-    """
-    FLEX validation:
-    - google: acepta gemini-* y gemma-* (y preview)
-    - groq/mistral/openrouter: acepta cualquier string no vacío
-    """
     p = (provider or "").strip().lower()
     m = (model or "").strip()
 
@@ -227,6 +233,11 @@ def _validate_model_flex(provider: str, model: str) -> None:
 # =========================================================
 
 def _get_settings_row(conn) -> Dict[str, Any]:
+    """
+    ✅ Incluye TTS provider/voice/model desde DB.
+    Si aún NO creaste esas columnas, este SELECT fallaría.
+    Asegúrate de agregarlas en ensure_schema() antes de desplegar.
+    """
     r = conn.execute(text("""
         SELECT
             id,
@@ -245,7 +256,7 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
             COALESCE(typing_delay_ms, 450) AS typing_delay_ms,
 
-            -- ✅ VOICE (TTS)
+            -- ✅ VOICE (texto + decisión de voz)
             COALESCE(voice_enabled, FALSE) AS voice_enabled,
             COALESCE(NULLIF(TRIM(voice_gender), ''), 'neutral') AS voice_gender,
             COALESCE(NULLIF(TRIM(voice_language), ''), 'es-CO') AS voice_language,
@@ -254,6 +265,11 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(voice_max_notes_per_reply, 1) AS voice_max_notes_per_reply,
             COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
             COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate,
+
+            -- ✅ NUEVO: TTS provider/voice/model
+            COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google') AS voice_tts_provider,
+            COALESCE(voice_tts_voice_id, '') AS voice_tts_voice_id,
+            COALESCE(voice_tts_model_id, '') AS voice_tts_model_id,
 
             created_at,
             updated_at
@@ -289,15 +305,20 @@ class AISettingsOut(BaseModel):
     reply_delay_ms: int = 900
     typing_delay_ms: int = 450
 
-    # ✅ VOICE (TTS)
+    # ✅ VOICE (texto + decisión)
     voice_enabled: bool = False
-    voice_gender: str = "neutral"          # male|female|neutral
-    voice_language: str = "es-CO"          # es-CO, es-MX...
-    voice_accent: str = "colombiano"       # libre
+    voice_gender: str = "neutral"
+    voice_language: str = "es-CO"
+    voice_accent: str = "colombiano"
     voice_style_prompt: str = ""
     voice_max_notes_per_reply: int = 1
     voice_prefer_voice: bool = False
     voice_speaking_rate: float = 1.0
+
+    # ✅ NUEVO: TTS provider/voice/model
+    voice_tts_provider: str = "google"   # google|elevenlabs|piper
+    voice_tts_voice_id: str = ""         # p.ej. ElevenLabs voice id
+    voice_tts_model_id: str = ""         # p.ej. eleven_multilingual_v2
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -320,7 +341,7 @@ class AISettingsUpdate(BaseModel):
     reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
     typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
 
-    # ✅ VOICE (TTS)
+    # ✅ VOICE (texto + decisión)
     voice_enabled: Optional[bool] = None
     voice_gender: Optional[str] = None
     voice_language: Optional[str] = None
@@ -329,6 +350,11 @@ class AISettingsUpdate(BaseModel):
     voice_max_notes_per_reply: Optional[int] = Field(default=None, ge=1, le=5)
     voice_prefer_voice: Optional[bool] = None
     voice_speaking_rate: Optional[float] = Field(default=None, ge=0.6, le=1.5)
+
+    # ✅ NUEVO: TTS provider/voice/model
+    voice_tts_provider: Optional[TTSProvider] = None
+    voice_tts_voice_id: Optional[str] = None
+    voice_tts_model_id: Optional[str] = None
 
 
 class AIProcessRequest(BaseModel):
@@ -346,10 +372,12 @@ class AIProcessResponse(BaseModel):
     error: Optional[str] = None
 
 
-# ✅ TTS request
+# ✅ TTS request (QA)
 class TTSRequest(BaseModel):
     text: str = ""
     provider: Optional[str] = None  # google | elevenlabs | piper
+    voice_id: Optional[str] = None  # override (si implementas luego)
+    model_id: Optional[str] = None  # override (si implementas luego)
 
 
 # =========================================================
@@ -383,6 +411,11 @@ def update_ai_settings(payload: AISettingsUpdate):
         fallback_provider = current.get("fallback_provider", "") if payload.fallback_provider is None else (payload.fallback_provider or "")
         fallback_model = current.get("fallback_model", "") if payload.fallback_model is None else (payload.fallback_model or "")
 
+        # ✅ NUEVO TTS settings
+        tts_provider = current.get("voice_tts_provider", "google") if payload.voice_tts_provider is None else (payload.voice_tts_provider or "google")
+        tts_voice_id = current.get("voice_tts_voice_id", "") if payload.voice_tts_voice_id is None else (payload.voice_tts_voice_id or "")
+        tts_model_id = current.get("voice_tts_model_id", "") if payload.voice_tts_model_id is None else (payload.voice_tts_model_id or "")
+
         new_vals = {
             "is_enabled": current["is_enabled"] if payload.is_enabled is None else payload.is_enabled,
             "provider": (str(provider or "").strip().lower()),
@@ -399,7 +432,7 @@ def update_ai_settings(payload: AISettingsUpdate):
             "reply_delay_ms": current.get("reply_delay_ms", 900) if payload.reply_delay_ms is None else payload.reply_delay_ms,
             "typing_delay_ms": current.get("typing_delay_ms", 450) if payload.typing_delay_ms is None else payload.typing_delay_ms,
 
-            # ✅ VOICE (TTS)
+            # ✅ VOICE (texto + decisión)
             "voice_enabled": current.get("voice_enabled", False) if payload.voice_enabled is None else payload.voice_enabled,
             "voice_gender": current.get("voice_gender", "neutral") if payload.voice_gender is None else (payload.voice_gender or "neutral"),
             "voice_language": current.get("voice_language", "es-CO") if payload.voice_language is None else (payload.voice_language or "es-CO"),
@@ -408,6 +441,11 @@ def update_ai_settings(payload: AISettingsUpdate):
             "voice_max_notes_per_reply": current.get("voice_max_notes_per_reply", 1) if payload.voice_max_notes_per_reply is None else payload.voice_max_notes_per_reply,
             "voice_prefer_voice": current.get("voice_prefer_voice", False) if payload.voice_prefer_voice is None else payload.voice_prefer_voice,
             "voice_speaking_rate": current.get("voice_speaking_rate", 1.0) if payload.voice_speaking_rate is None else payload.voice_speaking_rate,
+
+            # ✅ NUEVO: TTS provider/voice/model (para frontend selector)
+            "voice_tts_provider": (str(tts_provider or "google").strip().lower()),
+            "voice_tts_voice_id": str(tts_voice_id or ""),
+            "voice_tts_model_id": str(tts_model_id or ""),
         }
 
         # required
@@ -420,6 +458,13 @@ def update_ai_settings(payload: AISettingsUpdate):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid provider: {new_vals['provider']}. Allowed: ['google','groq','mistral','openrouter']",
+            )
+
+        # ✅ TTS validation
+        if not _is_valid_tts_provider(new_vals["voice_tts_provider"]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid voice_tts_provider: {new_vals['voice_tts_provider']}. Allowed: ['google','elevenlabs','piper']",
             )
 
         # ✅ Resolver modelo (label -> id / models/xxx -> xxx) ANTES de validar
@@ -460,7 +505,7 @@ def update_ai_settings(payload: AISettingsUpdate):
                 reply_delay_ms = :reply_delay_ms,
                 typing_delay_ms = :typing_delay_ms,
 
-                -- ✅ VOICE (TTS)
+                -- ✅ VOICE (texto + decisión)
                 voice_enabled = :voice_enabled,
                 voice_gender = :voice_gender,
                 voice_language = :voice_language,
@@ -469,6 +514,11 @@ def update_ai_settings(payload: AISettingsUpdate):
                 voice_max_notes_per_reply = :voice_max_notes_per_reply,
                 voice_prefer_voice = :voice_prefer_voice,
                 voice_speaking_rate = :voice_speaking_rate,
+
+                -- ✅ NUEVO: TTS provider/voice/model
+                voice_tts_provider = :voice_tts_provider,
+                voice_tts_voice_id = :voice_tts_voice_id,
+                voice_tts_model_id = :voice_tts_model_id,
 
                 updated_at = NOW()
             WHERE id = :id
@@ -530,6 +580,7 @@ async def process_ai_message(payload: AIProcessRequest):
 def list_ai_models():
     return {
         "providers": MODEL_CATALOG,
+        "tts": TTS_CATALOG,
         "defaults": {
             "provider": "google",
             "model": "gemma-3-4b-it",
@@ -538,6 +589,9 @@ def list_ai_models():
             "reply_chunk_chars": 480,
             "reply_delay_ms": 900,
             "typing_delay_ms": 450,
+            "voice_tts_provider": "google",
+            "voice_tts_voice_id": "",
+            "voice_tts_model_id": "",
         },
     }
 
@@ -621,7 +675,6 @@ def debug_prompt(
             "reply_delay_ms": int(s.get("reply_delay_ms") or 900),
             "typing_delay_ms": int(s.get("typing_delay_ms") or 450),
 
-            # ✅ VOICE (TTS)
             "voice_enabled": bool(s.get("voice_enabled", False)),
             "voice_gender": str(s.get("voice_gender") or "neutral"),
             "voice_language": str(s.get("voice_language") or "es-CO"),
@@ -630,6 +683,11 @@ def debug_prompt(
             "voice_max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
             "voice_prefer_voice": bool(s.get("voice_prefer_voice", False)),
             "voice_speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
+
+            # ✅ NUEVO: selector TTS desde frontend
+            "voice_tts_provider": str(s.get("voice_tts_provider") or "google"),
+            "voice_tts_voice_id": str(s.get("voice_tts_voice_id") or ""),
+            "voice_tts_model_id": str(s.get("voice_tts_model_id") or ""),
         },
         "system_prompt": system_prompt,
         "meta": meta,
@@ -639,19 +697,30 @@ def debug_prompt(
 
 # =========================================================
 # ✅ TTS endpoint (QA)
+# - Si provider no viene, usa el guardado en DB (voice_tts_provider)
 # =========================================================
 
 @router.post("/tts")
 async def tts_endpoint(payload: TTSRequest = Body(...)):
     """
     Devuelve audio (para probar desde frontend o Postman).
+    - provider opcional: si no lo mandas, usa ai_settings.voice_tts_provider
     """
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    provider = (payload.provider or "").strip() or None
+    with engine.begin() as conn:
+        s = _get_settings_row(conn)
 
+    # 1) provider override (request) o DB default
+    provider = (payload.provider or "").strip().lower() or str(s.get("voice_tts_provider") or "google").strip().lower()
+
+    if not _is_valid_tts_provider(provider):
+        raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
+
+    # 2) (opcional) si luego implementas override voice_id/model_id por request,
+    # aquí podrías setear env temporales o pasar params a tts_synthesize.
     audio_bytes, mime, filename, meta = await tts_synthesize(text=text, provider=provider)
 
     if not audio_bytes or not bool(meta.get("ok", False)):

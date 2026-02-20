@@ -26,7 +26,7 @@ export default function AIPanel({ apiBase }) {
     reply_delay_ms: 900,
     typing_delay_ms: 450,
 
-    // ✅ VOZ / TTS (NUEVO)
+    // ✅ VOZ / TTS
     voice_enabled: false,
     voice_gender: "neutral", // male|female|neutral
     voice_language: "es-CO", // es-CO, es-MX...
@@ -35,6 +35,11 @@ export default function AIPanel({ apiBase }) {
     voice_max_notes_per_reply: 1, // 0..5
     voice_prefer_voice: false,
     voice_speaking_rate: 1.0, // 0.5..2.0
+
+    // ✅ NUEVO: selector de proveedor TTS + ids (ElevenLabs)
+    voice_tts_provider: "google", // google | elevenlabs | piper
+    voice_tts_voice_id: "", // solo para elevenlabs
+    voice_tts_model_id: "", // solo para elevenlabs
   });
 
   // KB
@@ -50,7 +55,7 @@ export default function AIPanel({ apiBase }) {
   const [qaLoading, setQaLoading] = useState(false);
   const [qaOut, setQaOut] = useState(null);
 
-  // ✅ QA VOZ (stub por ahora; cuando esté el endpoint lo conectamos)
+  // ✅ QA VOZ
   const [ttsText, setTtsText] = useState("");
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsStatus, setTtsStatus] = useState("");
@@ -166,7 +171,7 @@ export default function AIPanel({ apiBase }) {
       reply_delay_ms: clampNum(data.reply_delay_ms ?? 900, 0, 15000, 900),
       typing_delay_ms: clampNum(data.typing_delay_ms ?? 450, 0, 15000, 450),
 
-      // ✅ VOZ / TTS (si backend no lo trae, defaults)
+      // ✅ VOZ / TTS
       voice_enabled: !!(data.voice_enabled ?? false),
       voice_gender: String(data.voice_gender ?? "neutral") || "neutral",
       voice_language: String(data.voice_language ?? "es-CO") || "es-CO",
@@ -175,6 +180,11 @@ export default function AIPanel({ apiBase }) {
       voice_max_notes_per_reply: clampInt(data.voice_max_notes_per_reply ?? 1, 0, 5, 1),
       voice_prefer_voice: !!(data.voice_prefer_voice ?? false),
       voice_speaking_rate: clampNum(data.voice_speaking_rate ?? 1.0, 0.5, 2.0, 1.0),
+
+      // ✅ NUEVO: selector proveedor TTS + ids
+      voice_tts_provider: String(data.voice_tts_provider ?? "google") || "google",
+      voice_tts_voice_id: String(data.voice_tts_voice_id ?? "") || "",
+      voice_tts_model_id: String(data.voice_tts_model_id ?? "") || "",
     };
   };
 
@@ -221,6 +231,11 @@ export default function AIPanel({ apiBase }) {
         voice_max_notes_per_reply: clampInt(draft.voice_max_notes_per_reply, 0, 5, 1),
         voice_prefer_voice: !!draft.voice_prefer_voice,
         voice_speaking_rate: clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0),
+
+        // ✅ NUEVO: selector proveedor TTS + ids
+        voice_tts_provider: String(draft.voice_tts_provider || "google"),
+        voice_tts_voice_id: String(draft.voice_tts_voice_id || ""),
+        voice_tts_model_id: String(draft.voice_tts_model_id || ""),
       };
 
       const r = await fetch(`${API}/api/ai/settings`, {
@@ -350,7 +365,7 @@ export default function AIPanel({ apiBase }) {
     }
   };
 
-  // ✅ TTS TEST: por ahora solo muestra mensaje si el endpoint no existe
+  // ✅ TTS TEST
   const runTTS = async () => {
     const text = (ttsText || "").trim();
     if (!text) {
@@ -358,31 +373,25 @@ export default function AIPanel({ apiBase }) {
       setTimeout(() => setTtsStatus(""), 2500);
       return;
     }
+
     setTtsLoading(true);
     setTtsStatus("");
     setTtsAudioUrl("");
 
     try {
-      // Este endpoint lo crearemos en el siguiente archivo (backend TTS).
-      // Debe devolver audio (ogg/mp3) o JSON con un media_id/url.
       const r = await fetch(`${API}/api/ai/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
-          settings: {
-            voice_gender: draft.voice_gender,
-            voice_language: draft.voice_language,
-            voice_accent: draft.voice_accent,
-            voice_style_prompt: draft.voice_style_prompt,
-            voice_speaking_rate: clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0),
-          },
+          // ✅ usa el selector del panel
+          provider: draft.voice_tts_provider || "google",
+          // (si tu backend luego quiere leer ids de elevenlabs desde settings, no hace falta mandarlos aquí)
         }),
       });
 
       const ct = r.headers.get("content-type") || "";
       if (!r.ok) {
-        // intentamos leer json error
         let msg = "TTS falló";
         try {
           const j = await r.json();
@@ -397,7 +406,6 @@ export default function AIPanel({ apiBase }) {
         setTtsAudioUrl(url);
         setTtsStatus("Audio generado ✅");
       } else {
-        // si devuelve JSON (ej: {media_id, url})
         const j = await r.json();
         if (j?.url) {
           setTtsAudioUrl(j.url);
@@ -467,7 +475,8 @@ export default function AIPanel({ apiBase }) {
   const voicePreview = useMemo(() => {
     const rate = clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0);
     const mx = clampInt(draft.voice_max_notes_per_reply, 0, 5, 1);
-    return `Voz: ${draft.voice_enabled ? "ON" : "OFF"} • ${draft.voice_gender} • ${draft.voice_language} • acento=${draft.voice_accent} • rate=${rate} • max notas=${mx}`;
+    const ttsProv = (draft.voice_tts_provider || "google").toLowerCase();
+    return `Voz: ${draft.voice_enabled ? "ON" : "OFF"} • ${draft.voice_gender} • ${draft.voice_language} • acento=${draft.voice_accent} • rate=${rate} • max notas=${mx} • tts=${ttsProv}`;
   }, [
     draft.voice_enabled,
     draft.voice_gender,
@@ -475,6 +484,7 @@ export default function AIPanel({ apiBase }) {
     draft.voice_accent,
     draft.voice_speaking_rate,
     draft.voice_max_notes_per_reply,
+    draft.voice_tts_provider,
   ]);
 
   if (!API) {
@@ -727,6 +737,46 @@ export default function AIPanel({ apiBase }) {
                 />
               </div>
 
+              {/* ✅ NUEVO: selector proveedor TTS */}
+              <div style={rowStyle}>
+                <label style={labelStyle}>Proveedor TTS</label>
+                <select
+                  value={draft.voice_tts_provider || "google"}
+                  onChange={(e) => setDraft((p) => ({ ...p, voice_tts_provider: e.target.value }))}
+                >
+                  <option value="google">google</option>
+                  <option value="elevenlabs">elevenlabs</option>
+                  <option value="piper">piper</option>
+                </select>
+              </div>
+
+              {/* ✅ NUEVO: ids para ElevenLabs */}
+              {String(draft.voice_tts_provider || "").toLowerCase() === "elevenlabs" && (
+                <>
+                  <div style={rowStyle}>
+                    <label style={labelStyle}>ElevenLabs voice_id</label>
+                    <input
+                      value={draft.voice_tts_voice_id}
+                      onChange={(e) => setDraft((p) => ({ ...p, voice_tts_voice_id: e.target.value }))}
+                      placeholder="Ej: 21m00Tcm4TlvDq8ikWAM"
+                    />
+                  </div>
+
+                  <div style={rowStyle}>
+                    <label style={labelStyle}>ElevenLabs model_id</label>
+                    <input
+                      value={draft.voice_tts_model_id}
+                      onChange={(e) => setDraft((p) => ({ ...p, voice_tts_model_id: e.target.value }))}
+                      placeholder="Ej: eleven_multilingual_v2"
+                    />
+                  </div>
+
+                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+                    Nota: estos IDs quedan guardados en settings; el backend los puede usar al sintetizar.
+                  </div>
+                </>
+              )}
+
               <div style={rowStyle}>
                 <label style={labelStyle}>Género</label>
                 <select
@@ -799,6 +849,11 @@ export default function AIPanel({ apiBase }) {
                     {ttsStatus}
                   </div>
                 )}
+
+                <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                  Proveedor actual: <code>{draft.voice_tts_provider || "google"}</code>
+                </div>
+
                 <textarea
                   value={ttsText}
                   onChange={(e) => setTtsText(e.target.value)}

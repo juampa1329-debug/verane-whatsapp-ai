@@ -189,6 +189,11 @@ def ensure_schema():
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_prefer_voice BOOLEAN"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_speaking_rate DOUBLE PRECISION"""))
 
+        # ✅ TTS provider selector (NUEVO: para selector de proveedor de voz)
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_provider TEXT"""))   # google|elevenlabs|openai|...
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_voice_id TEXT"""))  # ej: ElevenLabs voice_id
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_model_id TEXT"""))  # ej: eleven_multilingual_v2
+
         # ✅ Asegurar defaults si quedaron NULL (fila 1)
         conn.execute(text("""
             UPDATE ai_settings
@@ -201,6 +206,9 @@ def ensure_schema():
                 voice_max_notes_per_reply = COALESCE(voice_max_notes_per_reply, 1),
                 voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
                 voice_speaking_rate = COALESCE(voice_speaking_rate, 1.0)
+                voice_tts_provider = COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google'),
+                voice_tts_voice_id = COALESCE(NULLIF(TRIM(voice_tts_voice_id), ''), ''),
+                voice_tts_model_id = COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), '')          
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
@@ -220,14 +228,16 @@ def ensure_schema():
                 max_tokens, temperature,
                 fallback_provider, fallback_model,
                 timeout_sec, max_retries,
-                reply_chunk_chars, reply_delay_ms, typing_delay_ms
+                reply_chunk_chars, reply_delay_ms, typing_delay_ms,
+                voice_tts_provider, voice_tts_voice_id, voice_tts_model_id          
             )
             SELECT
                 TRUE, 'google', 'gemma-3-4b-it', '',
                 512, 0.7,
                 'groq', 'llama-3.1-8b-instant',
                 25, 1,
-                480, 900, 450
+                480, 900, 450,
+                'google', '', ''          
             WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
         """))
 
@@ -291,7 +301,6 @@ class TakeoverPayload(BaseModel):
 # =========================================================
 
 def _new_trace_id() -> str:
-    # trace simple para logs (no depende de librerías)
     try:
         import uuid
         return uuid.uuid4().hex[:10]
@@ -300,7 +309,6 @@ def _new_trace_id() -> str:
 
 
 def _log(trace_id: str, event: str, **kv):
-    # logs simples (stdout) para depurar en contenedor
     try:
         payload = {"trace": trace_id, "event": event, **kv}
         print("[INGEST]", json.dumps(payload, ensure_ascii=False))
@@ -358,14 +366,12 @@ def save_message(
         "permalink": permalink,
         "created_at": datetime.utcnow(),
 
-        # ✅ si es OUT, estado inicial visual "sent"
         "wa_status": "sent" if direction == "out" else None,
         "wa_ts_sent": datetime.utcnow() if direction == "out" else None,
     })
 
     message_id = int(r.scalar())
 
-    # subir conversación al inbox
     conn.execute(text("""
         INSERT INTO conversations (phone, updated_at)
         VALUES (:phone, :updated_at)
@@ -631,28 +637,80 @@ def _get_voice_settings() -> dict:
     except Exception:
         return defaults
 
+def _get_tts_provider_settings() -> dict:
+    defaults = {
+        "voice_tts_provider": "google",
+        "voice_tts_voice_id": "",
+        "voice_tts_model_id": "",
+    }
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google') AS voice_tts_provider,
+                    COALESCE(NULLIF(TRIM(voice_tts_voice_id), ''), '') AS voice_tts_voice_id,
+                    COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), '') AS voice_tts_model_id
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+
+        if not r:
+            return defaults
+
+        d = dict(r)
+        d["voice_tts_provider"] = (d.get("voice_tts_provider") or "google").strip().lower()
+        d["voice_tts_voice_id"] = (d.get("voice_tts_voice_id") or "").strip()
+        d["voice_tts_model_id"] = (d.get("voice_tts_model_id") or "").strip()
+        return d
+    except Exception:
+        return defaults    
+
 
 async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     text_to_say = (text_to_say or "").strip()
     if not text_to_say:
         return {"sent": False, "reason": "empty text"}
 
-    # 1) generar audio con TTS
-    audio_bytes, mime, filename, meta = await tts_synthesize(text=text_to_say, provider=None)
-    if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
-        return {"sent": False, "reason": "tts_failed", "meta": meta}
+    # ✅ leer selector TTS desde DB
+    tts_cfg = _get_tts_provider_settings()
+    tts_provider = (tts_cfg.get("voice_tts_provider") or "google").strip().lower()
+    tts_voice_id = (tts_cfg.get("voice_tts_voice_id") or "").strip()
+    tts_model_id = (tts_cfg.get("voice_tts_model_id") or "").strip()
 
-    # 2) subir a WhatsApp (obtener media_id)
+    # ✅ preparar kwargs opcionales (solo si aplica)
+    tts_kwargs = {"text": text_to_say, "provider": tts_provider}
+
+    # Si usas ElevenLabs u otro proveedor con IDs, pásalos
+    # (si tu tts_synthesize no los soporta todavía, abajo hay fallback por TypeError)
+    if tts_voice_id:
+        tts_kwargs["voice_id"] = tts_voice_id
+    if tts_model_id:
+        tts_kwargs["model_id"] = tts_model_id
+
+    try:
+        audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
+    except TypeError:
+        # ✅ compatibilidad: si tts_synthesize aún no acepta voice_id/model_id
+        audio_bytes, mime, filename, meta = await tts_synthesize(text=text_to_say, provider=tts_provider)
+
+    if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
+        return {
+            "sent": False,
+            "reason": "tts_failed",
+            "meta": meta,
+            "tts_provider": tts_provider,
+        }
+
     media_id = await upload_whatsapp_media(audio_bytes, mime)
 
-    # 3) guardar en DB como mensaje OUT de tipo audio
     with engine.begin() as conn:
         local_out_id = save_message(
             conn,
             phone=phone,
             direction="out",
             msg_type="audio",
-            text_msg="",             # whatsapp audio no lleva caption
+            text_msg="",
             media_id=media_id,
             mime_type=mime,
             file_name=filename,
@@ -660,17 +718,15 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
             duration_sec=None,
         )
 
-    # 4) enviar audio por WhatsApp (media_id)
     wa_resp = await send_whatsapp_media_id(
         to_phone=phone,
         media_type="audio",
         media_id=media_id,
-        caption=""   # para audio normalmente se ignora
+        caption=""
     )
 
     wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
 
-    # 5) actualizar estado del envío
     with engine.begin() as conn:
         if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
             set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
@@ -681,7 +737,14 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
                   or "WhatsApp send failed"
             set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
 
-    return {"sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp, "media_id": media_id}
+    return {
+        "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")),
+        "wa": wa_resp,
+        "media_id": media_id,
+        "tts_provider": tts_provider,
+        "tts_voice_id": tts_voice_id,
+        "tts_model_id": tts_model_id,
+    }
 
 
 # =========================================================
@@ -725,7 +788,7 @@ async def download_whatsapp_media_bytes(media_id: str) -> Tuple[bytes, str]:
 
 
 # =========================================================
-# ✅ GEMINI helpers (multimodal)
+# ✅ GEMINI helpers (multimodal) - INLINE ROBUSTO
 # =========================================================
 
 def _get_gemini_key() -> str:
@@ -736,8 +799,12 @@ def _clean_mime(m: str) -> str:
     return (m or "application/octet-stream").split(";")[0].strip().lower()
 
 
+def _default_gemini_mm_model() -> str:
+    # Modelo para multimodal (audio + imagen). Puedes poner GEMINI_MM_MODEL=gemini-2.0-flash o gemini-2.5-flash si aplica.
+    return (os.getenv("GEMINI_MM_MODEL", "").strip() or "gemini-2.0-flash").strip()
+
+
 def _is_effectively_empty_text(text_value: str) -> bool:
-    # Incluye placeholders típicos (WhatsApp/tu backend)
     t = (text_value or "").strip().lower()
     if not t:
         return True
@@ -752,152 +819,62 @@ def _is_effectively_empty_text(text_value: str) -> bool:
     if t in placeholders or t2 in placeholders:
         return True
 
-    # Cualquier cosa tipo [lo que sea]
     if re.fullmatch(r"\[[a-záéíóúñ0-9\s]+\]", t2) is not None:
         return True
 
     return False
 
 
-async def _gemini_upload_bytes(media_bytes: bytes, mime_type: str) -> Tuple[Optional[str], dict]:
+async def _gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: str) -> tuple[str, dict]:
     """
-    Sube bytes a Gemini Files API y devuelve file_uri.
-    Recomendado para AUDIO.
-    """
-    api_key = _get_gemini_key()
-    if not api_key:
-        return None, {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
-
-    mime_clean = _clean_mime(mime_type)
-    url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
-
-    headers = {
-        "X-Goog-Upload-Protocol": "raw",
-        "X-Goog-Upload-Header-Content-Type": mime_clean,
-        "Content-Type": "application/octet-stream",
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, content=media_bytes, headers=headers)
-
-    if r.status_code >= 400:
-        return None, {
-            "ok": False,
-            "stage": "upload",
-            "status": r.status_code,
-            "body": r.text[:900],
-            "mime_type": mime_clean,
-        }
-
-    j = r.json() or {}
-    file_obj = j.get("file") or {}
-    # uri suele existir; name a veces viene tipo "files/xxx"
-    file_uri = file_obj.get("uri") or file_obj.get("name")
-
-    return (file_uri, {"ok": True, "stage": "upload", "mime_type": mime_clean, "file_uri": str(file_uri)[:120]})
-
-
-async def _gemini_generate_with_file_uri(prompt: str, file_uri: str, mime_type: str, model: str) -> Tuple[str, dict]:
-    """
-    Llama generateContent con file_data (audio).
+    Gemini generateContent con inline_data para AUDIO e IMAGEN (más estable que Files API).
+    Retorna: (texto_extraido, meta)
     """
     api_key = _get_gemini_key()
     if not api_key:
         return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
 
+    model = _default_gemini_mm_model()
     mime_clean = _clean_mime(mime_type)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-
-    body = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": prompt},
-                {"file_data": {"mime_type": mime_clean, "file_uri": file_uri}},
-            ],
-        }],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, json=body)
-
-    if r.status_code >= 400:
-        return "", {
-            "ok": False,
-            "stage": "generate",
-            "status": r.status_code,
-            "body": r.text[:900],
-            "model": model,
-            "mime_type": mime_clean,
-            "file_uri": str(file_uri)[:120],
-        }
-
-    j = r.json() or {}
-    out_text = ""
-    try:
-        cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
-        texts = []
-        for p in cand_parts:
-            tx = (p or {}).get("text")
-            if tx:
-                texts.append(str(tx))
-        out_text = "\n".join(texts).strip()
-    except Exception:
-        out_text = ""
-
-    return out_text, {"ok": True, "stage": "generate", "model": model, "mime_type": mime_clean}
-
-
-async def _gemini_generate_text_from_media(kind: str, media_bytes: bytes, mime_type: str) -> Tuple[str, dict]:
-    """
-    Fallback inline_data (sirve para imagen y a veces para audio corto).
-    - audio: transcripción
-    - image: descripción + texto visible
-    """
-    api_key = _get_gemini_key()
-    if not api_key:
-        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
-
-    # Modelo por defecto para inline (rápido)
-    model = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
-
-    import base64
-    b64 = base64.b64encode(media_bytes).decode("utf-8")
 
     if kind == "audio":
         prompt = (
-            "Transcribe exactamente el audio en español (si aplica). "
-            "No inventes. Devuelve SOLO el texto transcrito."
+            "Transcribe exactamente el audio en español. "
+            "No inventes nada. "
+            "Devuelve SOLO el texto transcrito, sin explicaciones."
         )
     else:
         prompt = (
             "Describe la imagen con detalle útil para un asesor comercial. "
-            "Si hay texto visible, extráelo. "
-            "Devuelve SOLO: (1) Descripción corta. (2) Texto visible si existe."
+            "Si hay texto visible (nombre del producto, etiqueta, precio, caja), extráelo. "
+            "Devuelve SOLO: (1) descripción corta. (2) texto visible si existe."
         )
 
-    mime_clean = _clean_mime(mime_type)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    import base64
+    b64 = base64.b64encode(media_bytes).decode("utf-8")
 
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     body = {
         "contents": [{
             "role": "user",
             "parts": [
                 {"text": prompt},
                 {"inline_data": {"mime_type": mime_clean, "data": b64}},
-            ]
+            ],
         }],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512}
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
     }
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, json=body)
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, json=body)
+    except Exception as e:
+        return "", {"ok": False, "stage": "http", "error": str(e)[:900], "model": model, "mime_type": mime_clean}
 
     if r.status_code >= 400:
         return "", {
             "ok": False,
-            "stage": "inline_generate",
+            "stage": "generate",
             "status": r.status_code,
             "body": r.text[:900],
             "model": model,
@@ -917,53 +894,7 @@ async def _gemini_generate_text_from_media(kind: str, media_bytes: bytes, mime_t
     except Exception:
         out_text = ""
 
-    return out_text, {"ok": True, "stage": "inline_generate", "model": model, "mime_type": mime_clean}
-
-
-async def _gemini_generate_from_image_inline(prompt: str, media_bytes: bytes, mime_type: str, model: str) -> Tuple[str, dict]:
-    """
-    Imagen con inline_data (ok). Limpia mime_type.
-    """
-    api_key = _get_gemini_key()
-    if not api_key:
-        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
-
-    import base64
-    b64 = base64.b64encode(media_bytes).decode("utf-8")
-    mime_clean = _clean_mime(mime_type)
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    body = {
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": mime_clean, "data": b64}},
-            ],
-        }],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, json=body)
-
-    if r.status_code >= 400:
-        return "", {"ok": False, "status": r.status_code, "body": r.text[:900], "model": model, "mime_type": mime_clean}
-
-    j = r.json() or {}
-    out_text = ""
-    try:
-        cand_parts = (((j.get("candidates") or [])[0] or {}).get("content") or {}).get("parts") or []
-        texts = []
-        for p in cand_parts:
-            tx = (p or {}).get("text")
-            if tx:
-                texts.append(str(tx))
-        out_text = "\n".join(texts).strip()
-    except Exception:
-        out_text = ""
-
-    return out_text, {"ok": True, "model": model, "mime_type": mime_clean}
+    return out_text, {"ok": True, "stage": "generate", "model": model, "mime_type": mime_clean}
 
 
 # =========================================================
@@ -1069,7 +1000,7 @@ def _clear_wc_options(phone: str) -> None:
 
 
 # =========================================================
-# WOOCOMMERCE ENDPOINTS (A1)
+# WOOCOMMERCE ENDPOINTS
 # =========================================================
 
 @app.get("/api/wc/products")
@@ -1108,7 +1039,6 @@ async def _wc_send_product_internal(phone: str, product_id: int, custom_caption:
     img_bytes, content_type = await download_image_bytes(featured_image)
     img_bytes, mime_type = ensure_whatsapp_image_compat(img_bytes, content_type, featured_image)
 
-    from app.routes.whatsapp import upload_whatsapp_media
     media_id = await upload_whatsapp_media(img_bytes, mime_type)
 
     caption = build_caption(
@@ -1173,7 +1103,7 @@ async def send_wc_product(payload: dict):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-19-multimodal-fix-1"}
+    return {"ok": True, "build": "2026-02-19-multimodal-inline-fix-1"}
 
 
 @app.post("/api/media/upload")
@@ -1189,7 +1119,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     mime = (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
     filename = file.filename or "upload"
 
-    # ✅ Audio webm -> ogg/opus
     if kind == "audio" and mime == "audio/webm":
         with tempfile.TemporaryDirectory() as tmp:
             in_path = os.path.join(tmp, "in.webm")
@@ -1210,7 +1139,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
         mime = "audio/ogg"
         filename = "audio.ogg"
 
-    from app.routes.whatsapp import upload_whatsapp_media
     media_id = await upload_whatsapp_media(content, mime)
 
     return {"ok": True, "media_id": media_id, "mime_type": mime, "filename": filename, "kind": kind}
@@ -1521,135 +1449,63 @@ async def ingest(msg: IngestMessage):
             if _is_effectively_empty_text(user_text):
                 user_text = ""
 
-            extracted = ""
-            mm_meta: dict = {}
-
-            # -----------------------------
-            # ✅ Multimodal robusto (audio/imagen): si NO hay texto, intentamos extraerlo
-            # -----------------------------
+            # ✅ Multimodal: si NO hay texto y llega audio/imagen, extraer con Gemini inline
             if (not user_text) and msg_type in ("audio", "image") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
 
-                try:
-                    stage_meta: dict = {
-                        "ok": False,
-                        "trace_id": trace_id,
-                        "msg_type": msg_type,
-                        "media_id": msg.media_id,
-                        "mime_in": mime_in,
-                        "stages": {}
-                    }
+                stage_meta: dict = {
+                    "ok": False,
+                    "trace_id": trace_id,
+                    "msg_type": msg_type,
+                    "media_id": msg.media_id,
+                    "mime_in": mime_in,
+                    "stages": {}
+                }
 
+                try:
                     media_bytes, real_mime = await download_whatsapp_media_bytes(msg.media_id)
                     real_mime = _clean_mime(real_mime or msg.mime_type or "application/octet-stream")
+
                     stage_meta["stages"]["download"] = {
-                        "ok": True,
+                        "ok": bool(media_bytes),
                         "mime": real_mime,
                         "bytes_len": int(len(media_bytes) if media_bytes else 0),
                     }
-                    _log(trace_id, "AFTER_DOWNLOAD", bytes_len=len(media_bytes) if media_bytes else 0, mime=real_mime)
 
-                    if not media_bytes:
-                        stage_meta["stages"]["download"]["ok"] = False
-                        stage_meta["stages"]["download"]["error"] = "empty_bytes"
-
+                    extracted = ""
+                    if media_bytes:
+                        extracted, gen_meta = await _gemini_generate_text_inline(
+                            kind=msg_type,
+                            media_bytes=media_bytes,
+                            mime_type=real_mime,
+                        )
+                        stage_meta["stages"]["gemini"] = gen_meta or {"ok": False, "reason": "no_meta"}
+                        extracted = (extracted or "").strip()
                     else:
-                        model_audio = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
-                        model_vision = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
+                        stage_meta["stages"]["gemini"] = {"ok": False, "reason": "no_media_bytes"}
 
-                        if msg_type == "audio":
-                            prompt = (
-                                "Transcribe exactamente el audio en español (si aplica). "
-                                "No inventes. Devuelve SOLO el texto transcrito."
-                            )
-
-                            # 1) preferido: upload + file_uri
-                            file_uri, up_meta = await _gemini_upload_bytes(media_bytes, real_mime or "audio/ogg")
-                            stage_meta["stages"]["upload"] = up_meta or {"ok": False, "reason": "upload_no_meta"}
-
-                            if file_uri:
-                                extracted, gen_meta = await _gemini_generate_with_file_uri(
-                                    prompt=prompt,
-                                    file_uri=file_uri,
-                                    mime_type=real_mime or "audio/ogg",
-                                    model=model_audio,
-                                )
-                                stage_meta["stages"]["generate"] = gen_meta or {"ok": False, "reason": "generate_no_meta"}
-                            else:
-                                extracted = ""
-                                stage_meta["stages"]["generate"] = {"ok": False, "reason": "no_file_uri_after_upload"}
-
-                            # 2) fallback inline si quedó vacío
-                            if not (extracted or "").strip():
-                                extracted2, meta2 = await _gemini_generate_text_from_media(
-                                    kind="audio",
-                                    media_bytes=media_bytes,
-                                    mime_type=real_mime or "audio/ogg",
-                                )
-                                stage_meta["stages"]["fallback_inline"] = meta2 or {"ok": False}
-                                if (extracted2 or "").strip():
-                                    extracted = extracted2
-
-                        else:
-                            prompt = (
-                                "Describe la imagen con detalle útil para un asesor comercial de perfumería. "
-                                "Si hay texto visible (etiquetas, cajas, nombres), extráelo. "
-                                "Devuelve SOLO: (1) Descripción corta. (2) Texto visible si existe."
-                            )
-
-                            extracted, gen_meta = await _gemini_generate_from_image_inline(
-                                prompt=prompt,
-                                media_bytes=media_bytes,
-                                mime_type=real_mime or "image/jpeg",
-                                model=model_vision,
-                            )
-                            stage_meta["stages"]["generate"] = gen_meta or {"ok": False, "reason": "generate_no_meta"}
-
-                            # fallback inline (mismo método pero por si el otro falla)
-                            if not (extracted or "").strip():
-                                extracted2, meta2 = await _gemini_generate_text_from_media(
-                                    kind="image",
-                                    media_bytes=media_bytes,
-                                    mime_type=real_mime or "image/jpeg",
-                                )
-                                stage_meta["stages"]["fallback_inline"] = meta2 or {"ok": False}
-                                if (extracted2 or "").strip():
-                                    extracted = extracted2
-
-                    extracted = (extracted or "").strip()
                     stage_meta["ok"] = bool(extracted)
                     stage_meta["extracted_len"] = int(len(extracted))
 
-                    _log(trace_id, "AFTER_GEMINI", ok=bool(extracted), extracted_len=len(extracted))
+                    _log(trace_id, "AFTER_MULTIMODAL", ok=stage_meta["ok"], extracted_len=stage_meta["extracted_len"])
 
-                    # Guardar SIEMPRE extracted + ai_meta (aunque falle)
                     with engine.begin() as conn:
-                        set_extracted_text(
-                            conn,
-                            local_id,
-                            extracted or "",
-                            ai_meta={"multimodal": stage_meta}
-                        )
+                        set_extracted_text(conn, local_id, extracted or "", ai_meta={"multimodal": stage_meta})
 
                     if extracted:
                         user_text = extracted
 
                 except Exception as e:
+                    stage_meta["stages"]["exception"] = {"ok": False, "error": str(e)[:900]}
                     _log(trace_id, "MULTIMODAL_EXCEPTION", error=str(e)[:300])
                     with engine.begin() as conn:
-                        set_extracted_text(
-                            conn,
-                            local_id,
-                            "",
-                            ai_meta={"multimodal": {"ok": False, "trace_id": trace_id, "error": str(e)[:900]}}
-                        )
+                        set_extracted_text(conn, local_id, "", ai_meta={"multimodal": stage_meta})
                     user_text = ""
 
-            # Re-chequeo placeholder
             if _is_effectively_empty_text(user_text):
                 user_text = ""
 
-            # ✅ Si aún no hay texto, RESPONDE IGUAL (antes se quedaba mudo)
+            # ✅ Si aún no hay texto, responde con fallback (no se queda mudo)
             if not user_text:
                 fallback_text = (
                     "📩 Recibí tu audio/imagen, pero no pude leerlo bien.\n\n"
@@ -1699,10 +1555,11 @@ async def ingest(msg: IngestMessage):
                     }
 
             # =========================================================
-            # ✅ Flujo IA normal
+            # ✅ Flujo IA normal (texto)
             # =========================================================
             meta = build_ai_meta(msg.phone, user_text)
 
+            # Nota: el modelo de chat (ej gemini-2.5-flash) normalmente se configura en ai_settings o en app.ai.engine
             ai_result = await process_message(
                 phone=msg.phone,
                 text=user_text,

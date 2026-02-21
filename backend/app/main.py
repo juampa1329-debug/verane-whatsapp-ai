@@ -639,6 +639,20 @@ def _get_voice_settings() -> dict:
     except Exception:
         return defaults
 
+def _norm_tts_provider(p: str) -> str:
+    raw = (p or "").strip().lower()
+    raw = raw.replace("_", "").replace("-", "").replace(" ", "")
+    if raw in ("", "default", "auto"):
+        return "google"
+    if raw in ("elevenlabs", "11labs", "eleven", "xi"):
+        return "elevenlabs"
+    if raw in ("google", "gcp", "googletts", "cloudtts", "texttospeech"):
+        return "google"
+    if raw in ("piper", "pipertts"):
+        return "piper"
+    return raw
+
+
 def _get_tts_provider_settings() -> dict:
     defaults = {
         "voice_tts_provider": "google",
@@ -661,7 +675,7 @@ def _get_tts_provider_settings() -> dict:
             return defaults
 
         d = dict(r)
-        d["voice_tts_provider"] = (d.get("voice_tts_provider") or "google").strip().lower()
+        d["voice_tts_provider"] = _norm_tts_provider(d.get("voice_tts_provider") or "google")
         d["voice_tts_voice_id"] = (d.get("voice_tts_voice_id") or "").strip()
         d["voice_tts_model_id"] = (d.get("voice_tts_model_id") or "").strip()
         return d
@@ -680,6 +694,7 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     tts_voice_id = (tts_cfg.get("voice_tts_voice_id") or "").strip()
     tts_model_id = (tts_cfg.get("voice_tts_model_id") or "").strip()
 
+    _log(_new_trace_id(), "TTS_PROVIDER_SELECTED", provider=tts_provider, voice_id=tts_voice_id, model_id=tts_model_id)
     # Fallback ENV para ElevenLabs si en DB está vacío
     if tts_provider == "elevenlabs" and not tts_voice_id:
         tts_voice_id = (os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
@@ -1578,10 +1593,24 @@ async def ingest(msg: IngestMessage):
                     "fallback_replied": True,
                     "wa_last": send_result.get("last_wa") or {},
                 }
+            # ✅ Si el mensaje original NO era texto (era audio/imagen/documento) y el bot quedó
+            # esperando selección wc_await:*, limpiamos el estado para que no se quede "pegado".
+            if msg_type != "text":
+                st_now = _get_ai_state(msg.phone) or ""
+                if st_now.startswith("wc_await:"):
+                    _clear_ai_state(msg.phone)
 
             # =========================================================
             # WooCommerce assistant
             # =========================================================
+            # ✅ Anti-wc_await pegado:
+            # Si el mensaje original NO era texto (audio/imagen/documento) y quedamos con state wc_await,
+            # lo limpiamos para evitar que un "await" viejo secuestre la conversación.
+            if msg_type != "text":
+                st_now = _get_ai_state(msg.phone) or ""
+                if st_now.startswith("wc_await:"):
+                    _clear_ai_state(msg.phone)
+                    
             if wc_enabled() and user_text:
                 async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
                     wa = await _wc_send_product_internal(phone=phone, product_id=product_id, custom_caption=caption)

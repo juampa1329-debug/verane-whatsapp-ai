@@ -84,11 +84,10 @@ def _build_voice_style_block(s: Dict[str, Any]) -> str:
     speaking_rate = max(0.6, min(1.4, speaking_rate))
 
     max_voice_notes = _clamp_int(s.get("voice_max_notes_per_reply", 1), 0, 5, 1)
-    prefer_voice = _truthy(s.get("voice_prefer_voice", False))  # si quieres priorizar nota de voz (decisión final en main.py)
+    prefer_voice = _truthy(s.get("voice_prefer_voice", False))
 
     style_prompt = (s.get("voice_style_prompt") or "").strip()
 
-    # Bloque que ayuda a que el texto salga “hablable”
     lines = [
         "VOICE_STYLE (guía para que el texto suene como nota de voz):",
         f"- Idioma: {lang}",
@@ -100,7 +99,6 @@ def _build_voice_style_block(s: Dict[str, Any]) -> str:
         "- No uses lenguaje robótico. No repitas el mensaje del usuario.",
     ]
 
-    # Este detalle le sirve a la IA para acortar/ordenar mejor, aunque el envío real lo decide main.py
     lines.append(f"- Máximo sugerido de segmentos de voz por respuesta: {max_voice_notes}")
     lines.append(f"- Preferir voz sobre texto: {'sí' if prefer_voice else 'no'}")
 
@@ -121,6 +119,23 @@ def _merge_system_prompt(system_prompt: str, voice_block: str) -> str:
     return (sys + "\n\n" + vb).strip()
 
 
+def _norm_tts_provider(p: Any) -> str:
+    """
+    Normaliza provider tts desde DB para que NO se quede en google por mismatch.
+    """
+    raw = str(p or "").strip().lower()
+    raw = raw.replace("_", "").replace("-", "").replace(" ", "")
+    if raw in ("", "default", "auto"):
+        return ""
+    if raw in ("elevenlabs", "11labs", "eleven", "xi"):
+        return "elevenlabs"
+    if raw in ("google", "gcp", "googletts", "cloudtts", "texttospeech"):
+        return "google"
+    if raw in ("piper", "pipertts"):
+        return "piper"
+    return raw
+
+
 # =========================================================
 # Settings (engine reads voice settings; TTS happens elsewhere)
 # =========================================================
@@ -130,11 +145,9 @@ def _get_settings() -> Dict[str, Any]:
     Lee settings desde DB.
 
     - engine devuelve reply_text + voice settings (para que main.py decida si hace TTS).
-    - chunking/delays WhatsApp se hace en main.py.
     """
     try:
         with db_engine.begin() as conn:
-            # OJO: usamos COALESCE y defaults para que NO rompa si aún no creaste columnas voice_*
             r = conn.execute(text("""
                 SELECT
                     is_enabled,
@@ -148,8 +161,7 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(timeout_sec, 25) AS timeout_sec,
                     COALESCE(max_retries, 1) AS max_retries,
 
-                    -- ✅ VOICE SETTINGS (si la columna no existe todavía, esta query fallaría)
-                    -- Para evitarlo, te recomiendo crear estas columnas en ensure_schema() antes.
+                    -- ✅ VOICE SETTINGS
                     COALESCE(voice_enabled, FALSE) AS voice_enabled,
                     COALESCE(voice_gender, 'neutral') AS voice_gender,
                     COALESCE(voice_language, 'es-CO') AS voice_language,
@@ -157,7 +169,13 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(voice_style_prompt, '') AS voice_style_prompt,
                     COALESCE(voice_max_notes_per_reply, 1) AS voice_max_notes_per_reply,
                     COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
-                    COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate
+                    COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate,
+
+                    -- ✅ TTS ROUTER SETTINGS (ESTO ARREGLA ELEVENLABS PEGADO EN GOOGLE)
+                    COALESCE(voice_tts_provider, 'google') AS voice_tts_provider,
+                    COALESCE(voice_tts_voice_id, '') AS voice_tts_voice_id,
+                    COALESCE(voice_tts_model_id, '') AS voice_tts_model_id
+
                 FROM ai_settings
                 ORDER BY id ASC
                 LIMIT 1
@@ -178,7 +196,6 @@ def _get_settings() -> Dict[str, Any]:
             "timeout_sec": 25,
             "max_retries": 1,
 
-            # ✅ defaults de voz
             "voice_enabled": False,
             "voice_gender": "neutral",
             "voice_language": "es-CO",
@@ -187,6 +204,11 @@ def _get_settings() -> Dict[str, Any]:
             "voice_max_notes_per_reply": 1,
             "voice_prefer_voice": False,
             "voice_speaking_rate": 1.0,
+
+            # ✅ defaults TTS
+            "voice_tts_provider": "google",
+            "voice_tts_voice_id": "",
+            "voice_tts_model_id": "",
         }
 
     d = dict(r)
@@ -215,6 +237,11 @@ def _get_settings() -> Dict[str, Any]:
     except Exception:
         d["voice_speaking_rate"] = 1.0
     d["voice_speaking_rate"] = max(0.6, min(1.4, float(d["voice_speaking_rate"])))
+
+    # ✅ tts normalize
+    d["voice_tts_provider"] = _norm_tts_provider(d.get("voice_tts_provider") or "google") or "google"
+    d["voice_tts_voice_id"] = (d.get("voice_tts_voice_id") or "").strip()
+    d["voice_tts_model_id"] = (d.get("voice_tts_model_id") or "").strip()
 
     return d
 
@@ -377,9 +404,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "reply_chunks": [],
             "used_fallback": False,
             "error": "AI disabled",
-            "voice": {
-                "enabled": bool(s.get("voice_enabled", False)),
-            },
+            "voice": {"enabled": bool(s.get("voice_enabled", False))},
         }
 
     meta = meta or {}
@@ -391,7 +416,6 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         if kb_ctx:
             meta["context"] = kb_ctx
 
-    # ✅ Inject voice style into system prompt
     voice_block = _build_voice_style_block(s)
     merged_system = _merge_system_prompt(str(s.get("system_prompt") or ""), voice_block)
 
@@ -415,6 +439,24 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
         timeout_sec=timeout_sec,
         max_retries=max_retries,
     )
+
+    def _voice_payload() -> Dict[str, Any]:
+        return {
+            "enabled": bool(s.get("voice_enabled", False)),
+            "gender": s.get("voice_gender", "neutral"),
+            "language": s.get("voice_language", "es-CO"),
+            "accent": s.get("voice_accent", "colombiano"),
+            "style_prompt": s.get("voice_style_prompt", ""),
+            "max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
+            "prefer_voice": bool(s.get("voice_prefer_voice", False)),
+            "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
+
+            # ✅ IMPORTANTE: esto es lo que usará main.py para tts_synthesize(...)
+            "tts_provider": s.get("voice_tts_provider", "google"),
+            "tts_voice_id": s.get("voice_tts_voice_id", ""),
+            "tts_model_id": s.get("voice_tts_model_id", ""),
+        }
+
     if ok and reply:
         return {
             "ok": True,
@@ -424,17 +466,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "reply_chunks": [],
             "used_fallback": False,
             "error": None,
-            # ✅ devuelvo voice settings para que main.py decida si manda nota de voz
-            "voice": {
-                "enabled": bool(s.get("voice_enabled", False)),
-                "gender": s.get("voice_gender", "neutral"),
-                "language": s.get("voice_language", "es-CO"),
-                "accent": s.get("voice_accent", "colombiano"),
-                "style_prompt": s.get("voice_style_prompt", ""),
-                "max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
-                "prefer_voice": bool(s.get("voice_prefer_voice", False)),
-                "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
-            },
+            "voice": _voice_payload(),
         }
 
     fb_provider = (s.get("fallback_provider") or "").strip().lower()
@@ -459,16 +491,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
                 "reply_chunks": [],
                 "used_fallback": True,
                 "error": None,
-                "voice": {
-                    "enabled": bool(s.get("voice_enabled", False)),
-                    "gender": s.get("voice_gender", "neutral"),
-                    "language": s.get("voice_language", "es-CO"),
-                    "accent": s.get("voice_accent", "colombiano"),
-                    "style_prompt": s.get("voice_style_prompt", ""),
-                    "max_notes_per_reply": int(s.get("voice_max_notes_per_reply") or 1),
-                    "prefer_voice": bool(s.get("voice_prefer_voice", False)),
-                    "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
-                },
+                "voice": _voice_payload(),
             }
 
         return {

@@ -3,6 +3,7 @@ import json
 import asyncio
 import httpx
 import re
+import base64
 from datetime import datetime
 from typing import Optional, Tuple
 
@@ -23,9 +24,13 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
-# Debug: si quieres imprimir RAW completo del webhook, activa:
-# export WA_DEBUG_RAW=true
 WA_DEBUG_RAW = os.getenv("WA_DEBUG_RAW", "false").lower() == "true"
+
+# ✅ Google multimodal (barato/free-tier según uso)
+GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "").strip()
+
+# Speech settings (puedes ajustar si hace falta)
+GOOGLE_STT_LANGUAGE = os.getenv("GOOGLE_STT_LANGUAGE", "es-CO").strip() or "es-CO"
 
 
 # =========================================================
@@ -230,7 +235,6 @@ async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
     url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
 
-    # limpiar mime
     mt = (mime_type or "application/octet-stream").split(";")[0].strip().lower()
 
     files = {"file": ("upload", file_bytes, mt)}
@@ -320,6 +324,125 @@ async def download_whatsapp_media_bytes(media_id: str) -> tuple[bytes, str]:
         raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text[:900]}")
 
     return (r_bin.content or b""), ct
+
+
+# =========================================================
+# ✅ Google Multimodal helpers (Vision OCR + Speech STT)
+# =========================================================
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data or b"").decode("utf-8")
+
+
+async def google_vision_ocr_and_caption(image_bytes: bytes) -> dict:
+    """
+    Returns {"text": "...", "labels": ["..."], "ok": bool}
+    """
+    if not GOOGLE_CLOUD_API_KEY:
+        return {"ok": False, "text": "", "labels": [], "error": "GOOGLE_CLOUD_API_KEY not set"}
+
+    url = f"https://vision.googleapis.com/v1/images:annotate?key={GOOGLE_CLOUD_API_KEY}"
+
+    req = {
+        "requests": [
+            {
+                "image": {"content": _b64(image_bytes)},
+                "features": [
+                    {"type": "TEXT_DETECTION", "maxResults": 5},
+                    {"type": "LABEL_DETECTION", "maxResults": 8},
+                ],
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient(timeout=35) as client:
+        r = await client.post(url, json=req)
+
+    if r.status_code >= 400:
+        return {"ok": False, "text": "", "labels": [], "error": f"vision_http_{r.status_code}: {r.text[:300]}"}
+
+    j = r.json() or {}
+    resp0 = ((j.get("responses") or [None])[0] or {})
+
+    ocr_text = ""
+    try:
+        ann = resp0.get("fullTextAnnotation") or {}
+        ocr_text = (ann.get("text") or "").strip()
+    except Exception:
+        ocr_text = ""
+
+    labels: list[str] = []
+    try:
+        for lb in (resp0.get("labelAnnotations") or []):
+            desc = (lb or {}).get("description")
+            if desc:
+                labels.append(str(desc))
+    except Exception:
+        labels = []
+
+    return {"ok": True, "text": ocr_text, "labels": labels}
+
+
+async def google_speech_to_text(audio_bytes: bytes, mime_type: str) -> dict:
+    """
+    Returns {"ok": bool, "text": "..."}
+    Nota: Google Speech v1 suele funcionar con API key en REST. Si tu proyecto requiere OAuth,
+    verás error: en ese caso me pasas el error y lo ajusto al método con service account.
+    """
+    if not GOOGLE_CLOUD_API_KEY:
+        return {"ok": False, "text": "", "error": "GOOGLE_CLOUD_API_KEY not set"}
+
+    ct = (mime_type or "").lower().strip()
+
+    # WhatsApp suele ser audio/ogg; codecs opusc
+    encoding = "OGG_OPUS"
+    sample_rate = None
+
+    if "wav" in ct:
+        encoding = "LINEAR16"
+    elif "mpeg" in ct or "mp3" in ct:
+        encoding = "MP3"
+    elif "amr" in ct:
+        encoding = "AMR"
+    elif "ogg" in ct or "opus" in ct:
+        encoding = "OGG_OPUS"
+
+    url = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}"
+
+    config = {
+        "languageCode": GOOGLE_STT_LANGUAGE,
+        "encoding": encoding,
+        "enableAutomaticPunctuation": True,
+        "model": "latest_short",
+    }
+    if sample_rate:
+        config["sampleRateHertz"] = sample_rate
+
+    req = {
+        "config": config,
+        "audio": {"content": _b64(audio_bytes)},
+    }
+
+    async with httpx.AsyncClient(timeout=55) as client:
+        r = await client.post(url, json=req)
+
+    if r.status_code >= 400:
+        return {"ok": False, "text": "", "error": f"stt_http_{r.status_code}: {r.text[:400]}"}
+
+    j = r.json() or {}
+    transcripts: list[str] = []
+    try:
+        for res in (j.get("results") or []):
+            alts = res.get("alternatives") or []
+            if alts:
+                t = (alts[0] or {}).get("transcript") or ""
+                t = str(t).strip()
+                if t:
+                    transcripts.append(t)
+    except Exception:
+        transcripts = []
+
+    return {"ok": True, "text": " ".join(transcripts).strip()}
 
 
 # =========================================================
@@ -466,13 +589,11 @@ def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
             mime_type = mime_type.split(";")[0].strip().lower()
 
     elif msg_type == "sticker":
-        # sticker no trae texto útil
         text_msg = ""
         msg_type = "sticker"
 
     elif msg_type == "location":
         loc = m.get("location") or {}
-        # convertimos a texto útil para IA
         text_msg = f"Ubicación: {loc.get('name') or ''} {loc.get('address') or ''} {loc.get('latitude') or ''},{loc.get('longitude') or ''}".strip()
         msg_type = "text"
 
@@ -502,8 +623,6 @@ async def _ingest_internal(
     Llama el pipeline único (/api/messages/ingest) dentro del mismo proceso.
     """
     try:
-        # Import local para evitar ciclos. Si tu app importa whatsapp_router desde app.main,
-        # esto puede funcionar pero a veces se rompe si hay ciclos. Lo manejamos con try.
         from app.main import ingest, IngestMessage  # type: ignore
 
         payload = IngestMessage(
@@ -530,7 +649,6 @@ async def whatsapp_receive(request: Request):
     if WA_DEBUG_RAW:
         print("WA_WEBHOOK_RAW:", raw.decode("utf-8", errors="ignore")[:8000])
     else:
-        # log resumido
         try:
             d = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
             entry = (d.get("entry") or [None])[0] or {}
@@ -544,10 +662,7 @@ async def whatsapp_receive(request: Request):
 
     # forward (evita loop)
     if FORWARD_ENABLED and request.headers.get("X-Verane-Forwarded") != "1":
-        # Nota: hacerlo con await es más confiable que create_task en algunos deploys.
         await _forward_to_targets(raw)
-        # Si prefieres background, puedes cambiar a:
-        # asyncio.create_task(_forward_to_targets(raw))
 
     try:
         data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
@@ -572,6 +687,62 @@ async def whatsapp_receive(request: Request):
                 continue
 
             msg_type, text_msg, media_id, mime_type = _extract_incoming(m)
+
+            # ✅ MULTIMODAL: convertir a texto ANTES de ingest
+            if msg_type in ("audio", "image", "document") and media_id:
+                try:
+                    content, ct = await download_whatsapp_media_bytes(media_id)
+                except Exception as e:
+                    content, ct = b"", (mime_type or "application/octet-stream")
+                    print("MEDIA_DOWNLOAD_ERROR:", str(e)[:250], "| media_id:", media_id)
+
+                ct = (ct or mime_type or "application/octet-stream").split(";")[0].strip().lower()
+
+                # 2.1) AUDIO -> STT
+                if msg_type == "audio" and content:
+                    stt = await google_speech_to_text(content, ct)
+                    if stt.get("ok") and (stt.get("text") or "").strip():
+                        trans = (stt.get("text") or "").strip()
+                        caption = (text_msg or "").strip()
+                        merged = f"NOTA DE VOZ (transcripción):\n{trans}".strip()
+                        if caption:
+                            merged = f"{merged}\n\n(El usuario agregó: {caption})"
+                        msg_type = "text"
+                        text_msg = merged
+                    else:
+                        # fallback limpio
+                        msg_type = "text"
+                        text_msg = "El usuario envió una nota de voz, pero no se pudo transcribir. Pídele que lo escriba en texto."
+
+                # 2.2) IMAGEN o DOCUMENTO(IMAGEN) -> OCR + labels
+                elif msg_type in ("image", "document") and content:
+                    if ct.startswith("image/"):
+                        vis = await google_vision_ocr_and_caption(content)
+                        ocr = (vis.get("text") or "").strip()
+                        labels = vis.get("labels") or []
+                        caption = (text_msg or "").strip()
+
+                        parts = []
+                        if labels:
+                            parts.append("IMAGEN (descripción aproximada): " + ", ".join([str(x) for x in labels[:6]]))
+                        if ocr:
+                            parts.append("TEXTO EN LA IMAGEN (OCR):\n" + ocr)
+                        if caption:
+                            parts.append("(El usuario agregó: " + caption + ")")
+
+                        if parts:
+                            msg_type = "text"
+                            text_msg = "\n\n".join(parts).strip()
+                        else:
+                            msg_type = "text"
+                            text_msg = "El usuario envió una imagen, pero no se pudo leer. Pídele una foto más clara o que escriba el texto."
+                    else:
+                        # PDF/otros docs: por ahora texto útil
+                        msg_type = "text"
+                        if ct == "application/pdf":
+                            text_msg = "El usuario envió un documento PDF. Pídele que envíe captura de pantalla o copie el texto aquí."
+                        else:
+                            text_msg = f"El usuario envió un documento ({ct}). Pídele que copie el texto o envíe captura."
 
             await _ingest_internal(
                 phone=phone,

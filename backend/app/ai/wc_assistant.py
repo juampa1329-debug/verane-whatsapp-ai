@@ -1,51 +1,24 @@
 import json
 import re
+import time
 from typing import Callable, Awaitable, Any, Optional
-
-from fastapi import HTTPException
 
 from app.integrations.woocommerce import wc_get, map_product_for_ui, wc_enabled
 
 
 # =========================
-# Normalización + heurísticas
+# Normalización
 # =========================
 
 _STOPWORDS = {
     "y", "el", "la", "los", "las", "un", "una", "unos", "unas",
     "de", "del", "al", "a", "en", "por", "para", "con", "sin",
-    "que", "qué", "cual", "cuál", "como", "cómo", "me", "te", "se", "mi", "tu", "su",
+    "que", "qué", "cual", "cuál", "como", "cómo", "me", "te", "se",
     "tienes", "tienen", "hay", "manejan", "manejamos",
-    "disponible", "disponibles", "agotado", "agotados",
+    "disponible", "disponibles",
     "precio", "vale", "cuanto", "cuánto", "cuesta", "valor",
-    "porfavor", "por", "fa", "pls", "plis",
     "hola", "buenas", "buenos", "dias", "días", "tardes", "noches",
-    "quiero", "busco", "necesito", "dame", "envio", "envío", "ciudad",
-    "informacion", "información",
-
-    # intención de “foto/imagen”
-    "muestrame", "muéstrame", "muestra", "mostrar", "ver", "adjunta", "mandame", "envia", "envía",
-    "foto", "fotos", "imagen", "imagenes", "imágenes", "real",
-}
-
-_TRIGGERS = {
-    "tienes", "tienen", "hay", "disponible", "disponibles",
-    "precio", "vale", "cuanto", "cuánto", "cuesta", "valor",
-
-    "foto", "imagen", "muestrame", "muestra", "mostrar", "ver", "adjunta", "real",
-
-    "perfume", "perfumes", "fragancia", "fragancias", "colonia", "colonias",
-    "referencia", "ref",
-}
-
-# Frases/tokens genéricos de compra que NO deben disparar búsqueda Woo
-_GENERIC_ORDER_TOKENS = {
-    "pedido", "pedir", "orden", "comprar", "compra", "pagar", "pago",
-    "llevar", "llevarlo", "llevo",
-    "hacer", "hago",
-    "listo", "ok", "dale", "deuna", "de", "una",
-    "confirmo", "confirmar", "confirmacion", "confirmación",
-    "quiero",
+    "quiero", "busco", "necesito", "dame",
 }
 
 
@@ -68,203 +41,83 @@ def _tokenize(s: str) -> list[str]:
     t = _norm(s)
     if not t:
         return []
-    return [x for x in t.split() if x and x not in _STOPWORDS and len(x) >= 2]
+    return [x for x in t.split() if x and x not in _STOPWORDS]
 
 
-def _is_generic_order_intent(user_text: str) -> bool:
-    """
-    Mensajes tipo:
-      - "quiero llevarlo"
-      - "hacer el pedido"
-      - "lo quiero comprar"
-    NO deben disparar consulta a Woo.
-    """
-    t = _norm(user_text)
-    if any(p in t for p in ("hacer el pedido", "quiero hacer el pedido", "quiero llevarlo", "lo quiero", "quiero comprar", "quiero pedir")):
-        return True
-
-    toks = _tokenize(user_text)
-    if not toks:
-        return False
-
-    generic_hits = sum(1 for x in toks if x in _GENERIC_ORDER_TOKENS)
-    return generic_hits >= max(1, int(len(toks) * 0.7))
-
-
-def _looks_like_product_intent(user_text: str) -> bool:
-    t = _norm(user_text)
+def _looks_like_product_intent(text: str) -> bool:
+    t = _norm(text)
     if not t:
         return False
 
-    # saludos puros
-    if t in ("hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"):
+    if len(_tokenize(t)) == 0:
         return False
 
-    # genérico de compra => no woo
-    if _is_generic_order_intent(user_text):
+    if t in ("hola", "buenas", "gracias"):
         return False
 
-    # pregunta por ciudad/envío sin producto
-    if any(x in t for x in ("para que ciudad", "para qué ciudad", "ciudad seria", "ciudad sería", "envio a", "envío a")) and len(_tokenize(t)) <= 2:
-        return False
-
-    # triggers fuertes
-    if any(w in t.split() for w in _TRIGGERS):
-        return True
-
-    # mensaje corto: puede ser referencia/nombre
-    toks = _tokenize(t)
-    if 1 <= len(toks) <= 6 and len(t) >= 5:
-        if all(x in _GENERIC_ORDER_TOKENS for x in toks):
-            return False
-        return True
-
-    return False
-
-
-def _extract_product_query(user_text: str) -> str:
-    raw = _norm(user_text)
-
-    # variantes típicas
-    raw = raw.replace("aqua de gio", "acqua di gio")
-    raw = raw.replace("acqua de gio", "acqua di gio")
-    raw = raw.replace("aqua di gio", "acqua di gio")
-    raw = raw.replace("aqua", "acqua")
-
-    toks = _tokenize(raw)
-    if not toks:
-        return raw.strip()
-
-    return " ".join(toks[:5]).strip()
+    return True
 
 
 def _score_match(query: str, name: str) -> int:
     q = _norm(query)
     n = _norm(name)
+
     if not q or not n:
         return 0
+
     if q == n:
         return 100
+
     if q in n:
-        cover = int(60 + min(35, (len(q) * 35) / max(1, len(n))))
-        return cover
+        return 75
 
-    q_toks = [x for x in q.split() if x not in _STOPWORDS and len(x) >= 2]
-    n_toks = set([x for x in n.split() if x not in _STOPWORDS and len(x) >= 2])
-    if not q_toks:
-        return 0
+    q_tokens = set(q.split())
+    n_tokens = set(n.split())
 
-    hit = sum(1 for w in q_toks if w in n_toks)
-    if hit == 0:
-        return 0
+    common = len(q_tokens & n_tokens)
 
-    return 30 + hit * 12
+    return common * 15
 
 
-# Palabras que indican "cancelar" o "otra búsqueda" para salir del modo elección
-_CANCEL_OR_OTHER = re.compile(
-    r"^(cancelar|ninguno|ninguna|no quiero|no deseo|otro|otra|otra busqueda|otra búsqueda|"
-    r"buscar otro|buscar otra|dame otro|dame otra|no|nada)$",
-    re.I,
-)
-
-def _parse_choice_number(user_text: str) -> int | None:
-    raw = (user_text or "").strip()
-    # Número explícito: 1, 2, 3...
-    m = re.search(r"\b([1-9])\b", raw)
+def _parse_choice_number(text: str) -> Optional[int]:
+    m = re.search(r"\b([1-9])\b", text)
     if m:
         try:
             return int(m.group(1))
         except Exception:
-            pass
-    # "el primero", "la primera", "el segundo", "la 2", etc.
-    t = _norm(raw)
-    ordinals = {
-        "primero": 1, "primera": 1, "uno": 1, "una": 1,
-        "segundo": 2, "segunda": 2, "dos": 2,
-        "tercero": 3, "tercera": 3, "tres": 3,
-        "cuarto": 4, "cuarta": 4, "cuatro": 4,
-        "quinto": 5, "quinta": 5, "cinco": 5,
-    }
-    for word, num in ordinals.items():
-        if word in t.split() or t == word or re.search(rf"\b{re.escape(word)}\b", t):
-            return num
+            return None
     return None
 
 
-def _is_cancel_or_new_search(user_text: str) -> bool:
-    """True si el usuario quiere cancelar la elección o hacer otra búsqueda."""
-    raw = (user_text or "").strip().lower()
-    if not raw or len(raw) > 80:
-        return False
-    if _CANCEL_OR_OTHER.match(raw):
-        return True
-    # "no, busco X" / "otro perfume X"
-    if re.match(r"^(no|otro|otra)\s*,?\s*(busco|quiero|dame|perfume)", raw):
-        return True
-    return False
+# =========================
+# Woo Smart Search
+# =========================
 
+async def _wc_search_products(query: str) -> list[dict]:
+    params = {
+        "search": query,
+        "per_page": 12,
+        "status": "publish",
+    }
 
-# Saludos o respuestas que indican que el usuario salió del tema (salir de wc_await)
-_GREETING_OR_OFF_TOPIC = re.compile(
-    r"^(hola|holi|buenas|buenos|qué tal|que tal|gracias|ok|vale|listo|perfecto|"
-    r"no se|no sé|dejalo|déjalo|después|despues|nada|chao|adiós|adios)$",
-    re.I,
-)
+    data = await wc_get("/products", params=params)
+    results = []
 
-
-def _looks_like_greeting_or_off_topic(user_text: str) -> bool:
-    """True si el mensaje parece saludo o tema distinto (para salir de modo elección)."""
-    raw = (user_text or "").strip().lower()
-    if not raw or len(raw) > 50:
-        return False
-    if _GREETING_OR_OFF_TOPIC.match(raw):
-        return True
-    return False
-
-
-async def _wc_search_products_smart(user_text: str, per_page: int = 12) -> list[dict]:
-    q_clean = _extract_product_query(user_text)
-    q_raw = _norm(user_text)
-
-    queries: list[str] = []
-    if q_clean and len(q_clean) >= 3:
-        queries.append(q_clean)
-    if q_raw and q_raw not in queries and len(q_raw) >= 3:
-        queries.append(q_raw)
-
-    toks = _tokenize(user_text)
-    if len(toks) >= 2:
-        q2 = " ".join(toks[:3])
-        if q2 not in queries and len(q2) >= 3:
-            queries.append(q2)
-
-    results_by_id: dict[int, dict] = {}
-
-    for q in queries[:3]:
-        params = {"search": q, "page": 1, "per_page": int(per_page), "status": "publish"}
-        data = await wc_get("/products", params=params)
-        for p in (data or []):
-            ui = map_product_for_ui(p)
-            pid = ui.get("id")
-            if isinstance(pid, int) and pid not in results_by_id:
-                results_by_id[pid] = ui
-
-    items = list(results_by_id.values())
+    for p in (data or []):
+        results.append(map_product_for_ui(p))
 
     scored = []
-    for it in items:
-        sc = _score_match(q_clean or user_text, it.get("name") or "")
-        stock = it.get("stock_status") or ""
-        stock_boost = 8 if stock == "instock" else 0
-        scored.append((sc + stock_boost, it))
+    for r in results:
+        score = _score_match(query, r.get("name") or "")
+        scored.append((score, r))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+
     return [x[1] for x in scored]
 
 
 # =========================
-# API principal del módulo
+# MAIN
 # =========================
 
 async def handle_wc_if_applicable(
@@ -279,189 +132,116 @@ async def handle_wc_if_applicable(
     send_product_fn: Callable[[str, int, str], Awaitable[dict]],
     send_text_fn: Callable[[str, str], Awaitable[dict]],
 
-    # ✅ nuevos opcionales para persistir/recuperar opciones (DB o cache)
     save_options_fn: Optional[Callable[[str, list[dict]], Awaitable[None]]] = None,
     load_recent_options_fn: Optional[Callable[[str], Awaitable[list[dict]]]] = None,
 
-    # ✅ compat: si mañana agregas otro kwarg en main, no revienta
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """
-    Devuelve:
-      {"handled": True, ...} si ya resolvió Woo
-      {"handled": False} si NO aplica
-    """
 
     if not wc_enabled():
         return {"handled": False}
 
-    # Limpia el estado si el mensaje es un audio o imagen para evitar que se quede pegado en modo espera
-    st = get_state(phone) or ""
+    # 🔹 Si no es texto, limpiar estado Woo y salir
     if msg_type != "text":
-        if st.startswith("wc_await:"):
-            clear_state(phone)
+        clear_state(phone)
         return {"handled": False}
 
-    text_in = (user_text or "").strip()
-    if not text_in:
+    text = (user_text or "").strip()
+    if not text:
         return {"handled": False}
 
-    # ==========================================================
-    # 0) Recuperación fuera de estado:
-    # Si el usuario responde "2" pero el estado expiró,
-    # intentamos cargar opciones recientes desde DB/cache.
-    # ==========================================================
-    n_recover = _parse_choice_number(text_in)
-    if n_recover is not None and load_recent_options_fn is not None:
+    state = get_state(phone) or ""
+
+    # =========================
+    # Si estamos esperando elección
+    # =========================
+    if state.startswith("wc_await:"):
         try:
-            recent_opts = await load_recent_options_fn(phone)
+            payload = json.loads(state[len("wc_await:"):])
+            options = payload.get("options", [])
+            ts = int(payload.get("ts") or 0)
         except Exception:
-            recent_opts = []
-
-        if isinstance(recent_opts, list) and recent_opts:
-            if 1 <= n_recover <= len(recent_opts):
-                chosen = recent_opts[n_recover - 1]
-                pid = (chosen or {}).get("id")
-                if pid:
-                    clear_state(phone)
-                    wa = await send_product_fn(phone, int(pid), "")
-                    return {"handled": True, "wc": True, "reason": "recovered_choice_send", "wa": wa}
-
-    # 1) si estamos esperando elección (estado vivo)
-    if st.startswith("wc_await:"):
-        try:
-            payload = json.loads(st[len("wc_await:"):].strip() or "{}")
-        except Exception:
-            payload = {}
-
-        options = payload.get("options") or []
-        if not isinstance(options, list) or not options:
             clear_state(phone)
             return {"handled": False}
 
-        # Si el usuario dice cancelar/ninguno/otro, salir del modo elección
-        if _is_cancel_or_new_search(text_in):
-            clear_state(phone)
-            if not _looks_like_product_intent(text_in):
+        # ✅ TTL: si el estado tiene más de 3 minutos, expirarlo
+        if ts:
+            now = int(time.time())
+            if (now - ts) > 180:  # 180s = 3 min
+                clear_state(phone)
                 return {"handled": False}
-            # Nueva búsqueda de producto: reentrar para ejecutar búsqueda sin estado
-            return await handle_wc_if_applicable(
-                phone=phone,
-                user_text=user_text,
-                msg_type=msg_type,
-                get_state=get_state,
-                set_state=set_state,
-                clear_state=clear_state,
-                send_product_fn=send_product_fn,
-                send_text_fn=send_text_fn,
-                save_options_fn=save_options_fn,
-                load_recent_options_fn=load_recent_options_fn,
-                **kwargs,
-            )
 
-        n = _parse_choice_number(text_in)
-        chosen = None
-
-        if n is not None and 1 <= n <= len(options):
-            chosen = options[n - 1]
-        else:
-            ut = _extract_product_query(text_in)
-            best = None
-            best_score = 0
-            for opt in options:
-                name = str((opt or {}).get("name") or "")
-                sc = _score_match(ut, name)
-                if sc > best_score:
-                    best_score = sc
-                    best = opt
-            if best and best_score >= 35:
-                chosen = best
-
-        if chosen and chosen.get("id"):
-            clear_state(phone)
-            wa = await send_product_fn(phone, int(chosen["id"]), "")
-            return {"handled": True, "wc": True, "reason": "choice_send", "wa": wa}
-
-        # Si no eligió: salir del modo si es saludo/off-topic o nueva búsqueda de producto
-        if _looks_like_greeting_or_off_topic(text_in) or len(text_in.split()) > 10:
+        if not options:
             clear_state(phone)
             return {"handled": False}
-            
-        if _looks_like_product_intent(text_in):
+
+        choice = _parse_choice_number(text)
+
+        if choice and 1 <= choice <= len(options):
+            product = options[choice - 1]
             clear_state(phone)
-            return await handle_wc_if_applicable(
-                phone=phone,
-                user_text=user_text,
-                msg_type=msg_type,
-                get_state=get_state,
-                set_state=set_state,
-                clear_state=clear_state,
-                send_product_fn=send_product_fn,
-                send_text_fn=send_text_fn,
-                save_options_fn=save_options_fn,
-                load_recent_options_fn=load_recent_options_fn,
-                **kwargs,
-            )
+            return {
+                "handled": True,
+                "wc": True,
+                "reason": "choice_send",
+                "wa": await send_product_fn(phone, product["id"], "")
+            }
 
-        await send_text_fn(phone, "¿Cuál opción deseas? Responde con el número (1, 2, 3...) o el nombre exacto 🙂")
-        return {"handled": True, "wc": True, "reason": "awaiting_choice"}
+        # Si escribe algo largo, salir del modo Woo
+        if len(text.split()) > 8:
+            clear_state(phone)
+            return {"handled": False}
 
-    # 2) intención
-    if not _looks_like_product_intent(text_in):
+        await send_text_fn(phone, "Responde con el número de la opción 🙂")
+        return {"handled": True, "wc": True}
+
+    # =========================
+    # Nueva búsqueda
+    # =========================
+
+    if not _looks_like_product_intent(text):
         return {"handled": False}
 
-    # 3) búsqueda smart
     try:
-        items = await _wc_search_products_smart(text_in, per_page=12)
-    except HTTPException:
-        return {"handled": False}
+        items = await _wc_search_products(text)
     except Exception:
         return {"handled": False}
 
     if not items:
-        await send_text_fn(phone, "No la encontré con ese nombre 😕 ¿Me confirmas la referencia exacta o una foto?")
-        return {"handled": True, "wc": True, "reason": "no_results"}
+        await send_text_fn(phone, "No encontré ese perfume 😕 ¿Puedes confirmarme el nombre exacto?")
+        return {"handled": True, "wc": True}
 
-    # 4) decidir envío directo vs opciones
     top = items[:5]
 
-    q_clean = _extract_product_query(text_in)
-    s1 = _score_match(q_clean, top[0].get("name") or "")
-    s2 = _score_match(q_clean, top[1].get("name") or "") if len(top) > 1 else 0
-
-    strong = (s1 >= 70) or (s1 >= 60 and (s1 - s2) >= 15)
-
-    if strong and top[0].get("id"):
-        # ✅ salir del modo woo al mandar producto
+    # Match fuerte → enviar directo
+    if _score_match(text, top[0]["name"]) >= 80:
         clear_state(phone)
-        wa = await send_product_fn(phone, int(top[0]["id"]), "")
-        return {"handled": True, "wc": True, "reason": "strong_match_send", "wa": wa}
+        return {
+            "handled": True,
+            "wc": True,
+            "reason": "strong_match_send",
+            "wa": await send_product_fn(phone, top[0]["id"], "")
+        }
 
-    # 5) múltiples opciones -> preguntar
+    # Varias opciones → preguntar
     lines = ["Encontré estas opciones: 👇"]
-    opts: list[dict] = []
-    for i, it in enumerate(top, start=1):
-        name = str(it.get("name") or "")
-        price = str(it.get("price") or "")
-        stock = str(it.get("stock_status") or "")
+
+    opts = []
+    for i, p in enumerate(top, start=1):
+        name = p.get("name")
+        price = p.get("price")
+        stock = p.get("stock_status")
         stock_label = "✅ disponible" if stock == "instock" else "⛔ agotado"
-        price_label = f" — ${price}" if price else ""
-        lines.append(f"{i}) {name}{price_label} ({stock_label})")
-        opts.append({"id": it.get("id"), "name": name})
+
+        lines.append(f"{i}) {name} — ${price} ({stock_label})")
+        opts.append({"id": p["id"], "name": name})
 
     lines.append("")
-    lines.append("¿Cuál deseas? Responde con el número (1,2,3...) o el nombre exacto.")
-    msg_out = "\n".join(lines).strip()
+    lines.append("¿Cuál deseas? Responde con el número.")
 
-    # guarda estado en memoria/redis
-    set_state(phone, "wc_await:" + json.dumps({"options": opts}, ensure_ascii=False))
+    # ✅ Guardamos estado con timestamp para TTL
+    set_state(phone, "wc_await:" + json.dumps({"options": opts, "ts": int(time.time())}))
 
-    # opcional: persiste en DB/cache para recuperación (si TTL expira)
-    if save_options_fn is not None:
-        try:
-            await save_options_fn(phone, opts)
-        except Exception:
-            pass
+    await send_text_fn(phone, "\n".join(lines))
 
-    await send_text_fn(phone, msg_out)
-    return {"handled": True, "wc": True, "reason": "multiple_options"}
+    return {"handled": True, "wc": True}

@@ -28,13 +28,13 @@ from app.ai.tts import tts_synthesize
 # ✅ WhatsApp upload (para subir el audio y obtener media_id)
 from app.routes.whatsapp import upload_whatsapp_media
 
-# ✅ (Recomendado) Montar router IA (/api/ai/settings, /api/ai/knowledge, etc.)
+# ✅ Montar router IA
 try:
     from app.ai.router import router as ai_router
 except Exception:
     ai_router = None
 
-# ✅ Woo (opción 2: módulos separados)
+# ✅ Woo
 from app.ai.wc_assistant import handle_wc_if_applicable
 from app.integrations.woocommerce import (
     wc_enabled,
@@ -58,8 +58,6 @@ from app.integrations.woocommerce import (
 
 app = FastAPI()
 
-from fastapi.middleware.cors import CORSMiddleware
-
 origins = [
     "https://app.perfumesverane.com",
     "http://localhost:5173",
@@ -69,14 +67,6 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -143,37 +133,37 @@ def ensure_schema():
             )
         """))
 
-        # ✅ Extraccion de datos
+        # Extraccion de datos
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS extracted_text TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_meta JSONB"""))
 
-        # ✅ Control de tráfico
+        # Control de tráfico
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at ON messages (phone, created_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at ON messages (phone, direction, created_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
 
-        # ✅ Media extra
+        # Media extra
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_id TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS mime_type TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS duration_sec INTEGER"""))
 
-        # ✅ Estados WhatsApp (checkmarks)
+        # Estados WhatsApp (checkmarks)
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_message_id TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_status TEXT"""))  # sent|delivered|read|failed
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_status TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_error TEXT"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_sent TIMESTAMP"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_delivered TIMESTAMP"""))
         conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_read TIMESTAMP"""))
 
-        # ✅ Unread tracking (para filtros "no leído")
+        # Unread tracking (para filtros "no leído")
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMP"""))
 
-        # ✅ Estado IA estructural
+        # Estado IA estructural
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_state TEXT"""))
 
-        # ✅ Tabla settings IA
+        # Tabla settings IA
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS ai_settings (
                 id SERIAL PRIMARY KEY,
@@ -195,22 +185,22 @@ def ensure_schema():
             )
         """))
 
-        # ✅ VOICE settings (para TTS/nota de voz + prompt de voz)
+        # VOICE settings
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_gender TEXT"""))          # male|female|neutral
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_language TEXT"""))        # es-CO, es-MX...
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_accent TEXT"""))          # "colombiano", "mexicano"...
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_style_prompt TEXT"""))    # prompt libre
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_gender TEXT"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_language TEXT"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_accent TEXT"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_style_prompt TEXT"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_max_notes_per_reply INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_prefer_voice BOOLEAN"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_speaking_rate DOUBLE PRECISION"""))
 
-        # ✅ TTS provider selector (NUEVO: para selector de proveedor de voz)
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_provider TEXT"""))   # google|elevenlabs|openai|...
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_voice_id TEXT"""))  # ej: ElevenLabs voice_id
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_model_id TEXT"""))  # ej: eleven_multilingual_v2
+        # TTS provider selector
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_provider TEXT"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_voice_id TEXT"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_model_id TEXT"""))
 
-        # ✅ Asegurar defaults si quedaron NULL (fila 1)
+        # Asegurar defaults si quedaron NULL
         conn.execute(text("""
             UPDATE ai_settings
                 SET
@@ -229,12 +219,12 @@ def ensure_schema():
                 WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
-        # ✅ settings humanización (para envío por chunks)
+        # settings humanización
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER"""))
 
-        # ✅ Woo recovery cache
+        # Woo recovery cache
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options JSONB"""))
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options_at TIMESTAMP"""))
 
@@ -258,7 +248,7 @@ def ensure_schema():
             WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
         """))
 
-        # ✅ Si ya existía la fila, aseguramos defaults si quedaron NULL
+        # Aseguramos defaults humanización
         conn.execute(text("""
             UPDATE ai_settings
             SET
@@ -268,9 +258,7 @@ def ensure_schema():
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
-
 ensure_schema()
-
 
 # =========================================================
 # MODELS
@@ -281,7 +269,7 @@ class IngestMessage(BaseModel):
 
     phone: str
     direction: str
-    msg_type: str = "text"  # text | image | video | audio | document | product
+    msg_type: str = "text"
     text: str = ""
 
     media_url: Optional[str] = None
@@ -339,7 +327,6 @@ def save_message(
     direction: str,
     text_msg: str = "",
     msg_type: str = "text",
-
     media_url: Optional[str] = None,
     media_caption: Optional[str] = None,
     media_id: Optional[str] = None,
@@ -347,7 +334,6 @@ def save_message(
     file_name: Optional[str] = None,
     file_size: Optional[int] = None,
     duration_sec: Optional[int] = None,
-
     featured_image: Optional[str] = None,
     real_image: Optional[str] = None,
     permalink: Optional[str] = None,
@@ -382,7 +368,6 @@ def save_message(
         "real_image": real_image,
         "permalink": permalink,
         "created_at": datetime.utcnow(),
-
         "wa_status": "sent" if direction == "out" else None,
         "wa_ts_sent": datetime.utcnow() if direction == "out" else None,
     })
@@ -689,7 +674,7 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     if not text_to_say:
         return {"sent": False, "reason": "empty text"}
 
-    # ✅ Leer selector TTS desde DB (misma fuente que el panel de configuración)
+    # Leer selector TTS desde DB (misma fuente que el panel de configuración)
     tts_cfg = _get_tts_provider_settings()
     tts_provider = (tts_cfg.get("voice_tts_provider") or "google").strip().lower()
     tts_voice_id = (tts_cfg.get("voice_tts_voice_id") or "").strip()
@@ -701,67 +686,82 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     if tts_provider == "elevenlabs" and not tts_model_id:
         tts_model_id = (os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
 
-    _log(_new_trace_id(), "TTS_PROVIDER", provider=tts_provider, voice_id=(tts_voice_id[:8] + "..." if len(tts_voice_id) > 8 else tts_voice_id))
+    voice_settings = _get_voice_settings()
+    max_notes = int(voice_settings.get("voice_max_notes_per_reply", 1))
 
-    # Preparar kwargs para tts_synthesize (provider + ids para ElevenLabs)
-    tts_kwargs = {"text": text_to_say, "provider": tts_provider}
-    if tts_voice_id:
-        tts_kwargs["voice_id"] = tts_voice_id
-    if tts_model_id:
-        tts_kwargs["model_id"] = tts_model_id
+    # ✅ CORRECCIÓN 2: Chunking para voz. En lugar de un audio gigante o fallar, respetamos max_notes_per_reply
+    chunks = [text_to_say]
+    if max_notes > 1 and "\n\n" in text_to_say:
+        chunks = [p.strip() for p in text_to_say.split("\n\n") if p.strip()][:max_notes]
+    elif len(text_to_say) > 600 and max_notes > 1:
+        chunks = _split_long_text(text_to_say, 600)[:max_notes]
 
-    try:
-        audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
-    except TypeError:
-        audio_bytes, mime, filename, meta = await tts_synthesize(text=text_to_say, provider=tts_provider)
+    sent_any = False
+    last_wa_resp = {}
+    media_ids = []
 
-    if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
-        return {
-            "sent": False,
-            "reason": "tts_failed",
-            "meta": meta,
-            "tts_provider": tts_provider,
-        }
+    for idx, chunk in enumerate(chunks):
+        _log(_new_trace_id(), "TTS_GENERATING", provider=tts_provider, chunk=idx+1, total=len(chunks))
 
-    media_id = await upload_whatsapp_media(audio_bytes, mime)
+        tts_kwargs = {"text": chunk, "provider": tts_provider}
+        if tts_voice_id:
+            tts_kwargs["voice_id"] = tts_voice_id
+        if tts_model_id:
+            tts_kwargs["model_id"] = tts_model_id
 
-    with engine.begin() as conn:
-        local_out_id = save_message(
-            conn,
-            phone=phone,
-            direction="out",
-            msg_type="audio",
-            text_msg="",
+        try:
+            audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
+        except TypeError:
+            audio_bytes, mime, filename, meta = await tts_synthesize(text=chunk, provider=tts_provider)
+
+        if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
+            continue
+
+        media_id = await upload_whatsapp_media(audio_bytes, mime)
+        media_ids.append(media_id)
+
+        with engine.begin() as conn:
+            local_out_id = save_message(
+                conn,
+                phone=phone,
+                direction="out",
+                msg_type="audio",
+                text_msg="",
+                media_id=media_id,
+                mime_type=mime,
+                file_name=filename,
+                file_size=len(audio_bytes),
+                duration_sec=None,
+            )
+
+        wa_resp = await send_whatsapp_media_id(
+            to_phone=phone,
+            media_type="audio",
             media_id=media_id,
-            mime_type=mime,
-            file_name=filename,
-            file_size=len(audio_bytes),
-            duration_sec=None,
+            caption=""
         )
 
-    wa_resp = await send_whatsapp_media_id(
-        to_phone=phone,
-        media_type="audio",
-        media_id=media_id,
-        caption=""
-    )
+        last_wa_resp = wa_resp
+        wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
 
-    wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
-
-    with engine.begin() as conn:
-        if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
-            set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
-        else:
-            err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
-                  or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
-                  or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
-                  or "WhatsApp send failed"
-            set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+        with engine.begin() as conn:
+            if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
+                set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
+                sent_any = True
+            else:
+                err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
+                      or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
+                      or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
+                      or "WhatsApp send failed"
+                set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
+        
+        if idx < len(chunks) - 1:
+            await asyncio.sleep(1.5)
 
     return {
-        "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")),
-        "wa": wa_resp,
-        "media_id": media_id,
+        "sent": sent_any,
+        "wa": last_wa_resp,
+        "media_ids": media_ids,
         "tts_provider": tts_provider,
         "tts_voice_id": tts_voice_id,
         "tts_model_id": tts_model_id,
@@ -777,10 +777,6 @@ WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 
 
 async def download_whatsapp_media_bytes(media_id: str) -> Tuple[bytes, str]:
-    """
-    Descarga bytes reales del media_id de WhatsApp Cloud API.
-    Retorna: (bytes, mime_type)
-    """
     if not WHATSAPP_TOKEN:
         raise RuntimeError("WHATSAPP_TOKEN not configured")
     if not media_id:
@@ -809,7 +805,7 @@ async def download_whatsapp_media_bytes(media_id: str) -> Tuple[bytes, str]:
 
 
 # =========================================================
-# ✅ GEMINI helpers (multimodal) - INLINE ROBUSTO
+# GEMINI helpers (multimodal) - INLINE ROBUSTO
 # =========================================================
 
 def _get_gemini_key() -> str:
@@ -821,7 +817,6 @@ def _clean_mime(m: str) -> str:
 
 
 def _default_gemini_mm_model() -> str:
-    # Modelo para multimodal (audio + imagen). Puedes poner GEMINI_MM_MODEL=gemini-2.0-flash o gemini-2.5-flash si aplica.
     return (os.getenv("GEMINI_MM_MODEL", "").strip() or "gemini-2.0-flash").strip()
 
 
@@ -847,7 +842,6 @@ def _is_effectively_empty_text(text_value: str) -> bool:
 
 
 def _gemini_media_kind(msg_type: str, mime_type: str) -> str:
-    """Mapea msg_type + mime a tipo soportado por Gemini (audio, image o document)."""
     mime = (mime_type or "").lower()
     if msg_type == "audio" or mime.startswith("audio/"):
         return "audio"
@@ -861,10 +855,6 @@ def _gemini_media_kind(msg_type: str, mime_type: str) -> str:
 
 
 async def _gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: str) -> tuple[str, dict]:
-    """
-    Gemini generateContent con inline_data para AUDIO, IMAGEN y DOCUMENTO (PDF).
-    Retorna: (texto_extraido, meta)
-    """
     api_key = _get_gemini_key()
     if not api_key:
         return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
@@ -1379,7 +1369,32 @@ async def ingest(msg: IngestMessage):
     _log(trace_id, "ENTER_INGEST", phone=msg.phone, direction=direction, msg_type=msg_type,
          text_len=len(user_text_original), media_id=media_id_in, mime=mime_in)
 
-    # 1) Guardar en DB
+    # ✅ 1) CONTROL DE IDEMPOTENCIA (Previene el bucle de 3 repeticiones por Timeout de Meta Webhook)
+    if direction == "in":
+        try:
+            with engine.begin() as conn:
+                recent = conn.execute(text("""
+                    SELECT id FROM messages 
+                    WHERE phone = :phone 
+                      AND direction = 'in' 
+                      AND msg_type = :msg_type 
+                      AND text = :text
+                      AND COALESCE(media_id, '') = COALESCE(:media_id, '')
+                      AND created_at > NOW() - INTERVAL '20 seconds'
+                """), {
+                    "phone": msg.phone, 
+                    "msg_type": msg_type, 
+                    "text": user_text_original,
+                    "media_id": media_id_in
+                }).first()
+                
+                if recent:
+                    _log(trace_id, "IDEMPOTENCY_SKIP", reason="webhook_retry_ignored")
+                    return {"saved": True, "sent": False, "reason": "idempotency_skip_duplicate"}
+        except Exception:
+            pass
+
+    # 2) Guardar en DB
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -1409,7 +1424,7 @@ async def ingest(msg: IngestMessage):
         _log(trace_id, "DB_SAVE_FAIL", error=str(e)[:300])
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
-    # 2) Enviar a WhatsApp si es OUT + guardar wa_message_id
+    # 3) Enviar a WhatsApp si es OUT + guardar wa_message_id
     if direction == "out":
         try:
             wa_resp = None
@@ -1463,7 +1478,7 @@ async def ingest(msg: IngestMessage):
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
-    # 3) Disparar IA/Woo si es IN, IA habilitada, y takeover está OFF
+    # 4) Disparar IA/Woo si es IN, IA habilitada, y takeover está OFF
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -1491,7 +1506,7 @@ async def ingest(msg: IngestMessage):
             if _is_effectively_empty_text(user_text):
                 user_text = ""
 
-            # ✅ Multimodal: si NO hay texto y llega audio/imagen/documento, extraer con Gemini inline
+            # Multimodal: extraer texto de audio/imagen/documento
             if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
 
@@ -1548,7 +1563,7 @@ async def ingest(msg: IngestMessage):
             if _is_effectively_empty_text(user_text):
                 user_text = ""
 
-            # ✅ Si aún no hay texto, responde con fallback (no se queda mudo)
+            # Fallback si falla todo
             if not user_text:
                 fallback_text = (
                     "📩 Recibí tu audio, imagen o documento, pero no pude interpretarlo bien.\n\n"
@@ -1565,7 +1580,7 @@ async def ingest(msg: IngestMessage):
                 }
 
             # =========================================================
-            # ✅ WooCommerce assistant
+            # WooCommerce assistant
             # =========================================================
             if wc_enabled() and user_text:
                 async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
@@ -1576,7 +1591,7 @@ async def ingest(msg: IngestMessage):
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-                    msg_type="text",
+                    msg_type="text", # Al procesarlo como texto aseguramos que no interfiera el origen de audio
 
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,
@@ -1598,11 +1613,10 @@ async def ingest(msg: IngestMessage):
                     }
 
             # =========================================================
-            # ✅ Flujo IA normal (texto)
+            # Flujo IA normal (texto / chat)
             # =========================================================
             meta = build_ai_meta(msg.phone, user_text)
 
-            # Nota: el modelo de chat (ej gemini-2.5-flash) normalmente se configura en ai_settings o en app.ai.engine
             ai_result = await process_message(
                 phone=msg.phone,
                 text=user_text,

@@ -1,4 +1,3 @@
-# backend/app/ai/wc_assistant.py
 import json
 import re
 from typing import Callable, Awaitable, Any, Optional
@@ -296,7 +295,11 @@ async def handle_wc_if_applicable(
     if not wc_enabled():
         return {"handled": False}
 
+    # Limpia el estado si el mensaje es un audio o imagen para evitar que se quede pegado en modo espera
+    st = get_state(phone) or ""
     if msg_type != "text":
+        if st.startswith("wc_await:"):
+            clear_state(phone)
         return {"handled": False}
 
     text_in = (user_text or "").strip()
@@ -325,7 +328,6 @@ async def handle_wc_if_applicable(
                     return {"handled": True, "wc": True, "reason": "recovered_choice_send", "wa": wa}
 
     # 1) si estamos esperando elección (estado vivo)
-    st = get_state(phone) or ""
     if st.startswith("wc_await:"):
         try:
             payload = json.loads(st[len("wc_await:"):].strip() or "{}")
@@ -381,9 +383,10 @@ async def handle_wc_if_applicable(
             return {"handled": True, "wc": True, "reason": "choice_send", "wa": wa}
 
         # Si no eligió: salir del modo si es saludo/off-topic o nueva búsqueda de producto
-        if _looks_like_greeting_or_off_topic(text_in):
+        if _looks_like_greeting_or_off_topic(text_in) or len(text_in.split()) > 10:
             clear_state(phone)
             return {"handled": False}
+            
         if _looks_like_product_intent(text_in):
             clear_state(phone)
             return await handle_wc_if_applicable(

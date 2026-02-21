@@ -1,4 +1,3 @@
-# app/integrations/woocommerce.py
 import os
 import re
 import io
@@ -118,11 +117,31 @@ def extract_gender(product: dict) -> str:
     return ""
 
 
+def extract_size(product: dict) -> str:
+    """Extrae el tamaño o presentación (ej: 100ml) para diferenciar productos homónimos"""
+    for a in (product.get("attributes") or []):
+        if not isinstance(a, dict):
+            continue
+        nm = (a.get("name") or "").lower().strip()
+        if nm in ("tamaño", "tamano", "size", "volumen", "mililitros", "ml", "capacidad", "presentacion", "presentación"):
+            opts = a.get("options") or []
+            if isinstance(opts, list) and opts:
+                return str(opts[0]).strip()
+    return ""
+
+
 def map_product_for_ui(product: dict) -> dict:
     price = product.get("price") or product.get("regular_price") or ""
+    size = extract_size(product)
+    name = product.get("name") or ""
+    
+    # Si tiene tamaño, lo añadimos sutilmente al nombre para que la IA y el usuario lo diferencien en la lista
+    if size and size.lower() not in name.lower():
+        name = f"{name} ({size})"
+        
     return {
         "id": product.get("id"),
-        "name": product.get("name") or "",
+        "name": name,
         "price": str(price),
         "permalink": product.get("permalink") or "",
         "featured_image": pick_first_image(product),
@@ -130,6 +149,7 @@ def map_product_for_ui(product: dict) -> dict:
         "aromas": extract_aromas(product),
         "brand": extract_brand(product),
         "gender": extract_gender(product),
+        "size": size,
         "stock_status": product.get("stock_status") or "",
     }
 
@@ -174,7 +194,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
                 return items
 
     return []
-
 
 
 def looks_like_product_question(user_text: str) -> bool:
@@ -306,8 +325,12 @@ def build_caption(product: dict, featured_image: str, real_image: str, custom_ca
 
     aromas_list = extract_aromas(product)
     aromas = ", ".join(aromas_list) if aromas_list else ""
+    
+    size = product.get("size")
 
     caption_lines = [f"✨ {name}"]
+    if size:
+        caption_lines.append(f"📏 Tamaño: {size}")
     if gender_label:
         caption_lines.append(f"👤 Para: {gender_label}")
     if aromas:

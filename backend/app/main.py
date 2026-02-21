@@ -689,17 +689,22 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     if not text_to_say:
         return {"sent": False, "reason": "empty text"}
 
-    # ✅ leer selector TTS desde DB
+    # ✅ Leer selector TTS desde DB (misma fuente que el panel de configuración)
     tts_cfg = _get_tts_provider_settings()
     tts_provider = (tts_cfg.get("voice_tts_provider") or "google").strip().lower()
     tts_voice_id = (tts_cfg.get("voice_tts_voice_id") or "").strip()
     tts_model_id = (tts_cfg.get("voice_tts_model_id") or "").strip()
 
-    # ✅ preparar kwargs opcionales (solo si aplica)
-    tts_kwargs = {"text": text_to_say, "provider": tts_provider}
+    # Fallback ENV para ElevenLabs si en DB está vacío
+    if tts_provider == "elevenlabs" and not tts_voice_id:
+        tts_voice_id = (os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
+    if tts_provider == "elevenlabs" and not tts_model_id:
+        tts_model_id = (os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip()
 
-    # Si usas ElevenLabs u otro proveedor con IDs, pásalos
-    # (si tu tts_synthesize no los soporta todavía, abajo hay fallback por TypeError)
+    _log(_new_trace_id(), "TTS_PROVIDER", provider=tts_provider, voice_id=(tts_voice_id[:8] + "..." if len(tts_voice_id) > 8 else tts_voice_id))
+
+    # Preparar kwargs para tts_synthesize (provider + ids para ElevenLabs)
+    tts_kwargs = {"text": text_to_say, "provider": tts_provider}
     if tts_voice_id:
         tts_kwargs["voice_id"] = tts_voice_id
     if tts_model_id:
@@ -708,7 +713,6 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     try:
         audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
     except TypeError:
-        # ✅ compatibilidad: si tts_synthesize aún no acepta voice_id/model_id
         audio_bytes, mime, filename, meta = await tts_synthesize(text=text_to_say, provider=tts_provider)
 
     if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
@@ -842,9 +846,23 @@ def _is_effectively_empty_text(text_value: str) -> bool:
     return False
 
 
+def _gemini_media_kind(msg_type: str, mime_type: str) -> str:
+    """Mapea msg_type + mime a tipo soportado por Gemini (audio, image o document)."""
+    mime = (mime_type or "").lower()
+    if msg_type == "audio" or mime.startswith("audio/"):
+        return "audio"
+    if msg_type == "image" or mime.startswith("image/"):
+        return "image"
+    if msg_type == "document" or mime.startswith("application/pdf") or "pdf" in mime:
+        return "document"
+    if mime.startswith("image/"):
+        return "image"
+    return "document"
+
+
 async def _gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: str) -> tuple[str, dict]:
     """
-    Gemini generateContent con inline_data para AUDIO e IMAGEN (más estable que Files API).
+    Gemini generateContent con inline_data para AUDIO, IMAGEN y DOCUMENTO (PDF).
     Retorna: (texto_extraido, meta)
     """
     api_key = _get_gemini_key()
@@ -859,6 +877,13 @@ async def _gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type:
             "Transcribe exactamente el audio en español. "
             "No inventes nada. "
             "Devuelve SOLO el texto transcrito, sin explicaciones."
+        )
+    elif kind == "document":
+        prompt = (
+            "Extrae o resume el contenido del documento. "
+            "Si tiene texto legible, transcríbelo. "
+            "Si es una imagen o foto dentro del documento, descríbela. "
+            "Devuelve SOLO el texto útil, sin explicaciones."
         )
     else:
         prompt = (
@@ -1466,8 +1491,8 @@ async def ingest(msg: IngestMessage):
             if _is_effectively_empty_text(user_text):
                 user_text = ""
 
-            # ✅ Multimodal: si NO hay texto y llega audio/imagen, extraer con Gemini inline
-            if (not user_text) and msg_type in ("audio", "image") and msg.media_id:
+            # ✅ Multimodal: si NO hay texto y llega audio/imagen/documento, extraer con Gemini inline
+            if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
 
                 stage_meta: dict = {
@@ -1491,8 +1516,9 @@ async def ingest(msg: IngestMessage):
 
                     extracted = ""
                     if media_bytes:
+                        gemini_kind = _gemini_media_kind(msg_type, real_mime)
                         extracted, gen_meta = await _gemini_generate_text_inline(
-                            kind=msg_type,
+                            kind=gemini_kind,
                             media_bytes=media_bytes,
                             mime_type=real_mime,
                         )
@@ -1525,8 +1551,8 @@ async def ingest(msg: IngestMessage):
             # ✅ Si aún no hay texto, responde con fallback (no se queda mudo)
             if not user_text:
                 fallback_text = (
-                    "📩 Recibí tu audio/imagen, pero no pude leerlo bien.\n\n"
-                    "¿Me lo puedes escribir en texto, o reenviar el audio un poco más claro? 🙏"
+                    "📩 Recibí tu audio, imagen o documento, pero no pude interpretarlo bien.\n\n"
+                    "¿Me lo puedes escribir en texto o reenviar el archivo? 🙏"
                 )
                 send_result = await _send_ai_reply_in_chunks(msg.phone, fallback_text)
                 return {

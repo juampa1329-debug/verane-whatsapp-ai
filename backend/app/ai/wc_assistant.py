@@ -162,14 +162,66 @@ def _score_match(query: str, name: str) -> int:
     return 30 + hit * 12
 
 
+# Palabras que indican "cancelar" o "otra búsqueda" para salir del modo elección
+_CANCEL_OR_OTHER = re.compile(
+    r"^(cancelar|ninguno|ninguna|no quiero|no deseo|otro|otra|otra busqueda|otra búsqueda|"
+    r"buscar otro|buscar otra|dame otro|dame otra|no|nada)$",
+    re.I,
+)
+
 def _parse_choice_number(user_text: str) -> int | None:
-    m = re.search(r"\b([1-9])\b", (user_text or "").strip())
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except Exception:
-        return None
+    raw = (user_text or "").strip()
+    # Número explícito: 1, 2, 3...
+    m = re.search(r"\b([1-9])\b", raw)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    # "el primero", "la primera", "el segundo", "la 2", etc.
+    t = _norm(raw)
+    ordinals = {
+        "primero": 1, "primera": 1, "uno": 1, "una": 1,
+        "segundo": 2, "segunda": 2, "dos": 2,
+        "tercero": 3, "tercera": 3, "tres": 3,
+        "cuarto": 4, "cuarta": 4, "cuatro": 4,
+        "quinto": 5, "quinta": 5, "cinco": 5,
+    }
+    for word, num in ordinals.items():
+        if word in t.split() or t == word or re.search(rf"\b{re.escape(word)}\b", t):
+            return num
+    return None
+
+
+def _is_cancel_or_new_search(user_text: str) -> bool:
+    """True si el usuario quiere cancelar la elección o hacer otra búsqueda."""
+    raw = (user_text or "").strip().lower()
+    if not raw or len(raw) > 80:
+        return False
+    if _CANCEL_OR_OTHER.match(raw):
+        return True
+    # "no, busco X" / "otro perfume X"
+    if re.match(r"^(no|otro|otra)\s*,?\s*(busco|quiero|dame|perfume)", raw):
+        return True
+    return False
+
+
+# Saludos o respuestas que indican que el usuario salió del tema (salir de wc_await)
+_GREETING_OR_OFF_TOPIC = re.compile(
+    r"^(hola|holi|buenas|buenos|qué tal|que tal|gracias|ok|vale|listo|perfecto|"
+    r"no se|no sé|dejalo|déjalo|después|despues|nada|chao|adiós|adios)$",
+    re.I,
+)
+
+
+def _looks_like_greeting_or_off_topic(user_text: str) -> bool:
+    """True si el mensaje parece saludo o tema distinto (para salir de modo elección)."""
+    raw = (user_text or "").strip().lower()
+    if not raw or len(raw) > 50:
+        return False
+    if _GREETING_OR_OFF_TOPIC.match(raw):
+        return True
+    return False
 
 
 async def _wc_search_products_smart(user_text: str, per_page: int = 12) -> list[dict]:
@@ -285,6 +337,26 @@ async def handle_wc_if_applicable(
             clear_state(phone)
             return {"handled": False}
 
+        # Si el usuario dice cancelar/ninguno/otro, salir del modo elección
+        if _is_cancel_or_new_search(text_in):
+            clear_state(phone)
+            if not _looks_like_product_intent(text_in):
+                return {"handled": False}
+            # Nueva búsqueda de producto: reentrar para ejecutar búsqueda sin estado
+            return await handle_wc_if_applicable(
+                phone=phone,
+                user_text=user_text,
+                msg_type=msg_type,
+                get_state=get_state,
+                set_state=set_state,
+                clear_state=clear_state,
+                send_product_fn=send_product_fn,
+                send_text_fn=send_text_fn,
+                save_options_fn=save_options_fn,
+                load_recent_options_fn=load_recent_options_fn,
+                **kwargs,
+            )
+
         n = _parse_choice_number(text_in)
         chosen = None
 
@@ -304,10 +376,29 @@ async def handle_wc_if_applicable(
                 chosen = best
 
         if chosen and chosen.get("id"):
-            # ✅ salir del modo woo apenas manda producto
             clear_state(phone)
             wa = await send_product_fn(phone, int(chosen["id"]), "")
             return {"handled": True, "wc": True, "reason": "choice_send", "wa": wa}
+
+        # Si no eligió: salir del modo si es saludo/off-topic o nueva búsqueda de producto
+        if _looks_like_greeting_or_off_topic(text_in):
+            clear_state(phone)
+            return {"handled": False}
+        if _looks_like_product_intent(text_in):
+            clear_state(phone)
+            return await handle_wc_if_applicable(
+                phone=phone,
+                user_text=user_text,
+                msg_type=msg_type,
+                get_state=get_state,
+                set_state=set_state,
+                clear_state=clear_state,
+                send_product_fn=send_product_fn,
+                send_text_fn=send_text_fn,
+                save_options_fn=save_options_fn,
+                load_recent_options_fn=load_recent_options_fn,
+                **kwargs,
+            )
 
         await send_text_fn(phone, "¿Cuál opción deseas? Responde con el número (1, 2, 3...) o el nombre exacto 🙂")
         return {"handled": True, "wc": True, "reason": "awaiting_choice"}

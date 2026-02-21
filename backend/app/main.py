@@ -409,7 +409,7 @@ def set_extracted_text(conn, message_id: int, extracted_text: str, ai_meta: Opti
         conn.execute(text("""
             UPDATE messages
             SET extracted_text = :t,
-                ai_meta = COALESCE(:m::jsonb, ai_meta)
+                ai_meta = COALESCE(CAST(:m AS JSONB), ai_meta)
             WHERE id = :id
         """), {
             "id": int(message_id),
@@ -1429,8 +1429,10 @@ async def ingest(msg: IngestMessage):
                             media_bytes=media_bytes,
                             mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
                         )
+                        _log(trace_id, "MM_DOWNLOAD", bytes_len=len(media_bytes) if media_bytes else 0, real_mime=real_mime)    
                         stage_meta["stages"]["multimodal"] = mm_meta
                         extracted = (extracted or "").strip()
+                        _log(trace_id, "MM_GEMINI", ok=bool(extracted), gen_meta=gen_meta)
                     else:
                         stage_meta["stages"]["multimodal"] = {"ok": False, "reason": "no_media_bytes"}
 

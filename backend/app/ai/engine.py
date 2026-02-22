@@ -9,6 +9,7 @@ import requests
 from sqlalchemy import text
 
 from app.db import engine as db_engine
+from app.integrations.woocommerce import wc_enabled, looks_like_product_question
 
 
 # =========================================================
@@ -399,6 +400,9 @@ def _build_context_from_kb(user_text: str, max_chunks: int = 6, max_chars: int =
     return "\n\n".join(picked).strip()
 
 
+
+
+
 # =========================================================
 # Public API
 # =========================================================
@@ -419,6 +423,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
 
     meta = meta or {}
     user_text = (text or "").strip()
+
 
     existing_ctx = (meta.get("context") or "").strip() if isinstance(meta, dict) else ""
     if not existing_ctx and user_text:

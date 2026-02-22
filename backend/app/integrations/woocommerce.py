@@ -3,12 +3,10 @@
 import os
 import re
 import io
-import json
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 
 import httpx
 from fastapi import HTTPException
-
 from PIL import Image
 
 # =========================================================
@@ -32,7 +30,7 @@ def _norm(s: str) -> str:
 
 
 def _strip_html(s: str) -> str:
-    return re.sub(r"<[^<]+?>", "", (s or "")).strip()
+    return re.sub(r"<[^<]+?>", " ", (s or "")).strip()
 
 
 def _shorten(s: str, max_chars: int = 260) -> str:
@@ -41,6 +39,48 @@ def _shorten(s: str, max_chars: int = 260) -> str:
         return s
     cut = s[:max_chars].rsplit(" ", 1)[0].strip()
     return (cut + "…").strip()
+
+
+def _looks_like_preference_query(q: str) -> bool:
+    """
+    Heurística: si el texto parece describir gustos/ocasión (no nombre exacto),
+    usamos un fallback de búsqueda amplia para traer productos y rankear después.
+    """
+    t = _norm(q)
+    if not t:
+        return False
+
+    # Si hay números/modelos típicos -> probablemente nombre
+    if re.search(r"\b\d{2,4}\b", t):
+        return False
+
+    # Si contiene tokens de marcas comunes -> probablemente nombre
+    brandish = [
+        "dior", "versace", "armani", "azzaro", "carolina", "rabanne", "paco",
+        "givenchy", "jean", "gaultier", "valentino", "gucci", "prada", "ysl",
+        "tom ford", "hugo", "boss", "lacoste", "bvlgari", "bulgari",
+    ]
+    if any(b in t for b in brandish):
+        return False
+
+    # Palabras típicas de preferencias
+    prefs = [
+        "maduro", "elegante", "serio", "juvenil", "seductor", "sofisticado",
+        "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
+        "fresco", "dulce", "seco", "amader", "ambar", "vainill", "citr",
+        "acuatic", "aromatic", "espec", "cuero", "almizcl", "iris", "floral",
+        "gourmand", "proyeccion", "duracion", "intenso", "suave",
+        "verano", "invierno", "calor", "frio",
+    ]
+    if any(p in t for p in prefs):
+        return True
+
+    # Si es corto y genérico, no
+    if len(t.split()) <= 1:
+        return False
+
+    # Si tiene 2+ palabras y ninguna parece marca, lo tratamos como preferencia
+    return True
 
 
 async def wc_get(path: str, params: dict | None = None):
@@ -146,14 +186,54 @@ def extract_size(product: dict) -> str:
     return ""
 
 
+def _safe_categories(product: dict) -> List[dict]:
+    cats = product.get("categories") or []
+    out: List[dict] = []
+    if isinstance(cats, list):
+        for c in cats:
+            if isinstance(c, dict):
+                nm = (c.get("name") or "").strip()
+                if nm:
+                    out.append({"name": nm})
+    return out
+
+
+def _safe_tags(product: dict) -> List[dict]:
+    tags = product.get("tags") or []
+    out: List[dict] = []
+    if isinstance(tags, list):
+        for t in tags:
+            if isinstance(t, dict):
+                nm = (t.get("name") or "").strip()
+                if nm:
+                    out.append({"name": nm})
+    return out
+
+
 def map_product_for_ui(product: dict) -> dict:
+    """
+    Mapea el producto a un dict amigable para IA/UI.
+
+    ✅ IMPORTANTE:
+    - Ahora incluye 'description' (limpia) para asesoría y resúmenes.
+    - Ahora incluye 'categories' y 'tags' para ranking por preferencias.
+    """
     price = product.get("price") or product.get("regular_price") or ""
     size = extract_size(product)
     name = product.get("name") or ""
 
-    # Si tiene tamaño, lo añadimos sutilmente al nombre para que la IA y el usuario lo diferencien en la lista
+    # Si tiene tamaño, lo añadimos sutilmente al nombre para diferenciar
     if size and size.lower() not in name.lower():
         name = f"{name} ({size})"
+
+    short_description_raw = (product.get("short_description") or "").strip()
+    description_raw = (product.get("description") or "").strip()
+
+    short_description_clean = _shorten(_strip_html(short_description_raw), 260)
+    description_clean = _shorten(_strip_html(description_raw), 520)
+
+    cats = _safe_categories(product)
+    tags = _safe_tags(product)
 
     return {
         "id": product.get("id"),
@@ -161,7 +241,16 @@ def map_product_for_ui(product: dict) -> dict:
         "price": str(price),
         "permalink": product.get("permalink") or "",
         "featured_image": pick_first_image(product),
-        "short_description": (product.get("short_description") or "").strip(),
+
+        # Para IA/asesoría
+        "short_description": short_description_clean,
+        "description": description_clean,
+
+        # Preferencias
+        "categories": cats,
+        "tags": tags,
+
+        # Campos ya existentes
         "aromas": extract_aromas(product),
         "brand": extract_brand(product),
         "gender": extract_gender(product),
@@ -171,21 +260,44 @@ def map_product_for_ui(product: dict) -> dict:
 
 
 async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
+    """
+    Búsqueda Woo robusta:
+    - intenta normal
+    - fallback normalizaciones (acqua di gio, etc.)
+    - fallback tokens
+    - ✅ NUEVO: si el query parece SOLO preferencias, hace una búsqueda amplia
+      para traer un set y que el asesor (wc_assistant) haga ranking.
+    """
     q = (query or "").strip()
     if not q:
         return []
 
+    # Si parece consulta de preferencias, hacemos búsqueda amplia
+    # (para no devolver vacío cuando el usuario no da nombre)
+    is_pref = _looks_like_preference_query(q)
+    base_q = "perfume" if is_pref else q
+
+    # si es preferencia, traemos más items para tener material de ranking
+    effective_per_page = int(per_page)
+    if is_pref:
+        effective_per_page = max(effective_per_page, 24)
+
     async def _search_once(qx: str) -> List[dict]:
-        params = {"search": qx, "page": 1, "per_page": int(per_page), "status": "publish"}
+        params = {"search": qx, "page": 1, "per_page": int(effective_per_page), "status": "publish"}
         data = await wc_get("/products", params=params)
         items = [map_product_for_ui(p) for p in (data or [])]
+        # disponibles primero, luego alfabético
         items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
         return items
 
-    # 1) intento normal
-    items = await _search_once(q)
+    # 1) intento normal (o "perfume" si es preferencia)
+    items = await _search_once(base_q)
     if items:
         return items
+
+    # Si era preferencia y ni "perfume" devolvió, ya no hay mucho que hacer
+    if is_pref:
+        return []
 
     # 2) fallback: normaliza variaciones comunes (aqua/acqua, gio/giò, di/de)
     q2 = _norm(q)
@@ -332,8 +444,8 @@ def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_ur
 def build_caption(product: dict, featured_image: str, real_image: str, custom_caption: str = "") -> str:
     """
     Caption para WhatsApp "tarjeta" + texto.
-    ✅ Corrección: size debe venir de extract_size(product) si product es raw.
-    ✅ Corrección: short_description limpia + recortada.
+    ✅ size debe venir de extract_size(product) si product es raw.
+    ✅ short_description limpia + recortada.
     """
     name = (product.get("name", "") or "").strip()
     price = product.get("price") or product.get("regular_price") or ""
@@ -346,10 +458,8 @@ def build_caption(product: dict, featured_image: str, real_image: str, custom_ca
     aromas_list = extract_aromas(product)
     aromas = ", ".join(aromas_list) if aromas_list else ""
 
-    # ✅ FIX: si viene product raw, no existe product["size"]
     size = (product.get("size") or "").strip() or extract_size(product)
 
-    # ✅ Short description limpia (sin HTML) + recortada
     short_description_raw = product.get("short_description", "") or ""
     short_description = _shorten(_strip_html(short_description_raw), 260)
 

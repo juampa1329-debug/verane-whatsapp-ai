@@ -256,7 +256,7 @@ def ensure_schema():
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
-                # =========================================================
+        # =========================================================
         # ✅ MULTIMODAL / VISION (UI -> DB)
         # =========================================================
         conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_enabled BOOLEAN"""))
@@ -276,6 +276,7 @@ def ensure_schema():
                 mm_max_retries = COALESCE(mm_max_retries, 2)
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
+
 
 ensure_schema()
 
@@ -476,6 +477,7 @@ def _get_ai_send_settings() -> dict:
     except Exception:
         return defaults
 
+
 def _get_multimodal_settings() -> dict:
     defaults = {
         "mm_enabled": True,
@@ -509,7 +511,7 @@ def _get_multimodal_settings() -> dict:
         d["mm_max_retries"] = int(max(0, min(int(d.get("mm_max_retries") or 2), 8)))
         return d
     except Exception:
-        return defaults    
+        return defaults
 
 
 def _normalize_text(s: str) -> str:
@@ -661,13 +663,14 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
         },
     }
 
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+
 
 async def _groq_transcribe_audio(media_bytes: bytes, mime_type: str) -> tuple[str, dict]:
     if not GROQ_API_KEY:
         return "", {"ok": False, "reason": "GROQ_API_KEY missing"}
 
-    # Groq acepta ogg/wav/webm/etc (tu audio/ogg sirve)
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
 
@@ -678,7 +681,6 @@ async def _groq_transcribe_audio(media_bytes: bytes, mime_type: str) -> tuple[st
         "model": "whisper-large-v3-turbo",
         "response_format": "json",
         "temperature": "0",
-        # "language": "es",  # opcional (mejora un poco)
     }
 
     try:
@@ -783,7 +785,6 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
 
     _log(_new_trace_id(), "TTS_PROVIDER_SELECTED", provider=tts_provider, voice_id=tts_voice_id, model_id=tts_model_id)
 
-    # Fallback ENV para ElevenLabs si en DB está vacío
     if tts_provider == "elevenlabs" and not tts_voice_id:
         tts_voice_id = (os.getenv("ELEVENLABS_VOICE_ID", "") or "").strip()
     if tts_provider == "elevenlabs" and not tts_model_id:
@@ -792,7 +793,6 @@ async def _send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
     voice_settings = _get_voice_settings()
     max_notes = int(voice_settings.get("voice_max_notes_per_reply", 1))
 
-    # Chunking para voz
     chunks = [text_to_say]
     if max_notes > 1 and "\n\n" in text_to_say:
         chunks = [p.strip() for p in text_to_say.split("\n\n") if p.strip()][:max_notes]
@@ -1515,7 +1515,7 @@ async def ingest(msg: IngestMessage):
                     if media_bytes:
                         _log(trace_id, "MM_DOWNLOAD", bytes_len=len(media_bytes), real_mime=real_mime)
 
-                        # ✅ Si es AUDIO → Groq (Whisper)
+                        # ✅ AUDIO → Groq Whisper
                         if msg_type == "audio":
                             extracted, mm_meta = await _groq_transcribe_audio(
                                 media_bytes=media_bytes,
@@ -1528,20 +1528,14 @@ async def ingest(msg: IngestMessage):
                             extracted = (extracted or "").strip()
                             _log(trace_id, "MM_GROQ", ok=bool(extracted), meta=mm_meta)
 
-                        # ✅ Si es IMAGEN o DOCUMENTO → sigue con tu multimodal actual (Gemini)
-                        # ✅ Si es IMAGEN o DOCUMENTO → Gemini multimodal (configurable por UI)
+                        # ✅ IMAGEN/DOCUMENTO → Gemini multimodal (configurable)
                         else:
                             mm_cfg = _get_multimodal_settings()
 
                             if not mm_cfg.get("mm_enabled", True):
                                 extracted, mm_meta = "", {"ok": False, "reason": "mm_disabled"}
                             else:
-                                # multimodal.py hoy toma modelo desde ENV, así que lo seteamos aquí
-                                # (sin romper tu arquitectura actual)
                                 os.environ["GEMINI_MM_MODEL"] = str(mm_cfg.get("mm_model") or "gemini-2.5-flash").strip()
-
-                                # (opcional) también puedes setear el API key si quisieras fallback,
-                                # pero normalmente ya está en ENV.
 
                                 extracted, mm_meta = await extract_text_from_media(
                                     msg_type=msg_type,
@@ -1553,13 +1547,6 @@ async def ingest(msg: IngestMessage):
                                 "provider": mm_cfg.get("mm_provider", "google"),
                                 "model": mm_cfg.get("mm_model", ""),
                                 "mm_enabled": bool(mm_cfg.get("mm_enabled", True)),
-                                **(mm_meta or {}),
-                            }
-                            extracted = (extracted or "").strip()
-                            _log(trace_id, "MM_GEMINI", ok=bool(extracted), meta=mm_meta),
-                            
-                            stage_meta["stages"]["multimodal"] = {
-                                "provider": "gemini",
                                 **(mm_meta or {}),
                             }
                             extracted = (extracted or "").strip()
@@ -1605,10 +1592,10 @@ async def ingest(msg: IngestMessage):
                     "wa_last": send_result.get("last_wa") or {},
                 }
 
-            # Limpieza wc_await si venimos de media
+            # Limpieza Woo state si venimos de media (ahora: wc_await y wc_state)
             if msg_type != "text":
                 st_now = _get_ai_state(msg.phone) or ""
-                if st_now.startswith("wc_await:"):
+                if st_now.startswith("wc_await:") or st_now.startswith("wc_state:"):
                     _clear_ai_state(msg.phone)
 
             # =========================================================
@@ -1623,7 +1610,7 @@ async def ingest(msg: IngestMessage):
                 wc_result = await handle_wc_if_applicable(
                     phone=msg.phone,
                     user_text=user_text,
-                    msg_type="text",  # lo procesamos como texto
+                    msg_type="text",
 
                     get_state=_get_ai_state,
                     set_state=_set_ai_state,

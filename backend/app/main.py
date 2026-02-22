@@ -14,7 +14,7 @@ from sqlalchemy import text
 from starlette.requests import Request as StarletteRequest
 from app.pipeline.ingest_core import run_ingest
 from app.pipeline.wc_sender import wc_send_product
-from app.ai.wc_sender import wc_send_product
+from app.pipeline.wc_sender import wc_send_product
 
 # ✅ Router externo WhatsApp
 from app.routes.whatsapp import (

@@ -63,6 +63,17 @@ TTS_CATALOG: Dict[str, Any] = {
     }
 }
 
+MM_CATALOG: Dict[str, Any] = {
+    "providers": ["google"],
+    "defaults": {
+        "mm_enabled": True,
+        "mm_provider": "google",
+        "mm_model": "gemini-2.5-flash",
+        "mm_timeout_sec": 75,
+        "mm_max_retries": 2,
+    },
+}
+
 
 def _is_valid_provider(p: str) -> bool:
     return (p or "").strip().lower() in ("google", "groq", "mistral", "openrouter")
@@ -70,6 +81,10 @@ def _is_valid_provider(p: str) -> bool:
 
 def _is_valid_tts_provider(p: str) -> bool:
     return (p or "").strip().lower() in ("google", "elevenlabs", "piper")
+
+
+def _is_valid_mm_provider(p: str) -> bool:
+    return (p or "").strip().lower() in ("google",)
 
 
 # =========================================================
@@ -235,6 +250,7 @@ def _validate_model_flex(provider: str, model: str) -> None:
 def _get_settings_row(conn) -> Dict[str, Any]:
     """
     ✅ Incluye TTS provider/voice/model desde DB.
+    ✅ Incluye MM provider/model (multimodal) desde DB.
     Si aún NO creaste esas columnas, este SELECT fallaría.
     Asegúrate de agregarlas en ensure_schema() antes de desplegar.
     """
@@ -270,6 +286,13 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google') AS voice_tts_provider,
             COALESCE(voice_tts_voice_id, '') AS voice_tts_voice_id,
             COALESCE(voice_tts_model_id, '') AS voice_tts_model_id,
+
+            -- ✅ MULTIMODAL / VISION (imagen/documento)
+            COALESCE(mm_enabled, TRUE) AS mm_enabled,
+            COALESCE(NULLIF(TRIM(mm_provider), ''), 'google') AS mm_provider,
+            COALESCE(NULLIF(TRIM(mm_model), ''), 'gemini-2.5-flash') AS mm_model,
+            COALESCE(mm_timeout_sec, 75) AS mm_timeout_sec,
+            COALESCE(mm_max_retries, 2) AS mm_max_retries,
 
             created_at,
             updated_at
@@ -320,6 +343,13 @@ class AISettingsOut(BaseModel):
     voice_tts_voice_id: str = ""         # p.ej. ElevenLabs voice id
     voice_tts_model_id: str = ""         # p.ej. eleven_multilingual_v2
 
+    # ✅ MULTIMODAL / VISION
+    mm_enabled: bool = True
+    mm_provider: str = "google"
+    mm_model: str = "gemini-2.5-flash"
+    mm_timeout_sec: int = 75
+    mm_max_retries: int = 2
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -355,6 +385,13 @@ class AISettingsUpdate(BaseModel):
     voice_tts_provider: Optional[TTSProvider] = None
     voice_tts_voice_id: Optional[str] = None
     voice_tts_model_id: Optional[str] = None
+
+    # ✅ MULTIMODAL / VISION
+    mm_enabled: Optional[bool] = None
+    mm_provider: Optional[str] = None
+    mm_model: Optional[str] = None
+    mm_timeout_sec: Optional[int] = Field(default=None, ge=10, le=180)
+    mm_max_retries: Optional[int] = Field(default=None, ge=0, le=8)
 
 
 class AIProcessRequest(BaseModel):
@@ -416,6 +453,13 @@ def update_ai_settings(payload: AISettingsUpdate):
         tts_voice_id = current.get("voice_tts_voice_id", "") if payload.voice_tts_voice_id is None else (payload.voice_tts_voice_id or "")
         tts_model_id = current.get("voice_tts_model_id", "") if payload.voice_tts_model_id is None else (payload.voice_tts_model_id or "")
 
+        # ✅ MULTIMODAL settings
+        mm_enabled = current.get("mm_enabled", True) if payload.mm_enabled is None else bool(payload.mm_enabled)
+        mm_provider = current.get("mm_provider", "google") if payload.mm_provider is None else (payload.mm_provider or "google")
+        mm_model = current.get("mm_model", "gemini-2.5-flash") if payload.mm_model is None else (payload.mm_model or "gemini-2.5-flash")
+        mm_timeout_sec = current.get("mm_timeout_sec", 75) if payload.mm_timeout_sec is None else payload.mm_timeout_sec
+        mm_max_retries = current.get("mm_max_retries", 2) if payload.mm_max_retries is None else payload.mm_max_retries
+
         new_vals = {
             "is_enabled": current["is_enabled"] if payload.is_enabled is None else payload.is_enabled,
             "provider": (str(provider or "").strip().lower()),
@@ -446,6 +490,13 @@ def update_ai_settings(payload: AISettingsUpdate):
             "voice_tts_provider": (str(tts_provider or "google").strip().lower()),
             "voice_tts_voice_id": str(tts_voice_id or ""),
             "voice_tts_model_id": str(tts_model_id or ""),
+
+            # ✅ MULTIMODAL / VISION
+            "mm_enabled": bool(mm_enabled),
+            "mm_provider": str(mm_provider or "google").strip().lower(),
+            "mm_model": _strip_google_model_prefix(str(mm_model or "gemini-2.5-flash")).strip().lower(),
+            "mm_timeout_sec": int(mm_timeout_sec or 75),
+            "mm_max_retries": int(mm_max_retries or 2),
         }
 
         # required
@@ -470,6 +521,16 @@ def update_ai_settings(payload: AISettingsUpdate):
         # ✅ Resolver modelo (label -> id / models/xxx -> xxx) ANTES de validar
         new_vals["model"] = _resolve_model_for_provider(new_vals["provider"], new_vals["model"])
         _validate_model_flex(new_vals["provider"], new_vals["model"])
+
+        # ✅ MULTIMODAL validation
+        if not _is_valid_mm_provider(new_vals["mm_provider"]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid mm_provider: {new_vals['mm_provider']}. Allowed: ['google']",
+            )
+        mm_m = (new_vals["mm_model"] or "").strip().lower()
+        if not (mm_m.startswith("gemini-") or mm_m.startswith("gemma-")):
+            raise HTTPException(status_code=400, detail=f"Invalid mm_model format: {new_vals['mm_model']}")
 
         # fallback optional, validate too
         fb_p = (new_vals.get("fallback_provider") or "").strip().lower()
@@ -519,6 +580,13 @@ def update_ai_settings(payload: AISettingsUpdate):
                 voice_tts_provider = :voice_tts_provider,
                 voice_tts_voice_id = :voice_tts_voice_id,
                 voice_tts_model_id = :voice_tts_model_id,
+
+                -- ✅ MULTIMODAL / VISION
+                mm_enabled = :mm_enabled,
+                mm_provider = :mm_provider,
+                mm_model = :mm_model,
+                mm_timeout_sec = :mm_timeout_sec,
+                mm_max_retries = :mm_max_retries,
 
                 updated_at = NOW()
             WHERE id = :id
@@ -581,6 +649,7 @@ def list_ai_models():
     return {
         "providers": MODEL_CATALOG,
         "tts": TTS_CATALOG,
+        "mm": MM_CATALOG,
         "defaults": {
             "provider": "google",
             "model": "gemma-3-4b-it",
@@ -592,8 +661,17 @@ def list_ai_models():
             "voice_tts_provider": "google",
             "voice_tts_voice_id": "",
             "voice_tts_model_id": "",
+
+            # ✅ multimodal defaults
+            "mm_enabled": True,
+            "mm_provider": "google",
+            "mm_model": "gemini-2.5-flash",
+            "mm_timeout_sec": 75,
+            "mm_max_retries": 2,
         },
     }
+
+
 # =========================================================
 # ✅ ElevenLabs catalog endpoints (voices + models)
 # =========================================================
@@ -657,6 +735,7 @@ def elevenlabs_list_models():
         })
 
     return {"provider": "elevenlabs", "models": out}
+
 
 @router.get("/models/live")
 def list_ai_models_live(
@@ -746,10 +825,17 @@ def debug_prompt(
             "voice_prefer_voice": bool(s.get("voice_prefer_voice", False)),
             "voice_speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
 
-            # ✅ NUEVO: selector TTS desde frontend
+            # ✅ selector TTS desde frontend
             "voice_tts_provider": str(s.get("voice_tts_provider") or "google"),
             "voice_tts_voice_id": str(s.get("voice_tts_voice_id") or ""),
             "voice_tts_model_id": str(s.get("voice_tts_model_id") or ""),
+
+            # ✅ multimodal settings
+            "mm_enabled": bool(s.get("mm_enabled", True)),
+            "mm_provider": str(s.get("mm_provider") or "google"),
+            "mm_model": str(s.get("mm_model") or "gemini-2.5-flash"),
+            "mm_timeout_sec": int(s.get("mm_timeout_sec") or 75),
+            "mm_max_retries": int(s.get("mm_max_retries") or 2),
         },
         "system_prompt": system_prompt,
         "meta": meta,
@@ -764,8 +850,8 @@ def debug_prompt(
 
 @router.post("/tts")
 async def tts_endpoint(payload: TTSRequest = Body(...)):
-    text = (payload.text or "").strip()
-    if not text:
+    text_in = (payload.text or "").strip()
+    if not text_in:
         raise HTTPException(status_code=400, detail="text is required")
 
     with engine.begin() as conn:
@@ -780,7 +866,7 @@ async def tts_endpoint(payload: TTSRequest = Body(...)):
     model_id = (payload.model_id or "").strip() or str(s.get("voice_tts_model_id") or "").strip()
 
     audio_bytes, mime, filename, meta = await tts_synthesize(
-        text=text,
+        text=text_in,
         provider=provider,
         voice_id=voice_id or None,
         model_id=model_id or None,

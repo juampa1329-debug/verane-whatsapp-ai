@@ -21,11 +21,12 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
     "Gemini 2.5 Flash Preview TTS": "gemini-2.5-flash-preview-tts",
     "Gemini 2.5 Pro Preview TTS": "gemini-2.5-pro-preview-tts",
 
+    # (Dejamos estos por compatibilidad si ya están guardados en DB/UI,
+    # pero NO los usamos como default)
     "Gemini 2.0 Flash": "gemini-2.0-flash",
     "Gemini 2.0 Flash 001": "gemini-2.0-flash-001",
     "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
     "Gemini 2.0 Flash-Lite 001": "gemini-2.0-flash-lite-001",
-
     "Gemini 2.0 Flash (Image Generation) Experimental": "gemini-2.0-flash-exp",
 
     "Gemma 3 1B": "gemma-3-1b-it",
@@ -37,10 +38,20 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
 }
 
 
+def _default_google_chat_model() -> str:
+    # ✅ Default nuevo (chat): Gemini 2.5 Flash
+    return (os.getenv("GOOGLE_DEFAULT_MODEL", "").strip() or "gemini-2.5-flash").strip().lower()
+
+
+def _fallback_google_chat_model() -> str:
+    # ✅ fallback cuando hay 404 por modelo o error temporal
+    return (os.getenv("GOOGLE_FALLBACK_MODEL", "").strip() or "gemini-2.5-flash-lite").strip().lower()
+
+
 def _resolve_google_model(model: str) -> str:
     m = (model or "").strip()
     if not m:
-        return "gemini-2.0-flash"
+        return _default_google_chat_model()
 
     low = m.lower().strip()
     if low.startswith(("gemini-", "gemma-")):
@@ -171,7 +182,7 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
                     COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate,
 
-                    -- ✅ TTS ROUTER SETTINGS (ESTO ARREGLA ELEVENLABS PEGADO EN GOOGLE)
+                    -- ✅ TTS ROUTER SETTINGS
                     COALESCE(voice_tts_provider, 'google') AS voice_tts_provider,
                     COALESCE(voice_tts_voice_id, '') AS voice_tts_voice_id,
                     COALESCE(voice_tts_model_id, '') AS voice_tts_model_id
@@ -187,7 +198,7 @@ def _get_settings() -> Dict[str, Any]:
         return {
             "is_enabled": True,
             "provider": "google",
-            "model": "gemma-3-4b-it",
+            "model": _default_google_chat_model(),
             "system_prompt": "",
             "max_tokens": 512,
             "temperature": 0.7,
@@ -205,7 +216,6 @@ def _get_settings() -> Dict[str, Any]:
             "voice_prefer_voice": False,
             "voice_speaking_rate": 1.0,
 
-            # ✅ defaults TTS
             "voice_tts_provider": "google",
             "voice_tts_voice_id": "",
             "voice_tts_model_id": "",
@@ -215,7 +225,7 @@ def _get_settings() -> Dict[str, Any]:
 
     d["system_prompt"] = (d.get("system_prompt") or "").strip()
     d["provider"] = (d.get("provider") or "").strip().lower()
-    d["model"] = (d.get("model") or "").strip()
+    d["model"] = (d.get("model") or "").strip() or _default_google_chat_model()
     d["fallback_provider"] = (d.get("fallback_provider") or "").strip().lower()
     d["fallback_model"] = (d.get("fallback_model") or "").strip()
 
@@ -426,7 +436,7 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
     )
 
     provider = str(s.get("provider") or "").strip().lower()
-    model = str(s.get("model") or "").strip()
+    model = str(s.get("model") or "").strip() or _default_google_chat_model()
     timeout_sec = int(s.get("timeout_sec") or 25)
     max_retries = int(s.get("max_retries") or 1)
 
@@ -451,7 +461,6 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             "prefer_voice": bool(s.get("voice_prefer_voice", False)),
             "speaking_rate": float(s.get("voice_speaking_rate") or 1.0),
 
-            # ✅ IMPORTANTE: esto es lo que usará main.py para tts_synthesize(...)
             "tts_provider": s.get("voice_tts_provider", "google"),
             "tts_voice_id": s.get("voice_tts_voice_id", ""),
             "tts_model_id": s.get("voice_tts_model_id", ""),
@@ -624,13 +633,47 @@ def _all_user_text(messages: list[Dict[str, str]]) -> str:
     return "\n\n".join(parts).strip()
 
 
+def _extract_retry_after_seconds(headers: Dict[str, Any], body_text: str) -> Optional[float]:
+    try:
+        ra = (headers.get("Retry-After") or headers.get("retry-after") or "").strip()
+        if ra:
+            try:
+                return float(ra)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        m = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", body_text or "", re.IGNORECASE)
+        if m:
+            return float(m.group(1))
+    except Exception:
+        pass
+
+    return None
+
+
+def _looks_like_model_not_found(body_text: str) -> bool:
+    t = (body_text or "").lower()
+    if "not_found" in t or "\"status\": \"not_found\"" in t:
+        return True
+    if "no longer available" in t:
+        return True
+    if "this model models/" in t and "not available" in t:
+        return True
+    return False
+
+
 async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:
     api_key = os.getenv("GOOGLE_AI_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_AI_API_KEY is not set")
 
-    model = (model or "gemini-2.0-flash").strip()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    model = (model or _default_google_chat_model()).strip().lower()
+    fallback_model = _fallback_google_chat_model()
+
+    url_tpl = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     sys = _system_text(messages)
     user_all = _all_user_text(messages)
@@ -646,28 +689,78 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
     if sys:
         payload["systemInstruction"] = {"parts": [{"text": sys}]}
 
-    def _do() -> str:
-        r = requests.post(url, json=payload, timeout=timeout_sec)
-        if r.status_code >= 400:
-            raise RuntimeError(f"google error {r.status_code}: {r.text[:600]}")
-        data = r.json() or {}
-        cands = data.get("candidates") or []
-        if not cands:
-            return ""
+    # Retries específicos para Google (además de los del engine)
+    try:
+        override = os.getenv("GOOGLE_MAX_RETRIES_OVERRIDE", "").strip()
+        google_retries = int(override) if override else 2
+    except Exception:
+        google_retries = 2
+    google_retries = max(0, min(google_retries, 8))
 
-        content = (cands[0] or {}).get("content") or {}
-        parts = content.get("parts") or []
+    def _do_call(model_name: str) -> str:
+        url = url_tpl.format(model=model_name, api_key=api_key)
 
-        if parts and isinstance(parts, list):
-            out = []
-            for p in parts:
-                if isinstance(p, dict) and p.get("text"):
-                    out.append(str(p.get("text") or ""))
-            return "".join(out).strip()
+        attempts = google_retries + 1
+        last_err = ""
 
-        return ""
+        for i in range(attempts):
+            r = requests.post(url, json=payload, timeout=timeout_sec)
+            if r.status_code < 400:
+                data = r.json() or {}
+                cands = data.get("candidates") or []
+                if not cands:
+                    return ""
 
-    return await asyncio.to_thread(_do)
+                content = (cands[0] or {}).get("content") or {}
+                parts = content.get("parts") or []
+                if parts and isinstance(parts, list):
+                    out = []
+                    for p in parts:
+                        if isinstance(p, dict) and p.get("text"):
+                            out.append(str(p.get("text") or ""))
+                    return "".join(out).strip()
+                return ""
+
+            body = r.text[:900]
+            last_err = f"google error {r.status_code}: {body}"
+
+            # 404 modelo -> no reintentar aquí
+            if r.status_code == 404:
+                raise RuntimeError(last_err)
+
+            # 429 / 5xx -> backoff
+            if r.status_code == 429 or (500 <= r.status_code <= 599):
+                ra = _extract_retry_after_seconds(r.headers, r.text or "")
+                if ra is None:
+                    ra = min(0.8 * (2 ** i), 12.0)
+                try:
+                    import time
+                    time.sleep(float(ra))
+                except Exception:
+                    pass
+                continue
+
+            # otros 4xx -> parar
+            raise RuntimeError(last_err)
+
+        raise RuntimeError(last_err)
+
+    # 1) Intento con modelo principal
+    try:
+        return await asyncio.to_thread(_do_call, model)
+    except Exception as e:
+        err = str(e)[:900]
+
+        # 2) Si es 404 por modelo, intentar fallback_model 1 vez
+        if "google error 404" in err.lower() and fallback_model and fallback_model != model:
+            # Solo intentamos fallback si parece deprecación/modelo no disponible
+            if _looks_like_model_not_found(err):
+                try:
+                    return await asyncio.to_thread(_do_call, fallback_model)
+                except Exception as e2:
+                    raise RuntimeError(str(e2)[:900])
+
+        raise RuntimeError(err)
 
 
 async def _call_groq(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:

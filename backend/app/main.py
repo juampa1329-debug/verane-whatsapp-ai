@@ -237,7 +237,7 @@ def ensure_schema():
                 voice_tts_provider, voice_tts_voice_id, voice_tts_model_id
             )
             SELECT
-                TRUE, 'google', 'gemma-3.4b-it', '',
+                TRUE, 'google', 'gemini-2.5-flash', '',
                 512, 0.7,
                 'groq', 'llama-3.1-8b-instant',
                 25, 1,
@@ -256,6 +256,26 @@ def ensure_schema():
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
 
+                # =========================================================
+        # ✅ MULTIMODAL / VISION (UI -> DB)
+        # =========================================================
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_enabled BOOLEAN"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_provider TEXT"""))         # por ahora: 'google'
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_model TEXT"""))            # ej: gemini-2.5-flash
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_timeout_sec INTEGER"""))   # ej: 75
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_max_retries INTEGER"""))   # ej: 2
+
+        # Defaults multimodal
+        conn.execute(text("""
+            UPDATE ai_settings
+            SET
+                mm_enabled = COALESCE(mm_enabled, TRUE),
+                mm_provider = COALESCE(NULLIF(TRIM(mm_provider), ''), 'google'),
+                mm_model = COALESCE(NULLIF(TRIM(mm_model), ''), 'gemini-2.5-flash'),
+                mm_timeout_sec = COALESCE(mm_timeout_sec, 75),
+                mm_max_retries = COALESCE(mm_max_retries, 2)
+            WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
+        """))
 
 ensure_schema()
 
@@ -455,6 +475,41 @@ def _get_ai_send_settings() -> dict:
         return d
     except Exception:
         return defaults
+
+def _get_multimodal_settings() -> dict:
+    defaults = {
+        "mm_enabled": True,
+        "mm_provider": "google",
+        "mm_model": "gemini-2.5-flash",
+        "mm_timeout_sec": 75,
+        "mm_max_retries": 2,
+    }
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(mm_enabled, TRUE) AS mm_enabled,
+                    COALESCE(NULLIF(TRIM(mm_provider), ''), 'google') AS mm_provider,
+                    COALESCE(NULLIF(TRIM(mm_model), ''), 'gemini-2.5-flash') AS mm_model,
+                    COALESCE(mm_timeout_sec, 75) AS mm_timeout_sec,
+                    COALESCE(mm_max_retries, 2) AS mm_max_retries
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+
+        if not r:
+            return defaults
+
+        d = dict(r)
+        d["mm_enabled"] = bool(d.get("mm_enabled"))
+        d["mm_provider"] = (d.get("mm_provider") or "google").strip().lower()
+        d["mm_model"] = (d.get("mm_model") or "gemini-2.5-flash").strip().lower()
+        d["mm_timeout_sec"] = int(max(10, min(int(d.get("mm_timeout_sec") or 75), 180)))
+        d["mm_max_retries"] = int(max(0, min(int(d.get("mm_max_retries") or 2), 8)))
+        return d
+    except Exception:
+        return defaults    
 
 
 def _normalize_text(s: str) -> str:
@@ -1474,12 +1529,35 @@ async def ingest(msg: IngestMessage):
                             _log(trace_id, "MM_GROQ", ok=bool(extracted), meta=mm_meta)
 
                         # ✅ Si es IMAGEN o DOCUMENTO → sigue con tu multimodal actual (Gemini)
+                        # ✅ Si es IMAGEN o DOCUMENTO → Gemini multimodal (configurable por UI)
                         else:
-                            extracted, mm_meta = await extract_text_from_media(
-                                msg_type=msg_type,
-                                media_bytes=media_bytes,
-                                mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
-                            )
+                            mm_cfg = _get_multimodal_settings()
+
+                            if not mm_cfg.get("mm_enabled", True):
+                                extracted, mm_meta = "", {"ok": False, "reason": "mm_disabled"}
+                            else:
+                                # multimodal.py hoy toma modelo desde ENV, así que lo seteamos aquí
+                                # (sin romper tu arquitectura actual)
+                                os.environ["GEMINI_MM_MODEL"] = str(mm_cfg.get("mm_model") or "gemini-2.5-flash").strip()
+
+                                # (opcional) también puedes setear el API key si quisieras fallback,
+                                # pero normalmente ya está en ENV.
+
+                                extracted, mm_meta = await extract_text_from_media(
+                                    msg_type=msg_type,
+                                    media_bytes=media_bytes,
+                                    mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
+                                )
+
+                            stage_meta["stages"]["multimodal"] = {
+                                "provider": mm_cfg.get("mm_provider", "google"),
+                                "model": mm_cfg.get("mm_model", ""),
+                                "mm_enabled": bool(mm_cfg.get("mm_enabled", True)),
+                                **(mm_meta or {}),
+                            }
+                            extracted = (extracted or "").strip()
+                            _log(trace_id, "MM_GEMINI", ok=bool(extracted), meta=mm_meta),
+                            
                             stage_meta["stages"]["multimodal"] = {
                                 "provider": "gemini",
                                 **(mm_meta or {}),

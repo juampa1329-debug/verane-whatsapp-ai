@@ -4,6 +4,7 @@ import json
 import base64
 import tempfile
 import subprocess
+import asyncio
 from typing import Tuple, Dict, Any, Optional
 
 import httpx
@@ -18,7 +19,34 @@ def _clean_mime(m: str) -> str:
 
 
 def _default_gemini_mm_model() -> str:
-    return (os.getenv("GEMINI_MM_MODEL", "").strip() or "gemini-2.0-flash").strip()
+    """
+    Modelo principal para multimodal (VISION/OCR/DOC).
+    ✅ Cambiado a Gemini 2.5 por defecto.
+    """
+    return (os.getenv("GEMINI_MM_MODEL", "").strip() or "gemini-2.5-flash").strip()
+
+
+def _fallback_gemini_mm_model() -> str:
+    """
+    Modelo fallback si el principal falla (404 deprecado/no disponible, etc.)
+    """
+    return (os.getenv("GEMINI_MM_FALLBACK_MODEL", "").strip() or "gemini-2.5-flash-lite").strip()
+
+
+def _gemini_timeout_sec() -> float:
+    try:
+        return float(os.getenv("GEMINI_MM_TIMEOUT_SEC", "75").strip() or "75")
+    except Exception:
+        return 75.0
+
+
+def _gemini_max_retries() -> int:
+    try:
+        # retries extra ante 429/5xx (no cuenta el primer intento)
+        v = int(os.getenv("GEMINI_MM_MAX_RETRIES", "2").strip() or "2")
+        return max(0, min(v, 8))
+    except Exception:
+        return 2
 
 
 def is_effectively_empty_text(text_value: str) -> bool:
@@ -103,33 +131,86 @@ def _ffmpeg_convert_to_wav_16k_mono(in_bytes: bytes, in_mime: str) -> Tuple[byte
         return b"", "audio/wav", meta
 
 
-async def gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: str) -> Tuple[str, Dict[str, Any]]:
-    api_key = _get_gemini_key()
-    if not api_key:
-        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
+def _extract_retry_after_seconds(headers: httpx.Headers, body_text: str) -> Optional[float]:
+    """
+    Intenta obtener retry_after desde:
+    - Header Retry-After
+    - Mensaje tipo: "Please retry in 16.86s"
+    """
+    try:
+        ra = (headers.get("retry-after") or headers.get("Retry-After") or "").strip()
+        if ra:
+            # Puede ser segundos (int) o fecha HTTP; tomamos segundos si es numérico
+            try:
+                return float(ra)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
-    model = _default_gemini_mm_model()
-    mime_clean = _clean_mime(mime_type)
+    # Parsear texto del body
+    try:
+        m = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", body_text or "", re.IGNORECASE)
+        if m:
+            return float(m.group(1))
+    except Exception:
+        pass
 
+    return None
+
+
+def _is_model_not_found_404(body_text: str) -> bool:
+    """
+    Detecta el caso típico:
+    - NOT_FOUND
+    - "model ... is no longer available"
+    """
+    t = (body_text or "").lower()
+    if "not_found" in t or "\"status\": \"not_found\"" in t:
+        return True
+    if "no longer available" in t:
+        return True
+    if "model models/" in t and "not found" in t:
+        return True
+    return False
+
+
+def _build_prompt(kind: str) -> str:
     if kind == "audio":
-        prompt = (
+        return (
             "Transcribe exactamente el audio en español. "
             "No inventes nada. "
             "Devuelve SOLO el texto transcrito, sin explicaciones."
         )
-    elif kind == "document":
-        prompt = (
+    if kind == "document":
+        return (
             "Extrae o resume el contenido del documento. "
             "Si tiene texto legible, transcríbelo. "
             "Si es una imagen o foto dentro del documento, descríbela. "
             "Devuelve SOLO el texto útil, sin explicaciones."
         )
-    else:
-        prompt = (
-            "Describe la imagen con detalle útil para un asesor comercial. "
-            "Si hay texto visible (nombre del producto, etiqueta, precio, caja), extráelo. "
-            "Devuelve SOLO: (1) descripción corta. (2) texto visible si existe."
-        )
+    # image
+    return (
+        "Describe la imagen con detalle útil para un asesor comercial. "
+        "Si hay texto visible (nombre del producto, etiqueta, precio, caja), extráelo. "
+        "Devuelve SOLO: (1) descripción corta. (2) texto visible si existe."
+    )
+
+
+async def _gemini_generate_with_model(
+    *,
+    model: str,
+    kind: str,
+    media_bytes: bytes,
+    mime_type: str,
+    timeout_sec: float,
+) -> Tuple[str, Dict[str, Any]]:
+    api_key = _get_gemini_key()
+    if not api_key:
+        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
+
+    mime_clean = _clean_mime(mime_type)
+    prompt = _build_prompt(kind)
 
     b64 = base64.b64encode(media_bytes).decode("utf-8")
 
@@ -145,20 +226,38 @@ async def gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: 
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
     }
 
+    t0 = asyncio.get_event_loop().time()
     try:
-        async with httpx.AsyncClient(timeout=75) as client:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
             r = await client.post(url, json=body)
     except Exception as e:
-        return "", {"ok": False, "stage": "http", "error": str(e)[:900], "model": model, "mime_type": mime_clean}
+        return "", {
+            "ok": False,
+            "stage": "http",
+            "error": str(e)[:900],
+            "model": model,
+            "mime_type": mime_clean,
+        }
+
+    latency_ms = int((asyncio.get_event_loop().time() - t0) * 1000)
 
     if r.status_code >= 400:
+        body_text = ""
+        try:
+            body_text = r.text or ""
+        except Exception:
+            body_text = ""
+
+        retry_after = _extract_retry_after_seconds(r.headers, body_text)
         return "", {
             "ok": False,
             "stage": "generate",
-            "status": r.status_code,
-            "body": r.text[:1200],
+            "status": int(r.status_code),
+            "body": (body_text[:1200] if body_text else ""),
             "model": model,
             "mime_type": mime_clean,
+            "latency_ms": latency_ms,
+            "retry_after_s": retry_after,
         }
 
     j = r.json() or {}
@@ -174,7 +273,124 @@ async def gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: 
     except Exception:
         out_text = ""
 
-    return out_text, {"ok": True, "stage": "generate", "model": model, "mime_type": mime_clean}
+    return out_text, {
+        "ok": True,
+        "stage": "generate",
+        "status": int(r.status_code),
+        "model": model,
+        "mime_type": mime_clean,
+        "latency_ms": latency_ms,
+    }
+
+
+async def gemini_generate_text_inline(kind: str, media_bytes: bytes, mime_type: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Wrapper robusto:
+    - Usa modelo principal (Gemini 2.5 por defecto)
+    - Si 404 (modelo no disponible) -> intenta fallback model 1 vez
+    - Si 429/5xx -> retries con backoff (respeta retry_after si existe)
+    """
+    api_key = _get_gemini_key()
+    if not api_key:
+        return "", {"ok": False, "reason": "GOOGLE_AI_API_KEY missing"}
+
+    primary_model = _default_gemini_mm_model()
+    fallback_model = _fallback_gemini_mm_model()
+    timeout_sec = _gemini_timeout_sec()
+    max_retries = _gemini_max_retries()
+
+    tried_models = []
+    attempts = 0
+
+    async def _attempt(model_name: str) -> Tuple[str, Dict[str, Any]]:
+        nonlocal attempts
+        attempts += 1
+        tried_models.append(model_name)
+        return await _gemini_generate_with_model(
+            model=model_name,
+            kind=kind,
+            media_bytes=media_bytes,
+            mime_type=mime_type,
+            timeout_sec=timeout_sec,
+        )
+
+    # 1) Intento con primary (con retries si 429/5xx)
+    last_meta: Dict[str, Any] = {}
+    last_text: str = ""
+
+    for i in range(max_retries + 1):
+        txt, meta = await _attempt(primary_model)
+        last_text, last_meta = txt, meta
+
+        if meta.get("ok") is True:
+            meta.update({
+                "attempts": attempts,
+                "tried_models": tried_models,
+                "primary_model": primary_model,
+                "fallback_model": fallback_model,
+            })
+            return (txt or "").strip(), meta
+
+        status = int(meta.get("status") or 0)
+        body_text = str(meta.get("body") or "")
+
+        # 404 -> no hacemos retries: pasamos a fallback model
+        if status == 404 and _is_model_not_found_404(body_text):
+            break
+
+        # 429 o 5xx -> backoff y reintentar
+        if status == 429 or (500 <= status <= 599):
+            retry_after = meta.get("retry_after_s")
+            if retry_after is None:
+                # Backoff simple
+                retry_after = min(2.0 * (2 ** i), 20.0)
+            try:
+                await asyncio.sleep(float(retry_after))
+            except Exception:
+                pass
+            continue
+
+        # otros 4xx -> no reintentar
+        break
+
+    # 2) Intento con fallback model (1 vez; y retries si 429/5xx)
+    if fallback_model and fallback_model != primary_model:
+        for i in range(max_retries + 1):
+            txt, meta = await _attempt(fallback_model)
+            last_text, last_meta = txt, meta
+
+            if meta.get("ok") is True:
+                meta.update({
+                    "attempts": attempts,
+                    "tried_models": tried_models,
+                    "primary_model": primary_model,
+                    "fallback_model": fallback_model,
+                    "used_fallback": True,
+                })
+                return (txt or "").strip(), meta
+
+            status = int(meta.get("status") or 0)
+            # 429 o 5xx -> reintentar con backoff
+            if status == 429 or (500 <= status <= 599):
+                retry_after = meta.get("retry_after_s")
+                if retry_after is None:
+                    retry_after = min(2.0 * (2 ** i), 20.0)
+                try:
+                    await asyncio.sleep(float(retry_after))
+                except Exception:
+                    pass
+                continue
+            break
+
+    # Falló todo
+    if isinstance(last_meta, dict):
+        last_meta.update({
+            "attempts": attempts,
+            "tried_models": tried_models,
+            "primary_model": primary_model,
+            "fallback_model": fallback_model,
+        })
+    return "", (last_meta or {"ok": False, "reason": "gemini_failed"})
 
 
 async def extract_text_from_media(

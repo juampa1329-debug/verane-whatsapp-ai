@@ -1,3 +1,5 @@
+# app/integrations/woocommerce.py
+
 import os
 import re
 import io
@@ -29,6 +31,18 @@ def _norm(s: str) -> str:
     return s
 
 
+def _strip_html(s: str) -> str:
+    return re.sub(r"<[^<]+?>", "", (s or "")).strip()
+
+
+def _shorten(s: str, max_chars: int = 260) -> str:
+    s = re.sub(r"\s+", " ", (s or "").strip())
+    if len(s) <= max_chars:
+        return s
+    cut = s[:max_chars].rsplit(" ", 1)[0].strip()
+    return (cut + "…").strip()
+
+
 async def wc_get(path: str, params: dict | None = None):
     if not wc_enabled():
         raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
@@ -41,7 +55,6 @@ async def wc_get(path: str, params: dict | None = None):
     try:
         async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "verane-bot/1.0"}) as client:
             r = await client.get(url, params=params)
-
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
 
@@ -123,7 +136,10 @@ def extract_size(product: dict) -> str:
         if not isinstance(a, dict):
             continue
         nm = (a.get("name") or "").lower().strip()
-        if nm in ("tamaño", "tamano", "size", "volumen", "mililitros", "ml", "capacidad", "presentacion", "presentación"):
+        if nm in (
+            "tamaño", "tamano", "size", "volumen", "mililitros", "ml",
+            "capacidad", "presentacion", "presentación"
+        ):
             opts = a.get("options") or []
             if isinstance(opts, list) and opts:
                 return str(opts[0]).strip()
@@ -134,11 +150,11 @@ def map_product_for_ui(product: dict) -> dict:
     price = product.get("price") or product.get("regular_price") or ""
     size = extract_size(product)
     name = product.get("name") or ""
-    
+
     # Si tiene tamaño, lo añadimos sutilmente al nombre para que la IA y el usuario lo diferencien en la lista
     if size and size.lower() not in name.lower():
         name = f"{name} ({size})"
-        
+
     return {
         "id": product.get("id"),
         "name": name,
@@ -314,10 +330,14 @@ def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_ur
 
 
 def build_caption(product: dict, featured_image: str, real_image: str, custom_caption: str = "") -> str:
-    name = product.get("name", "") or ""
+    """
+    Caption para WhatsApp "tarjeta" + texto.
+    ✅ Corrección: size debe venir de extract_size(product) si product es raw.
+    ✅ Corrección: short_description limpia + recortada.
+    """
+    name = (product.get("name", "") or "").strip()
     price = product.get("price") or product.get("regular_price") or ""
-    short_description = re.sub('<[^<]+?>', '', product.get("short_description", "") or "").strip()
-    permalink = product.get("permalink", "") or ""
+    permalink = (product.get("permalink", "") or "").strip()
 
     brand = extract_brand(product)
     gender = extract_gender(product)
@@ -325,12 +345,21 @@ def build_caption(product: dict, featured_image: str, real_image: str, custom_ca
 
     aromas_list = extract_aromas(product)
     aromas = ", ".join(aromas_list) if aromas_list else ""
-    
-    size = product.get("size")
 
-    caption_lines = [f"✨ {name}"]
+    # ✅ FIX: si viene product raw, no existe product["size"]
+    size = (product.get("size") or "").strip() or extract_size(product)
+
+    # ✅ Short description limpia (sin HTML) + recortada
+    short_description_raw = product.get("short_description", "") or ""
+    short_description = _shorten(_strip_html(short_description_raw), 260)
+
+    caption_lines = []
+    if name:
+        caption_lines.append(f"✨ {name}")
     if size:
         caption_lines.append(f"📏 Tamaño: {size}")
+    if brand:
+        caption_lines.append(f"🏷️ Marca: {brand}")
     if gender_label:
         caption_lines.append(f"👤 Para: {gender_label}")
     if aromas:
@@ -338,7 +367,7 @@ def build_caption(product: dict, featured_image: str, real_image: str, custom_ca
     if price:
         caption_lines.append(f"💰 Precio: ${price}")
     if short_description:
-        caption_lines.append(f"\n{short_description}")
+        caption_lines.append(f"\n📝 {short_description}")
     if permalink:
         caption_lines.append(f"\n🛒 Ver producto: {permalink}")
     if real_image:

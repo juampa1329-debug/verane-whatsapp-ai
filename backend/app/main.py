@@ -606,6 +606,38 @@ async def _send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
         },
     }
 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+
+async def _groq_transcribe_audio(media_bytes: bytes, mime_type: str) -> tuple[str, dict]:
+    if not GROQ_API_KEY:
+        return "", {"ok": False, "reason": "GROQ_API_KEY missing"}
+
+    # Groq acepta ogg/wav/webm/etc (tu audio/ogg sirve)
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+
+    files = {
+        "file": ("audio.ogg", media_bytes, (mime_type or "audio/ogg")),
+    }
+    data = {
+        "model": "whisper-large-v3-turbo",
+        "response_format": "json",
+        "temperature": "0",
+        # "language": "es",  # opcional (mejora un poco)
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, headers=headers, data=data, files=files)
+    except Exception as e:
+        return "", {"ok": False, "stage": "http", "error": str(e)[:900]}
+
+    if r.status_code >= 400:
+        return "", {"ok": False, "stage": "transcribe", "status": r.status_code, "body": r.text[:900]}
+
+    j = r.json() or {}
+    return (j.get("text") or "").strip(), {"ok": True, "stage": "transcribe", "model": data["model"]}
+
 
 def _get_voice_settings() -> dict:
     defaults = {
@@ -1423,16 +1455,38 @@ async def ingest(msg: IngestMessage):
                     }
 
                     extracted = ""
+                    mm_meta = {}
+
                     if media_bytes:
-                        extracted, mm_meta = await extract_text_from_media(
-                            msg_type=msg_type,
-                            media_bytes=media_bytes,
-                            mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
-                        )
-                        _log(trace_id, "MM_DOWNLOAD", bytes_len=len(media_bytes) if media_bytes else 0, real_mime=real_mime)    
-                        stage_meta["stages"]["multimodal"] = mm_meta
-                        extracted = (extracted or "").strip()
-                        _log(trace_id, "MM_GEMINI", ok=bool(extracted), gen_meta=gen_meta)
+                        _log(trace_id, "MM_DOWNLOAD", bytes_len=len(media_bytes), real_mime=real_mime)
+
+                        # ✅ Si es AUDIO → Groq (Whisper)
+                        if msg_type == "audio":
+                            extracted, mm_meta = await _groq_transcribe_audio(
+                                media_bytes=media_bytes,
+                                mime_type=(real_mime or msg.mime_type or "audio/ogg"),
+                            )
+                            stage_meta["stages"]["multimodal"] = {
+                                "provider": "groq",
+                                **(mm_meta or {}),
+                            }
+                            extracted = (extracted or "").strip()
+                            _log(trace_id, "MM_GROQ", ok=bool(extracted), meta=mm_meta)
+
+                        # ✅ Si es IMAGEN o DOCUMENTO → sigue con tu multimodal actual (Gemini)
+                        else:
+                            extracted, mm_meta = await extract_text_from_media(
+                                msg_type=msg_type,
+                                media_bytes=media_bytes,
+                                mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
+                            )
+                            stage_meta["stages"]["multimodal"] = {
+                                "provider": "gemini",
+                                **(mm_meta or {}),
+                            }
+                            extracted = (extracted or "").strip()
+                            _log(trace_id, "MM_GEMINI", ok=bool(extracted), meta=mm_meta)
+
                     else:
                         stage_meta["stages"]["multimodal"] = {"ok": False, "reason": "no_media_bytes"}
 

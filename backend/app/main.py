@@ -545,22 +545,23 @@ def get_conversations(
 
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):
-    phone = (phone or "").strip()
-    if not phone:
-        raise HTTPException(status_code=400, detail="phone required")
-
     with engine.begin() as conn:
         rows = conn.execute(text("""
-            SELECT
-                id, phone, direction, msg_type, text,
-                media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
-                featured_image, real_image, permalink, created_at,
-                extracted_text, ai_meta,
-                wa_message_id, wa_status, wa_error, wa_ts_sent, wa_ts_delivered, wa_ts_read
-            FROM messages
-            WHERE phone = :phone
+            WITH latest AS (
+                SELECT
+                    id, phone, direction, msg_type, text,
+                    media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
+                    featured_image, real_image, permalink, created_at,
+                    extracted_text, ai_meta,
+                    wa_message_id, wa_status, wa_error, wa_ts_sent, wa_ts_delivered, wa_ts_read
+                FROM messages
+                WHERE phone = :phone
+                ORDER BY created_at DESC
+                LIMIT 500
+            )
+            SELECT *
+            FROM latest
             ORDER BY created_at ASC
-            LIMIT 500
         """), {"phone": phone}).mappings().all()
 
     return {"messages": [dict(r) for r in rows]}

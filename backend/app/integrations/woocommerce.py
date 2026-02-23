@@ -588,6 +588,7 @@ async def _ingest_internal(
 # Webhook receiver
 # =========================================================
 
+
 @router.post("/api/whatsapp/webhook")
 async def whatsapp_receive(request: Request):
     raw = await request.body()
@@ -660,3 +661,49 @@ async def whatsapp_receive(request: Request):
 async def proxy_media(media_id: str):
     content, ct = await download_whatsapp_media_bytes(media_id)
     return StreamingResponse(iter([content]), media_type=ct)
+
+def looks_like_product_question(user_text: str) -> bool:
+    """
+    Detector de intención Woo (estricto para evitar interceptar todo):
+    - Señales claras: precio, stock, disponibilidad, buscar/recomendar, perfume/fragancia + verbo
+    """
+    t = _norm(user_text)
+    if not t:
+        return False
+
+    generic = {
+        "ok", "listo", "dale", "gracias", "perfecto", "de una", "vale", "bien",
+        "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+    }
+    if t in generic:
+        return False
+
+    strong_signals = [
+        "precio", "vale", "cuanto", "cuánto", "cost", "valor",
+        "disponible", "disponibles", "stock", "hay stock", "agotado",
+        "envio", "envío", "domicilio",
+        "recomiend", "recomendar", "suger", "buscar", "encuentra", "muest", "muestr",
+    ]
+    if any(s in t for s in strong_signals):
+        return True
+
+    domain_words = ["perfume", "fragancia", "colonia"]
+    has_domain = any(w in t for w in domain_words)
+
+    generic_verbs = ["tienes", "tienen", "hay", "manej", "venden", "ofrecen"]
+    has_generic_verb = any(v in t for v in generic_verbs)
+
+    strong_tokens = (
+        "gio", "armani", "dior", "versace", "azzaro", "carolina",
+        "nitro", "212", "one million", "paco", "rabanne",
+        "tom ford", "gucci", "prada", "ysl", "valentino", "gaultier",
+    )
+    has_brandish = any(tok in t for tok in strong_tokens)
+
+    if has_generic_verb and (has_domain or has_brandish):
+        return True
+
+    if len(t.split()) <= 6 and len(t) >= 6:
+        return has_brandish
+
+    return False

@@ -14,7 +14,12 @@ from sqlalchemy import text
 from app.db import engine  # ✅ usa SOLO este engine
 
 router = APIRouter()
+WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
+WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
+WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
 
+def wc_enabled() -> bool:
+    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 FORWARD_URLS = os.getenv("WHATSAPP_FORWARD_URLS", "")
 FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"

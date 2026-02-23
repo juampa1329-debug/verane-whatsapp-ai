@@ -7,25 +7,25 @@ import re
 import json
 import asyncio
 from datetime import datetime
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 from sqlalchemy import text
 
 from app.db import engine
 
-# WhatsApp sender (ya lo tienes)
+# WhatsApp sender
 from app.routes.whatsapp import (
     send_whatsapp_text,
     send_whatsapp_media_id,
     upload_whatsapp_media,
 )
 
-# TTS (ya lo tienes)
+# TTS
 from app.ai.tts import tts_synthesize
 
 
 # -------------------------
-# DB helpers (necesarios para guardar OUT y wa_status)
+# DB helpers
 # -------------------------
 
 def save_message(
@@ -45,83 +45,133 @@ def save_message(
     real_image: Optional[str] = None,
     permalink: Optional[str] = None,
 ) -> int:
-    r = conn.execute(text("""
-        INSERT INTO messages (
-            phone, direction, msg_type, text,
-            media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
-            featured_image, real_image, permalink, created_at,
-            wa_status, wa_ts_sent
-        )
-        VALUES (
-            :phone, :direction, :msg_type, :text,
-            :media_url, :media_caption, :media_id, :mime_type, :file_name, :file_size, :duration_sec,
-            :featured_image, :real_image, :permalink, :created_at,
-            :wa_status, :wa_ts_sent
-        )
-        RETURNING id
-    """), {
-        "phone": phone,
-        "direction": direction,
-        "msg_type": msg_type,
-        "text": text_msg,
-        "media_url": media_url,
-        "media_caption": media_caption,
-        "media_id": media_id,
-        "mime_type": mime_type,
-        "file_name": file_name,
-        "file_size": file_size,
-        "duration_sec": duration_sec,
-        "featured_image": featured_image,
-        "real_image": real_image,
-        "permalink": permalink,
-        "created_at": datetime.utcnow(),
-        "wa_status": "sent" if direction == "out" else None,
-        "wa_ts_sent": datetime.utcnow() if direction == "out" else None,
-    })
+    """
+    Guarda un mensaje (IN/OUT) y SIEMPRE hace bump de conversations.updated_at
+    Importante:
+      - OUT se guarda como wa_status='queued' (no 'sent') hasta confirmar WhatsApp.
+    """
+    direction = (direction or "in").strip().lower()
+    if direction not in ("in", "out"):
+        direction = "in"
+
+    msg_type = (msg_type or "text").strip().lower()
+    now = datetime.utcnow()
+
+    initial_wa_status = None
+    initial_wa_ts_sent = None
+    if direction == "out":
+        # NO marcar como sent todavía
+        initial_wa_status = "queued"
+        initial_wa_ts_sent = None
+
+    r = conn.execute(
+        text("""
+            INSERT INTO messages (
+                phone, direction, msg_type, text,
+                media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
+                featured_image, real_image, permalink, created_at,
+                wa_status, wa_ts_sent
+            )
+            VALUES (
+                :phone, :direction, :msg_type, :text,
+                :media_url, :media_caption, :media_id, :mime_type, :file_name, :file_size, :duration_sec,
+                :featured_image, :real_image, :permalink, :created_at,
+                :wa_status, :wa_ts_sent
+            )
+            RETURNING id
+        """),
+        {
+            "phone": phone,
+            "direction": direction,
+            "msg_type": msg_type,
+            "text": text_msg or "",
+            "media_url": media_url,
+            "media_caption": media_caption,
+            "media_id": media_id,
+            "mime_type": mime_type,
+            "file_name": file_name,
+            "file_size": file_size,
+            "duration_sec": duration_sec,
+            "featured_image": featured_image,
+            "real_image": real_image,
+            "permalink": permalink,
+            "created_at": now,
+            "wa_status": initial_wa_status,
+            "wa_ts_sent": initial_wa_ts_sent,
+        },
+    )
 
     message_id = int(r.scalar())
 
-    conn.execute(text("""
-        INSERT INTO conversations (phone, updated_at)
-        VALUES (:phone, :updated_at)
-        ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
-    """), {"phone": phone, "updated_at": datetime.utcnow()})
+    # Bump updated_at SIEMPRE que entra o sale un mensaje
+    conn.execute(
+        text("""
+            INSERT INTO conversations (phone, updated_at)
+            VALUES (:phone, :updated_at)
+            ON CONFLICT (phone) DO UPDATE SET updated_at = EXCLUDED.updated_at
+        """),
+        {"phone": phone, "updated_at": now},
+    )
 
     return message_id
 
 
-def set_wa_send_result(conn, local_message_id: int, wa_message_id: Optional[str], sent_ok: bool, wa_error: str = ""):
-    if not wa_message_id or not sent_ok:
-        conn.execute(text("""
-            UPDATE messages
-            SET wa_status = 'failed',
-                wa_error = :wa_error
-            WHERE id = :id
-        """), {"id": local_message_id, "wa_error": wa_error or "WhatsApp send failed"})
+def set_wa_send_result(
+    conn,
+    local_message_id: int,
+    wa_message_id: Optional[str],
+    sent_ok: bool,
+    wa_error: str = "",
+):
+    """
+    Ajusta estado de WhatsApp para un mensaje OUT.
+    """
+    if not sent_ok or not wa_message_id:
+        conn.execute(
+            text("""
+                UPDATE messages
+                SET wa_status = 'failed',
+                    wa_error  = :wa_error
+                WHERE id = :id
+            """),
+            {"id": int(local_message_id), "wa_error": (wa_error or "WhatsApp send failed")[:900]},
+        )
         return
 
-    conn.execute(text("""
-        UPDATE messages
-        SET wa_message_id = :wa_message_id,
-            wa_status = 'sent',
-            wa_error = NULL,
-            wa_ts_sent = COALESCE(wa_ts_sent, NOW())
-        WHERE id = :id
-    """), {"id": local_message_id, "wa_message_id": wa_message_id})
+    conn.execute(
+        text("""
+            UPDATE messages
+            SET wa_message_id = :wa_message_id,
+                wa_status     = 'sent',
+                wa_error      = NULL,
+                wa_ts_sent    = COALESCE(wa_ts_sent, NOW())
+            WHERE id = :id
+        """),
+        {"id": int(local_message_id), "wa_message_id": str(wa_message_id)},
+    )
 
 
 def set_extracted_text(conn, message_id: int, extracted_text: str, ai_meta: Optional[dict] = None) -> None:
+    """
+    Guarda extracted_text y (opcionalmente) ai_meta como JSONB.
+    """
     try:
-        conn.execute(text("""
-            UPDATE messages
-            SET extracted_text = :t,
-                ai_meta = COALESCE(CAST(:m AS JSONB), ai_meta)
-            WHERE id = :id
-        """), {
-            "id": int(message_id),
-            "t": (extracted_text or ""),
-            "m": json.dumps(ai_meta or {}, ensure_ascii=False) if ai_meta is not None else None
-        })
+        conn.execute(
+            text("""
+                UPDATE messages
+                SET extracted_text = :t,
+                    ai_meta = CASE
+                        WHEN :m IS NULL THEN ai_meta
+                        ELSE COALESCE(CAST(:m AS JSONB), ai_meta)
+                    END
+                WHERE id = :id
+            """),
+            {
+                "id": int(message_id),
+                "t": (extracted_text or ""),
+                "m": json.dumps(ai_meta or {}, ensure_ascii=False) if ai_meta is not None else None,
+            },
+        )
     except Exception:
         return
 
@@ -344,7 +394,7 @@ async def send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
     sent_any = False
     wa_ids: List[str] = []
     local_ids: List[int] = []
-    last_wa_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
+    last_wa_resp: dict = {"sent": False, "reason": "no chunks"}
 
     for idx, chunk in enumerate(chunks):
         with engine.begin() as conn:
@@ -357,7 +407,11 @@ async def send_ai_reply_in_chunks(phone: str, full_text: str) -> dict:
             )
         local_ids.append(local_out_id)
 
-        wa_resp = await send_whatsapp_text(phone, chunk)
+        try:
+            wa_resp = await send_whatsapp_text(phone, chunk)
+        except Exception as e:
+            wa_resp = {"sent": False, "error": str(e)[:900], "reason": "send_exception"}
+
         last_wa_resp = wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
 
         wa_message_id = None
@@ -421,7 +475,7 @@ async def send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
         chunks = _split_long_text(text_to_say, 600)[:max_notes]
 
     sent_any = False
-    last_wa_resp = {}
+    last_wa_resp: dict = {}
     media_ids: List[str] = []
 
     for idx, chunk in enumerate(chunks):
@@ -432,14 +486,24 @@ async def send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
             tts_kwargs["model_id"] = tts_model_id
 
         try:
-            audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
-        except TypeError:
-            audio_bytes, mime, filename, meta = await tts_synthesize(text=chunk, provider=tts_provider)
-
-        if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
+            try:
+                audio_bytes, mime, filename, meta = await tts_synthesize(**tts_kwargs)
+            except TypeError:
+                audio_bytes, mime, filename, meta = await tts_synthesize(text=chunk, provider=tts_provider)
+        except Exception as e:
+            last_wa_resp = {"sent": False, "reason": "tts_exception", "error": str(e)[:900]}
             continue
 
-        media_id = await upload_whatsapp_media(audio_bytes, mime)
+        if (not audio_bytes) or (not isinstance(meta, dict)) or (meta.get("ok") is not True):
+            last_wa_resp = {"sent": False, "reason": "tts_failed", "meta": meta or {}}
+            continue
+
+        try:
+            media_id = await upload_whatsapp_media(audio_bytes, mime)
+        except Exception as e:
+            last_wa_resp = {"sent": False, "reason": "upload_exception", "error": str(e)[:900]}
+            continue
+
         media_ids.append(media_id)
 
         with engine.begin() as conn:
@@ -456,24 +520,27 @@ async def send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
                 duration_sec=None,
             )
 
-        wa_resp = await send_whatsapp_media_id(
-            to_phone=phone,
-            media_type="audio",
-            media_id=media_id,
-            caption=""
-        )
+        try:
+            wa_resp = await send_whatsapp_media_id(
+                to_phone=phone,
+                media_type="audio",
+                media_id=media_id,
+                caption=""
+            )
+        except Exception as e:
+            wa_resp = {"sent": False, "reason": "send_exception", "error": str(e)[:900]}
 
-        last_wa_resp = wa_resp
-        wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
+        last_wa_resp = wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
+        wa_message_id = last_wa_resp.get("wa_message_id") if isinstance(last_wa_resp, dict) else None
 
         with engine.begin() as conn:
-            if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
+            if isinstance(last_wa_resp, dict) and last_wa_resp.get("sent") is True and wa_message_id:
                 set_wa_send_result(conn, local_out_id, wa_message_id, True, "")
                 sent_any = True
             else:
-                err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
-                      or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
-                      or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
+                err = (last_wa_resp.get("whatsapp_body") if isinstance(last_wa_resp, dict) else "") \
+                      or (last_wa_resp.get("reason") if isinstance(last_wa_resp, dict) else "") \
+                      or (last_wa_resp.get("error") if isinstance(last_wa_resp, dict) else "") \
                       or "WhatsApp send failed"
                 set_wa_send_result(conn, local_out_id, None, False, str(err)[:900])
 

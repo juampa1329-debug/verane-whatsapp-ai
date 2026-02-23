@@ -495,30 +495,30 @@ async def _ingest_internal(
     mime_type: Optional[str] = None,
 ):
     """
-    Llama el pipeline único (/api/messages/ingest) dentro del mismo proceso.
+    Llama el pipeline único (run_ingest) directamente.
+    Evita importar app.main (circular imports / doble init / comportamiento raro).
     """
     try:
-        from app.main import ingest, IngestMessage  # type: ignore
+        from app.pipeline.ingest_core import run_ingest, IngestMessage as CoreIngestMessage
 
-        payload = IngestMessage(
-            phone=phone or "",
+        payload = CoreIngestMessage(
+            phone=(phone or "").strip(),
             direction="in",
-            msg_type=msg_type or "text",
-            text=text_msg or "",
-            media_id=media_id,
-            mime_type=mime_type,
+            msg_type=(msg_type or "text").strip().lower(),
+            text=(text_msg or "").strip(),
+            media_id=(media_id or None),
+            mime_type=(mime_type or None),
         )
-        await ingest(payload)
+
+        await run_ingest(payload)
+
     except Exception as e:
         print(
             "INGEST_INTERNAL_ERROR:",
             str(e)[:300],
-            "| phone:",
-            phone,
-            "| type:",
-            msg_type,
-            "| media_id:",
-            (media_id or ""),
+            "| phone:", phone,
+            "| type:", msg_type,
+            "| media_id:", (media_id or ""),
         )
 
 

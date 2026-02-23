@@ -53,6 +53,14 @@ def _shorten(s: str, max_chars: int = 120) -> str:
     return (cut + "…").strip()
 
 
+def _norm(s: str) -> str:
+    s = _clean_text(s).lower()
+    replacements = {"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n"}
+    for a, b in replacements.items():
+        s = s.replace(a, b)
+    return s
+
+
 def _is_tiny_ack(text: str) -> bool:
     t = _clean_text(text).lower()
     return t in {
@@ -63,58 +71,67 @@ def _is_tiny_ack(text: str) -> bool:
     }
 
 
+def _is_exit_command(text: str) -> bool:
+    t = _norm(text)
+    return any(x in t for x in [
+        "cancelar", "salir", "detener", "para", "parar", "stop",
+        "hablar con asesor", "asesor humano", "humano", "agente"
+    ])
+
+
 def _looks_like_refinement(text: str) -> bool:
     """
-    Detecta si el texto parece refinamiento de preferencia, no una selección numérica.
+    Detecta refinamiento REAL (preferencias) sin dispararse por cualquier frase.
+    Importante: NO usar "len>=2" como regla, porque intercepta mensajes normales.
     """
-    t = _clean_text(text).lower()
+    t = _norm(text)
     if not t:
         return False
 
-    # Si es un número: NO es refinamiento
+    # Si es un número puro, NO es refinamiento
     if re.fullmatch(r"\d{1,2}", t):
         return False
 
-    # Palabras típicas de preferencias
+    # Presupuesto casi siempre es refinamiento
+    if _is_budget_mention(text):
+        return True
+
+    # Palabras típicas de preferencias (dominio perfumes)
     keywords = [
         "maduro", "elegante", "serio", "juvenil", "fresco", "dulce", "seco",
         "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
         "verano", "invierno", "calor", "frio",
-        "fuerte", "suave", "duracion", "proyeccion", "intenso",
+        "fuerte", "suave", "duracion", "duración", "proyeccion", "proyección", "intenso",
         "amader", "ambar", "vainill", "citr", "acuatic", "aromatic", "espec",
-        "cuero", "almizcle", "iris", "floral", "oriental", "gourmand"
+        "cuero", "almizcle", "musk", "iris", "floral", "oriental", "gourmand",
+        "unisex", "hombre", "mujer", "mascul", "femen"
     ]
     if any(k in t for k in keywords):
         return True
 
-    # Frases comunes
-    if any(x in t for x in ["más ", "menos ", "no tan", "que sea", "para ", "tipo "]):
-        return True
-
-    # 2+ palabras suele ser refinamiento útil
-    if len(t.split()) >= 2:
+    # Frases comunes de refinamiento
+    if any(x in t for x in ["mas ", "más ", "menos ", "no tan", "que sea", "para ", "tipo "]):
+        # pero evitamos cosas genéricas como "para ti" o "para mi"
+        if "para " in t and not any(k in t for k in ["para hombre", "para mujer", "para unisex", "para oficina", "para noche", "para diario", "para fiesta", "para cita"]):
+            return False
         return True
 
     return False
 
 
 def _is_budget_mention(text: str) -> bool:
-    t = _clean_text(text).lower()
-    return bool(re.search(r"(\$|\bpesos?\b|\bmil\b|\bm\b|\bmxn\b|\bcop\b|\bclp\b)", t)) or bool(
+    t = _norm(text)
+    return bool(re.search(r"(\$|\bpesos?\b|\bmil\b|\bk\b|\bmxn\b|\bcop\b|\bclp\b)", t)) or bool(
         re.search(r"\b\d{2,6}\b", t)
     )
 
 
 def _extract_budget(text: str) -> Optional[int]:
-    """
-    Extrae presupuesto aproximado como entero.
-    Ej: "hasta 150k", "150000", "$120.000", "200 mil"
-    """
-    t = _clean_text(text).lower()
+    t = _norm(text)
     if not t:
         return None
 
-    # 200 mil
+    # 200 mil / 150k
     m = re.search(r"\b(\d{1,3})\s*(mil|k)\b", t)
     if m:
         base = _safe_int(m.group(1), 0)
@@ -124,8 +141,7 @@ def _extract_budget(text: str) -> Optional[int]:
     # 120000 / 120.000 / 120,000
     m2 = re.search(r"\b(\d{2,6})(?:[.,]\d{3})?\b", t)
     if m2:
-        raw = m2.group(0)
-        raw = raw.replace(".", "").replace(",", "")
+        raw = m2.group(0).replace(".", "").replace(",", "")
         val = _safe_int(raw, 0)
         if val >= 10000:
             return val
@@ -133,21 +149,7 @@ def _extract_budget(text: str) -> Optional[int]:
     return None
 
 
-def _norm(s: str) -> str:
-    s = _clean_text(s).lower()
-    # quitar tildes simple
-    replacements = {
-        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n",
-    }
-    for a, b in replacements.items():
-        s = s.replace(a, b)
-    return s
-
-
 def _get_list_names(obj_list: Any) -> list[str]:
-    """
-    Woo suele traer categories/tags como lista de dicts con 'name'.
-    """
     out: list[str] = []
     if isinstance(obj_list, list):
         for x in obj_list:
@@ -155,9 +157,8 @@ def _get_list_names(obj_list: Any) -> list[str]:
                 name = (x.get("name") or "").strip()
                 if name:
                     out.append(name)
-            elif isinstance(x, str):
-                if x.strip():
-                    out.append(x.strip())
+            elif isinstance(x, str) and x.strip():
+                out.append(x.strip())
     return out
 
 
@@ -198,16 +199,16 @@ def _default_wc_state() -> dict:
         "mode": "wc",
         "stage": "discovery",  # discovery | shortlist | await_choice | post_reco
         "slots": {
-            "gender": None,          # hombre | mujer | unisex
-            "vibe": [],              # maduro/elegante/juvenil/etc
-            "occasion": [],          # oficina/noche/diario/cita/fiesta/formal
-            "family": [],            # amaderado/cítrico/acuático/ambarado/etc
-            "sweetness": None,       # dulce | medio | seco
-            "intensity": None,       # suave | media | fuerte
+            "gender": None,
+            "vibe": [],
+            "occasion": [],
+            "family": [],
+            "sweetness": None,
+            "intensity": None,
             "brand": None,
-            "budget": None,          # int
+            "budget": None,
         },
-        "candidates": [],           # lista de productos (mini payload)
+        "candidates": [],
         "last_query": None,
         "ts": _now_ts(),
     }
@@ -227,10 +228,6 @@ def _merge_unique(base: list[str], add: list[str]) -> list[str]:
 
 
 def _extract_slots(text: str, prev_slots: dict) -> dict:
-    """
-    Extracción liviana por reglas (rápida, sin LLM).
-    Si en tu engine también usas LLM, esto igual suma como baseline.
-    """
     t = _norm(text)
     slots = dict(prev_slots or {})
 
@@ -315,7 +312,7 @@ def _extract_slots(text: str, prev_slots: dict) -> dict:
         if b:
             slots["budget"] = b
 
-    # brand (simple heurística: "marca X", "de X")
+    # brand
     m = re.search(r"\bmarca\s+([a-z0-9]+)\b", t)
     if m:
         slots["brand"] = m.group(1)
@@ -328,9 +325,6 @@ def _extract_slots(text: str, prev_slots: dict) -> dict:
 # -------------------------
 
 def _product_text_blob(p: dict) -> str:
-    """
-    Construye un texto grande para hacer scoring por keywords/slots.
-    """
     name = (p.get("name") or "")
     short_desc = (p.get("short_description") or "")
     desc = (p.get("description") or "")
@@ -340,20 +334,12 @@ def _product_text_blob(p: dict) -> str:
 
 
 def _score_with_slots(p: dict, slots: dict, user_text: str) -> int:
-    """
-    Score simple y robusto:
-    - match nombre (0-50)
-    - match preferencias (0-50)
-    - stock bonus (+10) / agotado (-15)
-    - budget (si está)
-    """
     score = 0
     name = (p.get("name") or "").strip()
-    score += min(50, int(score_product_match(user_text, name) * 0.5))  # escala a 0-50
+    score += min(50, int(score_product_match(user_text, name) * 0.5))
 
     blob = _product_text_blob(p)
 
-    # slot match
     slot_score = 0
     gender = slots.get("gender")
     if gender:
@@ -369,8 +355,6 @@ def _score_with_slots(p: dict, slots: dict, user_text: str) -> int:
             slot_score += 6
 
     for o in (slots.get("occasion") or []):
-        # ojo: "oficina" rara vez está en el texto del producto,
-        # pero a veces sí en tags/categorías; igual suma si aparece
         if _norm(o) in blob:
             slot_score += 4
 
@@ -393,20 +377,17 @@ def _score_with_slots(p: dict, slots: dict, user_text: str) -> int:
     slot_score = min(50, slot_score)
     score += slot_score
 
-    # stock
     stock = (p.get("stock_status") or "").strip()
     if stock == "instock":
         score += 10
     elif stock:
         score -= 15
 
-    # budget (si hay precio)
     budget = slots.get("budget")
     if budget:
         price_raw = str(p.get("price") or "").strip()
         price = _safe_int(price_raw.replace(".", "").replace(",", ""), 0)
         if price > 0:
-            # penaliza si excede mucho el presupuesto
             if price <= budget:
                 score += 6
             elif price <= int(budget * 1.15):
@@ -418,9 +399,6 @@ def _score_with_slots(p: dict, slots: dict, user_text: str) -> int:
 
 
 def _pick_followup_question(slots: dict) -> str:
-    """
-    1 sola pregunta clave para avanzar como asesor humano.
-    """
     if not slots.get("gender"):
         return "¿Lo buscas para hombre, mujer o unisex?"
     if not slots.get("occasion"):
@@ -435,9 +413,6 @@ def _pick_followup_question(slots: dict) -> str:
 
 
 def _build_menu_lines(items: list[dict]) -> tuple[str, list[dict]]:
-    """
-    Menú (1-5) con mini-descripción.
-    """
     top = items[:5]
     lines = ["Encontré estas opciones: 👇"]
     opts: list[dict] = []
@@ -452,7 +427,7 @@ def _build_menu_lines(items: list[dict]) -> tuple[str, list[dict]]:
         desc_part = f" — {short_desc}" if short_desc else ""
 
         price_part = f"${price}" if price else ""
-        price_sep = " — " if (price_part or True) else " "
+        price_sep = " — "
 
         lines.append(f"{i}) {name}{price_sep}{price_part} ({stock_label}){desc_part}")
         opts.append({"id": _safe_int(p.get("id")), "name": name})
@@ -487,7 +462,7 @@ async def handle_wc_if_applicable(
     if not wc_enabled():
         return {"handled": False}
 
-    # Si no es texto, limpiamos estado Woo y dejamos que IA normal resuelva.
+    # Si no es texto, dejamos a la IA normal.
     if msg_type != "text":
         clear_state(phone)
         return {"handled": False}
@@ -496,23 +471,26 @@ async def handle_wc_if_applicable(
     if not text:
         return {"handled": False}
 
-    # Evitar que "ok/gracias/hola" dispare búsquedas o bloquee
+    # Salir explícito del flujo Woo
+    if _is_exit_command(text):
+        clear_state(phone)
+        return {"handled": False, "reason": "exit_command"}
+
+    # Evitar que "ok/gracias/hola" dispare Woo
     if _is_tiny_ack(text):
         return {"handled": False}
 
     raw_state = (get_state(phone) or "").strip()
 
     # -----------------------------------------
-    # 0) Compatibilidad: si llega un state viejo
+    # 0) Compatibilidad: state viejo V1
     # -----------------------------------------
     if raw_state.startswith(STATE_PREFIX_V1):
-        # Mantengo tu comportamiento anterior, pero con anti-stuck mejorado:
         try:
             options, ts = _state_v1_unpack(raw_state)
         except Exception:
             options, ts = [], 0
 
-        # rescate cache
         if (not options) and load_recent_options_fn is not None:
             try:
                 recovered = await load_recent_options_fn(phone)
@@ -523,7 +501,6 @@ async def handle_wc_if_applicable(
             except Exception:
                 pass
 
-        # TTL 3 min
         if ts and (_now_ts() - ts) > 180:
             clear_state(phone)
             return {"handled": False}
@@ -540,14 +517,12 @@ async def handle_wc_if_applicable(
                     "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
 
-            # Anti-stuck: si no hay número y parece refinamiento, rompemos el await
-            if _looks_like_refinement(text) or looks_like_product_question(text) or len(text.split()) >= 2:
-                clear_state(phone)
-            else:
-                await send_text_fn(phone, "Responde con el número de la opción 🙂 (o dime tus preferencias)")
-                return {"handled": True, "wc": True, "reason": "await_number_v1"}
+            # si no es número, no atrapamos: liberamos para IA normal
+            clear_state(phone)
+            return {"handled": False, "reason": "v1_no_number_release"}
 
         clear_state(phone)
+        return {"handled": False}
 
     # -----------------------------------------
     # 1) State V2
@@ -562,7 +537,6 @@ async def handle_wc_if_applicable(
     if not isinstance(wc_state, dict) or not wc_state:
         wc_state = _default_wc_state()
 
-    # TTL: 10 minutos (asesoría puede durar más)
     ts = _safe_int(wc_state.get("ts"), 0)
     if ts and (_now_ts() - ts) > 600:
         wc_state = _default_wc_state()
@@ -572,23 +546,26 @@ async def handle_wc_if_applicable(
     candidates = wc_state.get("candidates") or []
 
     # -----------------------------------------
-    # 2) Detectar si Woo aplica
-    # - aplica si: pregunta de producto O refinamiento claro (preferencias)
+    # 2) Woo aplica SOLO si:
+    # - hay state activo esperando elección
+    # - o el texto parece pregunta de producto real
+    # - o hay refinamiento real (keywords/slots), no genérico
     # -----------------------------------------
-    wc_applicable = looks_like_product_question(text) or _looks_like_refinement(text)
+    has_active_wc_flow = (stage == "await_choice" and bool(candidates))
+
+    wc_applicable = has_active_wc_flow or looks_like_product_question(text) or _looks_like_refinement(text)
     if not wc_applicable:
-        # si no aplica, liberamos el control a IA normal
         return {"handled": False}
 
     # -----------------------------------------
-    # 3) Actualizar slots con el mensaje actual
+    # 3) Actualizar slots
     # -----------------------------------------
     slots = _extract_slots(text, slots)
     wc_state["slots"] = slots
     wc_state["ts"] = _now_ts()
 
     # -----------------------------------------
-    # 4) Si estamos en await_choice y llega número -> enviar producto
+    # 4) Si está esperando elección y llega número -> enviar
     # -----------------------------------------
     if stage == "await_choice" and candidates:
         choice = parse_choice_number(text)
@@ -602,18 +579,14 @@ async def handle_wc_if_applicable(
                 "wa": await send_product_fn(phone, int(picked["id"]), ""),
             }
 
-        # Anti-stuck: si no es número, lo tratamos como refinamiento y recalculamos (NO insistir)
+        # si no es número, pasamos a recalcular shortlist
         stage = "shortlist"
         wc_state["stage"] = "shortlist"
 
     # -----------------------------------------
     # 5) Retrieval
-    # - si el usuario escribió un nombre concreto: usarlo como query
-    # - si escribió solo preferencias: usar query más general (o el texto mismo)
     # -----------------------------------------
     query = text
-    # si es puras preferencias y no pregunta de "buscar", igual intentamos con el texto.
-    # (Luego, cuando vea woocommerce.py, puedo mejorar con búsquedas por marca/familia)
     wc_state["last_query"] = query
 
     try:
@@ -622,14 +595,13 @@ async def handle_wc_if_applicable(
         return {"handled": False}
 
     if not items:
-        # No resultados: pregunta clave y deja slots guardados para siguiente mensaje
         wc_state["stage"] = "discovery"
         set_state(phone, _state_v2_pack(wc_state))
         await send_text_fn(phone, f"No encontré resultados con eso 😕\n{_pick_followup_question(slots)}")
         return {"handled": True, "wc": True, "reason": "no_results_v2"}
 
     # -----------------------------------------
-    # 6) Ranking / scoring con slots + texto del producto (incluye description)
+    # 6) Ranking
     # -----------------------------------------
     scored = []
     for p in items:
@@ -643,27 +615,20 @@ async def handle_wc_if_applicable(
     ranked = [p for _, p in scored]
     top = ranked[:5]
 
-    # guardamos candidates (los top) para selección por número si el usuario lo desea
     wc_state["candidates"] = [{"id": _safe_int(p.get("id")), "name": (p.get("name") or "").strip()} for p in top]
 
     # -----------------------------------------
-    # 7) Comportamiento “humano”
-    # - Si hay match fuerte: enviar 1 producto directo
-    # - Si no, recomendar 2 (tarjetas) + una pregunta de refinamiento
-    # - Si usuario pidió "opciones", mostramos menú numérico
+    # 7) UX
     # -----------------------------------------
     user_norm = _norm(text)
     wants_list = any(k in user_norm for k in ["opciones", "lista", "muestrame", "muéstrame", "ver opciones", "dame opciones"])
 
-    # match fuerte con el top 1 por nombre (si el usuario escribió nombre)
     top1 = top[0]
     top_name = (top1.get("name") or "").strip()
     strong_name_score = score_product_match(text, top_name)
 
-    # Si pidió lista explícita -> menú
     if wants_list and len(top) >= 2:
         menu_text, opts = _build_menu_lines(top)
-        # Guardamos como await_choice para que número funcione
         wc_state["stage"] = "await_choice"
         wc_state["candidates"] = opts
         set_state(phone, _state_v2_pack(wc_state))
@@ -675,7 +640,6 @@ async def handle_wc_if_applicable(
         await send_text_fn(phone, menu_text)
         return {"handled": True, "wc": True, "reason": "menu_options_v2"}
 
-    # Si match fuerte -> 1 producto directo
     if strong_name_score >= 80:
         clear_state(phone)
         return {
@@ -685,18 +649,13 @@ async def handle_wc_if_applicable(
             "wa": await send_product_fn(phone, int(top1["id"]), ""),
         }
 
-    # Recomendación consultiva: 1-2 tarjetas
-    # Enviamos dos si hay, para replicar asesor humano
     recs = top[:2]
     for p in recs:
         try:
             await send_product_fn(phone, int(p["id"]), "")
         except Exception:
-            # Si falla la tarjeta, al menos seguimos con texto
             pass
 
-    # Texto de asesor (resumen usando description/short_description)
-    # (Ojo: aquí NO mandamos la descripción completa: hacemos un resumen corto)
     def _one_liner(p: dict) -> str:
         name = (p.get("name") or "").strip()
         desc = _shorten(p.get("short_description") or p.get("description") or "", 120)
@@ -713,7 +672,6 @@ async def handle_wc_if_applicable(
     summary_lines.append("")
     summary_lines.append(_pick_followup_question(slots))
 
-    # Si hay varios candidatos, guardamos await_choice por si el usuario responde con número
     wc_state["stage"] = "await_choice"
     set_state(phone, _state_v2_pack(wc_state))
 

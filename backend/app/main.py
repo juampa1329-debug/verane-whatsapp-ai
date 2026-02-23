@@ -1,52 +1,43 @@
-import os
-import re
-import json
-import asyncio
-from datetime import datetime
-from typing import Optional, List, Tuple
+# app/main.py
 
-import httpx
+import os
+import json
+from datetime import datetime
+from typing import Optional, List
+
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from starlette.requests import Request as StarletteRequest
-from app.pipeline.ingest_core import run_ingest
-from app.pipeline.wc_sender import wc_send_product
+
+from app.db import engine
+
+# ✅ Pipeline core (nuevo flujo real)
+from app.pipeline.ingest_core import run_ingest, IngestMessage
+
+# ✅ Woo sender (endpoint manual)
 from app.pipeline.wc_sender import wc_send_product
 
-# ✅ Router externo WhatsApp
+# ✅ Router WhatsApp (webhook)
 from app.routes.whatsapp import (
     router as whatsapp_router,
-    send_whatsapp_text,
-    send_whatsapp_media_id,
     upload_whatsapp_media,
 )
 
-# ✅ IA
-from app.ai.engine import process_message
-from app.ai.context_builder import build_ai_meta
+# ✅ Woo utils (búsqueda UI)
+from app.integrations.woocommerce import (
+    wc_get,
+    map_product_for_ui,
+)
 
-# ✅ TTS
-from app.ai.tts import tts_synthesize
-
-# ✅ Multimodal robusto (audio->wav16k->gemini, images/docs->gemini)
-from app.ai.multimodal import extract_text_from_media, is_effectively_empty_text
-
-# ✅ Montar router IA
+# ✅ Montar router IA (si existe)
 try:
     from app.ai.router import router as ai_router
 except Exception:
     ai_router = None
 
-# ✅ Woo
-from app.ai.wc_assistant import handle_wc_if_applicable
-from app.integrations.woocommerce import (
-    wc_enabled,
-    wc_get,
-    map_product_for_ui,
-)
 
 # =========================================================
 # APP
@@ -81,36 +72,53 @@ async def unhandled_exception_handler(request: StarletteRequest, exc: Exception)
     )
 
 
+# Routers
 app.include_router(whatsapp_router)
 if ai_router is not None:
     app.include_router(ai_router, prefix="/api/ai")
 
+
 # =========================================================
-# DATABASE
+# DATABASE SCHEMA
 # =========================================================
-
-from app.db import engine  # noqa: E402
-
-LAST_PRODUCT_CACHE: dict[str, dict] = {}
-
 
 def ensure_schema():
+    """
+    Crea/actualiza el schema mínimo que el CRM + pipeline necesita.
+    (Seguro si ya existe; usa IF NOT EXISTS)
+    """
     with engine.begin() as conn:
+        # -------------------------
+        # conversations
+        # -------------------------
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS conversations (
                 phone TEXT PRIMARY KEY,
                 takeover BOOLEAN NOT NULL DEFAULT FALSE,
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
                 first_name TEXT,
                 last_name TEXT,
                 city TEXT,
                 customer_type TEXT,
                 interests TEXT,
                 tags TEXT,
-                notes TEXT
+                notes TEXT,
+
+                last_read_at TIMESTAMP,
+
+                ai_state TEXT,
+
+                wc_last_options JSONB,
+                wc_last_options_at TIMESTAMP
             )
         """))
 
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
+
+        # -------------------------
+        # messages
+        # -------------------------
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
@@ -118,52 +126,48 @@ def ensure_schema():
                 direction TEXT NOT NULL,
                 msg_type TEXT NOT NULL DEFAULT 'text',
                 text TEXT NOT NULL DEFAULT '',
+
                 media_url TEXT,
                 media_caption TEXT,
+
+                media_id TEXT,
+                mime_type TEXT,
+                file_name TEXT,
+                file_size INTEGER,
+                duration_sec INTEGER,
+
                 featured_image TEXT,
                 real_image TEXT,
                 permalink TEXT,
+
+                extracted_text TEXT,
+                ai_meta JSONB,
+
+                wa_message_id TEXT,
+                wa_status TEXT,
+                wa_error TEXT,
+                wa_ts_sent TIMESTAMP,
+                wa_ts_delivered TIMESTAMP,
+                wa_ts_read TIMESTAMP,
+
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
 
-        # Extracción de datos
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS extracted_text TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS ai_meta JSONB"""))
-
-        # Control de tráfico
+        # Índices útiles para tu UI
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at ON messages (phone, created_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at ON messages (phone, direction, created_at)"""))
-        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
 
-        # Media extra
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_id TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS mime_type TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS duration_sec INTEGER"""))
-
-        # Estados WhatsApp (checkmarks)
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_message_id TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_status TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_error TEXT"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_sent TIMESTAMP"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_delivered TIMESTAMP"""))
-        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS wa_ts_read TIMESTAMP"""))
-
-        # Unread tracking
-        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMP"""))
-
-        # Estado IA estructural
-        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_state TEXT"""))
-
-        # Tabla settings IA
+        # -------------------------
+        # ai_settings
+        # -------------------------
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS ai_settings (
                 id SERIAL PRIMARY KEY,
+
                 is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 provider TEXT NOT NULL DEFAULT 'google',
-                model TEXT NOT NULL DEFAULT 'gemma-3-4b-it',
+                model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
                 system_prompt TEXT NOT NULL DEFAULT '',
                 max_tokens INTEGER NOT NULL DEFAULT 512,
                 temperature DOUBLE PRECISION NOT NULL DEFAULT 0.7,
@@ -174,53 +178,33 @@ def ensure_schema():
                 timeout_sec INTEGER NOT NULL DEFAULT 25,
                 max_retries INTEGER NOT NULL DEFAULT 1,
 
+                reply_chunk_chars INTEGER,
+                reply_delay_ms INTEGER,
+                typing_delay_ms INTEGER,
+
+                voice_enabled BOOLEAN,
+                voice_gender TEXT,
+                voice_language TEXT,
+                voice_accent TEXT,
+                voice_style_prompt TEXT,
+                voice_max_notes_per_reply INTEGER,
+                voice_prefer_voice BOOLEAN,
+                voice_speaking_rate DOUBLE PRECISION,
+
+                voice_tts_provider TEXT,
+                voice_tts_voice_id TEXT,
+                voice_tts_model_id TEXT,
+
+                mm_enabled BOOLEAN,
+                mm_provider TEXT,
+                mm_model TEXT,
+                mm_timeout_sec INTEGER,
+                mm_max_retries INTEGER,
+
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
-
-        # VOICE settings
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_gender TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_language TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_accent TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_style_prompt TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_max_notes_per_reply INTEGER"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_prefer_voice BOOLEAN"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_speaking_rate DOUBLE PRECISION"""))
-
-        # TTS provider selector
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_provider TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_voice_id TEXT"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS voice_tts_model_id TEXT"""))
-
-        # Asegurar defaults si quedaron NULL
-        conn.execute(text("""
-            UPDATE ai_settings
-                SET
-                voice_enabled = COALESCE(voice_enabled, FALSE),
-                voice_gender = COALESCE(NULLIF(TRIM(voice_gender), ''), 'neutral'),
-                voice_language = COALESCE(NULLIF(TRIM(voice_language), ''), 'es-CO'),
-                voice_accent = COALESCE(NULLIF(TRIM(voice_accent), ''), 'colombiano'),
-                voice_style_prompt = COALESCE(voice_style_prompt, ''),
-                voice_max_notes_per_reply = COALESCE(voice_max_notes_per_reply, 1),
-                voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
-                voice_speaking_rate = COALESCE(voice_speaking_rate, 1.0),
-
-                voice_tts_provider = COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google'),
-                voice_tts_voice_id = COALESCE(NULLIF(TRIM(voice_tts_voice_id), ''), ''),
-                voice_tts_model_id = COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), '')
-                WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
-        """))
-
-        # settings humanización
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_chunk_chars INTEGER"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS reply_delay_ms INTEGER"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS typing_delay_ms INTEGER"""))
-
-        # Woo recovery cache
-        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options JSONB"""))
-        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS wc_last_options_at TIMESTAMP"""))
 
         # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
@@ -229,42 +213,45 @@ def ensure_schema():
                 max_tokens, temperature,
                 fallback_provider, fallback_model,
                 timeout_sec, max_retries,
+
                 reply_chunk_chars, reply_delay_ms, typing_delay_ms,
-                voice_tts_provider, voice_tts_voice_id, voice_tts_model_id
+
+                voice_enabled, voice_prefer_voice, voice_max_notes_per_reply,
+                voice_tts_provider, voice_tts_voice_id, voice_tts_model_id,
+
+                mm_enabled, mm_provider, mm_model, mm_timeout_sec, mm_max_retries
             )
             SELECT
                 TRUE, 'google', 'gemini-2.5-flash', '',
                 512, 0.7,
                 'groq', 'llama-3.1-8b-instant',
                 25, 1,
+
                 480, 900, 450,
-                'google', '', ''
+
+                FALSE, FALSE, 1,
+                'google', '', '',
+
+                TRUE, 'google', 'gemini-2.5-flash', 75, 2
             WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
         """))
 
-        # Asegurar defaults humanización
+        # Asegurar defaults si quedaron NULL
         conn.execute(text("""
             UPDATE ai_settings
             SET
                 reply_chunk_chars = COALESCE(reply_chunk_chars, 480),
                 reply_delay_ms = COALESCE(reply_delay_ms, 900),
-                typing_delay_ms = COALESCE(typing_delay_ms, 450)
-            WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
-        """))
+                typing_delay_ms = COALESCE(typing_delay_ms, 450),
 
-        # =========================================================
-        # ✅ MULTIMODAL / VISION (UI -> DB)
-        # =========================================================
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_enabled BOOLEAN"""))
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_provider TEXT"""))         # por ahora: 'google'
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_model TEXT"""))            # ej: gemini-2.5-flash
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_timeout_sec INTEGER"""))   # ej: 75
-        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS mm_max_retries INTEGER"""))   # ej: 2
+                voice_enabled = COALESCE(voice_enabled, FALSE),
+                voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
+                voice_max_notes_per_reply = COALESCE(voice_max_notes_per_reply, 1),
 
-        # Defaults multimodal
-        conn.execute(text("""
-            UPDATE ai_settings
-            SET
+                voice_tts_provider = COALESCE(NULLIF(TRIM(voice_tts_provider), ''), 'google'),
+                voice_tts_voice_id = COALESCE(NULLIF(TRIM(voice_tts_voice_id), ''), ''),
+                voice_tts_model_id = COALESCE(NULLIF(TRIM(voice_tts_model_id), ''), ''),
+
                 mm_enabled = COALESCE(mm_enabled, TRUE),
                 mm_provider = COALESCE(NULLIF(TRIM(mm_provider), ''), 'google'),
                 mm_model = COALESCE(NULLIF(TRIM(mm_model), ''), 'gemini-2.5-flash'),
@@ -276,31 +263,10 @@ def ensure_schema():
 
 ensure_schema()
 
+
 # =========================================================
-# MODELS
+# MODELS (solo los que son de API/UI)
 # =========================================================
-
-
-class IngestMessage(BaseModel):
-    model_config = {"extra": "allow"}
-
-    phone: str
-    direction: str
-    msg_type: str = "text"
-    text: str = ""
-
-    media_url: Optional[str] = None
-    media_caption: Optional[str] = None
-    media_id: Optional[str] = None
-    mime_type: Optional[str] = None
-    file_name: Optional[str] = None
-    file_size: Optional[int] = None
-    duration_sec: Optional[int] = None
-
-    featured_image: Optional[str] = None
-    real_image: Optional[str] = None
-    permalink: Optional[str] = None
-
 
 class CRMIn(BaseModel):
     phone: str
@@ -322,30 +288,10 @@ class TakeoverPayload(BaseModel):
 # HELPERS
 # =========================================================
 
-
-def _new_trace_id() -> str:
-    try:
-        import uuid
-        return uuid.uuid4().hex[:10]
-    except Exception:
-        return str(int(datetime.utcnow().timestamp()))
-
-
-def _log(trace_id: str, event: str, **kv):
-    try:
-        payload = {"trace": trace_id, "event": event, **kv}
-        print("[INGEST]", json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        print("[INGEST]", trace_id, event, kv)
-
-
-
-
-
 def _parse_tags_param(tags: str) -> List[str]:
     if not tags:
         return []
-    out = []
+    out: List[str] = []
     for t in tags.split(","):
         tt = (t or "").strip().lower()
         if tt:
@@ -353,97 +299,18 @@ def _parse_tags_param(tags: str) -> List[str]:
     return out
 
 
-def _get_ai_send_settings() -> dict:
-    defaults = {"reply_chunk_chars": 480, "reply_delay_ms": 900, "typing_delay_ms": 450}
-    try:
-        with engine.begin() as conn:
-            r = conn.execute(text("""
-                SELECT
-                    COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
-                    COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
-                    COALESCE(typing_delay_ms, 450) AS typing_delay_ms
-                FROM ai_settings
-                ORDER BY id ASC
-                LIMIT 1
-            """)).mappings().first()
-
-        if not r:
-            return defaults
-
-        d = dict(r)
-        d["reply_chunk_chars"] = int(max(120, min(int(d.get("reply_chunk_chars") or 480), 2000)))
-        d["reply_delay_ms"] = int(max(0, min(int(d.get("reply_delay_ms") or 900), 15000)))
-        d["typing_delay_ms"] = int(max(0, min(int(d.get("typing_delay_ms") or 450), 15000)))
-        return d
-    except Exception:
-        return defaults
-
-
-def _get_multimodal_settings() -> dict:
-    defaults = {
-        "mm_enabled": True,
-        "mm_provider": "google",
-        "mm_model": "gemini-2.5-flash",
-        "mm_timeout_sec": 75,
-        "mm_max_retries": 2,
-    }
-    try:
-        with engine.begin() as conn:
-            r = conn.execute(text("""
-                SELECT
-                    COALESCE(mm_enabled, TRUE) AS mm_enabled,
-                    COALESCE(NULLIF(TRIM(mm_provider), ''), 'google') AS mm_provider,
-                    COALESCE(NULLIF(TRIM(mm_model), ''), 'gemini-2.5-flash') AS mm_model,
-                    COALESCE(mm_timeout_sec, 75) AS mm_timeout_sec,
-                    COALESCE(mm_max_retries, 2) AS mm_max_retries
-                FROM ai_settings
-                ORDER BY id ASC
-                LIMIT 1
-            """)).mappings().first()
-
-        if not r:
-            return defaults
-
-        d = dict(r)
-        d["mm_enabled"] = bool(d.get("mm_enabled"))
-        d["mm_provider"] = (d.get("mm_provider") or "google").strip().lower()
-        d["mm_model"] = (d.get("mm_model") or "gemini-2.5-flash").strip().lower()
-        d["mm_timeout_sec"] = int(max(10, min(int(d.get("mm_timeout_sec") or 75), 180)))
-        d["mm_max_retries"] = int(max(0, min(int(d.get("mm_max_retries") or 2), 8)))
-        return d
-    except Exception:
-        return defaults
-
-
-
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-
-
-
-
-
-
-
 # =========================================================
-# WhatsApp media download (Graph API)
+# ENDPOINTS
 # =========================================================
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
-WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
+@app.get("/api/health")
+def health():
+    return {"ok": True, "build": "2026-02-22-api-main-clean-1"}
 
 
-
-
-# =========================================================
-# AI STATE helpers (WooCommerce selection)
-# =========================================================
-
-
-
-# =========================================================
-# WOOCOMMERCE ENDPOINTS
-# =========================================================
+# -------------------------
+# Woo endpoints UI
+# -------------------------
 
 @app.get("/api/wc/products")
 async def wc_products(
@@ -457,8 +324,6 @@ async def wc_products(
     return {"products": items}
 
 
-
-
 @app.post("/api/wc/send-product")
 async def send_wc_product(payload: dict):
     phone = payload.get("phone")
@@ -469,22 +334,17 @@ async def send_wc_product(payload: dict):
         raise HTTPException(status_code=400, detail="phone and product_id required")
 
     wa = await wc_send_product(
-    phone=str(phone),
-    product_id=int(product_id),
-    custom_caption=str(custom_caption or "")
+        phone=str(phone),
+        product_id=int(product_id),
+        custom_caption=str(custom_caption or ""),
     )
-    
+
     return {"ok": True, "sent": bool(wa.get("sent")), "wa": wa}
 
 
-# =========================================================
-# ENDPOINTS
-# =========================================================
-
-@app.get("/api/health")
-def health():
-    return {"ok": True, "build": "2026-02-21-multimodal-ffmpeg-wav16k-1"}
-
+# -------------------------
+# Media upload (UI)
+# -------------------------
 
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
@@ -523,6 +383,10 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     media_id = await upload_whatsapp_media(content, mime)
     return {"ok": True, "media_id": media_id, "mime_type": mime, "filename": filename, "kind": kind}
 
+
+# -------------------------
+# Conversations / CRM
+# -------------------------
 
 @app.post("/api/conversations/{phone}/read")
 def mark_conversation_read(phone: str):
@@ -681,6 +545,10 @@ def get_conversations(
 
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(phone: str):
+    phone = (phone or "").strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone required")
+
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT
@@ -694,16 +562,18 @@ def get_messages(phone: str):
             ORDER BY created_at ASC
             LIMIT 500
         """), {"phone": phone}).mappings().all()
+
     return {"messages": [dict(r) for r in rows]}
 
 
-# =========================================================
+# -------------------------
 # Ingest (core pipeline)
-# =========================================================
+# -------------------------
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
     return await run_ingest(msg)
+
 
 @app.post("/api/conversations/takeover")
 def set_takeover(payload: TakeoverPayload):
@@ -755,6 +625,10 @@ def save_crm(payload: CRMIn):
 
 @app.get("/api/crm/{phone}")
 def get_crm(phone: str):
+    phone = (phone or "").strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone required")
+
     try:
         with engine.begin() as conn:
             r = conn.execute(text("""

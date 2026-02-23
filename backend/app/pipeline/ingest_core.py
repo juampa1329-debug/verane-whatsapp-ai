@@ -5,20 +5,13 @@ from __future__ import annotations
 import os
 import json
 from datetime import datetime
-from typing import Optional, Tuple, Any, Dict
+from typing import Optional
 
 import httpx
 from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.db import engine
-
-# WhatsApp / Graph helpers
-from app.routes.whatsapp import (
-    send_whatsapp_text,
-    send_whatsapp_media_id,
-    download_whatsapp_media_bytes,
-)
 
 # IA
 from app.ai.engine import process_message
@@ -27,23 +20,14 @@ from app.ai.context_builder import build_ai_meta
 # Multimodal
 from app.ai.multimodal import extract_text_from_media, is_effectively_empty_text
 
-# Woo
+# Woo (assistant)
 from app.ai.wc_assistant import handle_wc_if_applicable
-from app.integrations.woocommerce import (
-    wc_enabled,
-    wc_get,
-    map_product_for_ui,
-    build_caption,
-    download_image_bytes,
-    ensure_whatsapp_image_compat,
-    wc_fetch_product,
-    WC_BASE_URL,
-    WC_CONSUMER_KEY,
-    WC_CONSUMER_SECRET,
-)
-from app.routes.whatsapp import upload_whatsapp_media
+from app.integrations.woocommerce import wc_enabled
 
-# Sender helpers (text chunks + voice) + DB helpers
+# ✅ Woo sender oficial (el bueno)
+from app.pipeline.wc_sender import wc_send_product
+
+# Sender helpers + DB helpers
 from app.pipeline.reply_sender import (
     save_message,
     set_wa_send_result,
@@ -53,8 +37,11 @@ from app.pipeline.reply_sender import (
 )
 
 # CRM memory writer
-from app.crm.crm_writer import ensure_conversation_row, apply_wc_slots_to_crm, update_crm_fields
-
+from app.crm.crm_writer import (
+    ensure_conversation_row,
+    apply_wc_slots_to_crm,
+    update_crm_fields,
+)
 
 # =========================================================
 # Models
@@ -211,74 +198,56 @@ def _clear_ai_state(phone: str) -> None:
 
 
 # =========================================================
-# Woo send product (mismo comportamiento que tu main)
+# Guard: cuándo SÍ debemos entrar al Woo assistant (anti-loop)
 # =========================================================
 
-async def _wc_send_product_internal(phone: str, product_id: int, custom_caption: str = "") -> dict:
-    if not phone or not product_id:
-        raise RuntimeError("phone and product_id required")
+_WC_KEYWORDS = {
+    "perfume", "perfumes", "colonia", "fragancia", "fragancias",
+    "precio", "vale", "cuánto", "cuanto", "costo", "coste",
+    "comprar", "pedido", "orden", "carrito", "envío", "envio",
+    "stock", "disponible", "disponibilidad", "promoción", "promocion",
+    "catálogo", "catalogo", "recomienda", "recomendación", "recomendacion",
+    "para hombre", "para mujer", "unisex", "dulce", "amaderado", "cítrico", "citrico",
+}
 
-    if not (WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET):
-        raise RuntimeError("WC env vars not configured")
+def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
+    """
+    Evita el loop: solo llamamos Woo si realmente aplica.
+    - Si el estado actual ya es wc_* -> True
+    - Si el texto tiene señales de intención de compra/búsqueda -> True
+    - Si no -> False
+    """
+    st = (_get_ai_state(phone) or "").strip().lower()
+    if st.startswith("wc_") or st.startswith("wc:") or st.startswith("wc_state") or st.startswith("wc_await"):
+        return True, "state_active"
 
-    product = await wc_fetch_product(int(product_id))
+    t = (user_text or "").strip().lower()
+    if not t:
+        return False, "empty_text"
 
-    images = product.get("images") or []
-    if not images:
-        raise RuntimeError("Product has no image")
+    for kw in _WC_KEYWORDS:
+        if kw in t:
+            return True, f"keyword:{kw}"
 
-    featured_image = (images[0] or {}).get("src") or ""
-    real_image = (images[1] or {}).get("src") if len(images) > 1 else ""
+    # Si solo manda "1" sin estado activo, no lo tratamos como selección
+    if t.isdigit():
+        return False, "digit_without_state"
 
-    img_bytes, content_type = await download_image_bytes(featured_image)
-    img_bytes, mime_type = ensure_whatsapp_image_compat(img_bytes, content_type, featured_image)
-
-    media_id = await upload_whatsapp_media(img_bytes, mime_type)
-
-    caption = build_caption(
-        product=product,
-        featured_image=featured_image,
-        real_image=real_image,
-        custom_caption=(custom_caption or "")
-    )
-
-    permalink = product.get("permalink", "") or ""
-
-    with engine.begin() as conn:
-        local_id = save_message(
-            conn,
-            phone=phone,
-            direction="out",
-            msg_type="product",
-            text_msg=caption,
-            featured_image=featured_image,
-            real_image=real_image or None,
-            permalink=permalink,
-        )
-
-    wa_resp = await send_whatsapp_media_id(
-        to_phone=phone,
-        media_type="image",
-        media_id=media_id,
-        caption=caption
-    )
-
-    wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
-    with engine.begin() as conn:
-        if isinstance(wa_resp, dict) and wa_resp.get("sent") is True and wa_message_id:
-            set_wa_send_result(conn, local_id, wa_message_id, True, "")
-        else:
-            err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") or "WhatsApp send failed"
-            set_wa_send_result(conn, local_id, None, False, str(err)[:900])
-
-    return wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
+    return False, "no_intent"
 
 
 # =========================================================
-# MAIN: run_ingest (esto reemplaza la función ingest de main.py)
+# MAIN: run_ingest
 # =========================================================
 
 async def run_ingest(msg: IngestMessage) -> dict:
+    # Import local para evitar circular imports con routes.whatsapp
+    from app.routes.whatsapp import (
+        send_whatsapp_text,
+        send_whatsapp_media_id,
+        download_whatsapp_media_bytes,
+    )
+
     trace_id = _new_trace_id()
 
     direction = msg.direction if msg.direction in ("in", "out") else "in"
@@ -323,10 +292,10 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 if recent:
                     _log(trace_id, "IDEMPOTENCY_SKIP", reason="webhook_retry_ignored")
                     return {"saved": True, "sent": False, "reason": "idempotency_skip_duplicate"}
-        except Exception:
-            pass
+        except Exception as e:
+            _log(trace_id, "IDEMPOTENCY_FAIL", error=str(e)[:300])
 
-    # ✅ 2) Guardar mensaje en DB
+    # ✅ 2) Guardar mensaje en DB + bump updated_at SIEMPRE
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -352,11 +321,12 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 real_image=msg.real_image,
                 permalink=msg.permalink,
             )
+        _log(trace_id, "DB_IN_SAVED", local_id=local_id)
     except Exception as e:
-        _log(trace_id, "DB_SAVE_FAIL", error=str(e)[:300])
+        _log(trace_id, "DB_SAVE_FAIL", error=str(e)[:900])
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
-    # ✅ 3) Si es OUT, aquí solo enviamos (pero normalmente tu sistema manda OUT desde otros lados)
+    # ✅ 3) Si es OUT: enviamos y marcamos estado
     if direction == "out":
         try:
             wa_resp = None
@@ -373,10 +343,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     media_id=msg.media_id,
                     caption=msg.media_caption or msg.text or ""
                 )
-
-            elif msg_type == "product":
-                body = (msg.text or "").strip()
-                wa_resp = await send_whatsapp_text(msg.phone, body)
 
             else:
                 wa_resp = await send_whatsapp_text(msg.phone, msg.text or "")
@@ -395,14 +361,16 @@ async def run_ingest(msg: IngestMessage) -> dict:
                           or "WhatsApp send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
+            _log(trace_id, "WHATSAPP_OUT_SENT", ok=bool(isinstance(wa_resp, dict) and wa_resp.get("sent")))
             return {"saved": True, "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp}
 
         except Exception as e:
             with engine.begin() as conn:
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
+            _log(trace_id, "WHATSAPP_OUT_EXCEPTION", error=str(e)[:900])
             return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
 
-    # ✅ 4) Si es IN: decidir si IA corre (y si takeover está off)
+    # ✅ 4) Si es IN: decidir si IA corre (takeover off + ai enabled)
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -465,7 +433,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                                 **(mm_meta or {}),
                             }
                             extracted = (extracted or "").strip()
-
                         else:
                             mm_cfg = _get_multimodal_settings()
                             if not mm_cfg.get("mm_enabled", True):
@@ -510,6 +477,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     "¿Me lo puedes escribir en texto o reenviar el archivo? 🙏"
                 )
                 send_result = await send_ai_reply_in_chunks(msg.phone, fallback_text)
+                _log(trace_id, "FALLBACK_NO_TEXT", sent=bool(send_result.get("sent")))
                 return {
                     "saved": True,
                     "sent": bool(send_result.get("sent")),
@@ -521,51 +489,56 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
             # Limpieza Woo state si venimos de media
             if msg_type != "text":
-                st_now = _get_ai_state(msg.phone) or ""
-                if st_now.startswith("wc_await:") or st_now.startswith("wc_state:"):
+                st_now = (_get_ai_state(msg.phone) or "").strip().lower()
+                if st_now.startswith("wc_") or st_now.startswith("wc_state") or st_now.startswith("wc_await"):
                     _clear_ai_state(msg.phone)
 
             # =========================================================
-            # WooCommerce assistant (si aplica)
+            # WooCommerce assistant (SOLO si aplica)
             # =========================================================
             if wc_enabled() and user_text:
-                async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
-                    wa = await wc_send_product(phone=phone, product_id=product_id, custom_caption=caption)
-                    return wa
+                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
+                _log(trace_id, "ROUTER_WC_DECISION", should_wc=should_wc, reason=reason_wc)
 
-                wc_result = await handle_wc_if_applicable(
-                    phone=msg.phone,
-                    user_text=user_text,
-                    msg_type="text",
-                    get_state=_get_ai_state,
-                    set_state=_set_ai_state,
-                    clear_state=_clear_ai_state,
-                    send_product_fn=_send_product_and_cleanup,
-                    send_text_fn=lambda phone, text: send_ai_reply_in_chunks(phone, text),
-                )
+                if should_wc:
+                    async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
+                        # ✅ usa el sender oficial
+                        return await wc_send_product(phone=phone, product_id=product_id, custom_caption=caption)
 
-                if wc_result.get("handled") is True:
-                    # ✅ memoria CRM (si wc_assistant devuelve slots más adelante)
-                    slots = wc_result.get("slots") if isinstance(wc_result, dict) else None
-                    if isinstance(slots, dict) and slots:
-                        apply_wc_slots_to_crm(msg.phone, slots)
-
-                    update_crm_fields(
-                        msg.phone,
-                        tags_add=["estado:asesoria_woo"],
-                        notes_append=f"Woo handled: {wc_result.get('reason','')}"
+                    wc_result = await handle_wc_if_applicable(
+                        phone=msg.phone,
+                        user_text=user_text,
+                        msg_type="text",
+                        get_state=_get_ai_state,
+                        set_state=_set_ai_state,
+                        clear_state=_clear_ai_state,
+                        send_product_fn=_send_product_and_cleanup,
+                        send_text_fn=lambda phone, text: send_ai_reply_in_chunks(phone, text),
                     )
 
-                    return {
-                        "saved": True,
-                        "sent": True,
-                        "ai": False,
-                        **{k: v for k, v in wc_result.items() if k != "handled"}
-                    }
+                    if isinstance(wc_result, dict) and wc_result.get("handled") is True:
+                        slots = wc_result.get("slots")
+                        if isinstance(slots, dict) and slots:
+                            apply_wc_slots_to_crm(msg.phone, slots)
+
+                        update_crm_fields(
+                            msg.phone,
+                            tags_add=["estado:asesoria_woo"],
+                            notes_append=f"Woo handled: {wc_result.get('reason','')}"
+                        )
+
+                        _log(trace_id, "WOO_HANDLED", reason=wc_result.get("reason", ""))
+                        return {
+                            "saved": True,
+                            "sent": True,
+                            "ai": False,
+                            **{k: v for k, v in wc_result.items() if k != "handled"}
+                        }
 
             # =========================================================
             # Flujo IA normal
             # =========================================================
+            _log(trace_id, "ROUTER_AI", reason="default_ai")
             meta = build_ai_meta(msg.phone, user_text)
 
             ai_result = await process_message(
@@ -576,16 +549,15 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
             reply_text = (ai_result.get("reply_text") or "").strip()
             if not reply_text:
+                _log(trace_id, "AI_EMPTY_REPLY")
                 return {"saved": True, "sent": False, "ai": True, "reply": ""}
 
-            # Decide si enviar voz o texto (usa settings en reply_sender)
-            # - si voice_enabled y prefer_voice -> voz
-            # - sino -> texto en chunks
-            from app.pipeline.reply_sender import _get_voice_settings  # import local para evitar líos
+            from app.pipeline.reply_sender import _get_voice_settings  # import local
             voice = _get_voice_settings()
 
             if voice.get("voice_enabled") and voice.get("voice_prefer_voice"):
                 send_result = await send_ai_reply_as_voice(msg.phone, reply_text)
+                _log(trace_id, "AI_SENT_VOICE", sent=bool(send_result.get("sent")))
                 return {
                     "saved": True,
                     "sent": bool(send_result.get("sent")),
@@ -596,6 +568,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 }
 
             send_result = await send_ai_reply_in_chunks(msg.phone, reply_text)
+            _log(trace_id, "AI_SENT_TEXT", sent=bool(send_result.get("sent")), chunks=int(send_result.get("chunks_sent") or 0))
 
             return {
                 "saved": True,
@@ -613,7 +586,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
             }
 
         except Exception as e:
-            _log(trace_id, "INGEST_EXCEPTION", error=str(e)[:300])
+            _log(trace_id, "INGEST_EXCEPTION", error=str(e)[:900])
             return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}

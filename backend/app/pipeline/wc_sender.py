@@ -123,7 +123,7 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
                 to_phone=phone,
                 body_text=caption,
                 button_text=cta_text,
-                button_url=cta_url,
+                url_to_open=cta_url,
                 header_image_media_id=media_id,
             )
         except Exception as e:

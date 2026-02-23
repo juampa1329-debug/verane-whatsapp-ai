@@ -1,490 +1,657 @@
-# app/integrations/woocommerce.py
-
 import os
-import re
-import io
-from typing import Optional, List, Tuple
-
+import json
+import asyncio
 import httpx
-from fastapi import HTTPException
-from PIL import Image
+import re
+import base64
+from datetime import datetime
+from typing import Optional, Tuple
+
+from fastapi import APIRouter, Request, Response, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy import text
+
+from app.db import engine  # ✅ usa SOLO este engine
+
+router = APIRouter()
+
+VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+FORWARD_URLS = os.getenv("WHATSAPP_FORWARD_URLS", "")
+FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"
+FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "3"))
+
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
+
+WA_DEBUG_RAW = os.getenv("WA_DEBUG_RAW", "false").lower() == "true"
+
 
 # =========================================================
-# CONFIG
+# Settings helpers (ai_settings)
 # =========================================================
 
-WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
-WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
-WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
-
-
-def wc_enabled() -> bool:
-    return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
-
-
-def _norm(s: str) -> str:
-    s = (s or "").lower().strip()
-    s = re.sub(r"[^a-z0-9áéíóúñü\s]+", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-def _strip_html(s: str) -> str:
-    return re.sub(r"<[^<]+?>", " ", (s or "")).strip()
-
-
-def _shorten(s: str, max_chars: int = 260) -> str:
-    s = re.sub(r"\s+", " ", (s or "").strip())
-    if len(s) <= max_chars:
-        return s
-    cut = s[:max_chars].rsplit(" ", 1)[0].strip()
-    return (cut + "…").strip()
-
-
-def _looks_like_preference_query(q: str) -> bool:
-    """
-    Heurística: si el texto parece describir gustos/ocasión (no nombre exacto),
-    usamos un fallback de búsqueda amplia para traer productos y rankear después.
-
-    IMPORTANTE: NO usar "2+ palabras" como criterio (eso dispara falsos positivos).
-    """
-    t = _norm(q)
-    if not t:
-        return False
-
-    # Si hay números/modelos típicos -> probablemente nombre
-    if re.search(r"\b\d{2,4}\b", t):
-        return False
-
-    # Si contiene tokens de marcas comunes -> probablemente nombre
-    brandish = [
-        "dior", "versace", "armani", "azzaro", "carolina", "rabanne", "paco",
-        "givenchy", "jean", "gaultier", "valentino", "gucci", "prada", "ysl",
-        "tom ford", "hugo", "boss", "lacoste", "bvlgari", "bulgari",
-    ]
-    if any(b in t for b in brandish):
-        return False
-
-    # Palabras típicas de preferencias (dominio perfumes)
-    prefs = [
-        "maduro", "elegante", "serio", "juvenil", "seductor", "sofisticado",
-        "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
-        "fresco", "dulce", "seco", "amader", "ambar", "vainill", "citr",
-        "acuatic", "aromatic", "espec", "cuero", "almizcl", "iris", "floral",
-        "gourmand", "proyeccion", "proyección", "duracion", "duración", "intenso", "suave",
-        "verano", "invierno", "calor", "frio",
-        "unisex", "hombre", "mujer", "mascul", "femen",
-        "presupuesto", "hasta", "me alcanza", "barato", "economico", "económico",
-    ]
-    return any(p in t for p in prefs)
-
-
-async def wc_get(path: str, params: dict | None = None):
-    if not wc_enabled():
-        raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
-
-    url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
-    params = params or {}
-    params["consumer_key"] = WC_CONSUMER_KEY
-    params["consumer_secret"] = WC_CONSUMER_SECRET
-
+def _get_ai_send_settings() -> dict:
+    defaults = {"reply_chunk_chars": 480, "reply_delay_ms": 900, "typing_delay_ms": 450}
     try:
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "verane-bot/1.0"}) as client:
-            r = await client.get(url, params=params)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
+                    COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
+                    COALESCE(typing_delay_ms, 450) AS typing_delay_ms
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+        if not r:
+            return defaults
 
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text}")
+        d = dict(r)
+        d["reply_chunk_chars"] = int(max(120, min(int(d.get("reply_chunk_chars") or 480), 2000)))
+        d["reply_delay_ms"] = int(max(0, min(int(d.get("reply_delay_ms") or 900), 15000)))
+        d["typing_delay_ms"] = int(max(0, min(int(d.get("typing_delay_ms") or 450), 15000)))
+        return d
+    except Exception:
+        return defaults
 
-    return r.json()
 
+# =========================================================
+# WhatsApp utils
+# =========================================================
 
-def pick_first_image(product: dict) -> Optional[str]:
-    imgs = product.get("images") or []
-    if imgs and isinstance(imgs, list):
-        src = (imgs[0] or {}).get("src")
-        return src
+def _extract_wa_message_id(resp_json: dict) -> str | None:
+    try:
+        msgs = resp_json.get("messages") or []
+        if msgs and isinstance(msgs, list):
+            return (msgs[0] or {}).get("id")
+    except Exception:
+        pass
     return None
 
 
-def extract_aromas(product: dict) -> List[str]:
-    out: List[str] = []
-    attrs = product.get("attributes") or []
-    for a in attrs:
-        if not isinstance(a, dict):
-            continue
-        name = (a.get("name") or "").strip().lower()
-        if name == "aromas":
-            opts = a.get("options") or []
-            if isinstance(opts, list):
-                out = [str(x).strip() for x in opts if str(x).strip()]
-    return out
+async def send_whatsapp_text(to_phone: str, text_msg: str):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "text",
+        "text": {"body": text_msg},
+    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    j = r.json()
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
 
 
-def extract_brand(product: dict) -> str:
-    for md in (product.get("meta_data") or []):
-        if not isinstance(md, dict):
-            continue
-        k = (md.get("key") or "").lower().strip()
-        if k in ("brand", "_brand", "pa_brand", "product_brand", "yith_wcbm_brand"):
-            v = md.get("value")
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-
-    for a in (product.get("attributes") or []):
-        if not isinstance(a, dict):
-            continue
-        nm = (a.get("name") or "").lower().strip()
-        if nm in ("brand", "marca"):
-            opts = a.get("options") or []
-            if isinstance(opts, list) and opts:
-                return str(opts[0]).strip()
-
-    tags = product.get("tags") or []
-    if isinstance(tags, list) and tags:
-        t0 = tags[0]
-        if isinstance(t0, dict) and (t0.get("name") or "").strip():
-            return (t0.get("name") or "").strip()
-
-    return ""
-
-
-def extract_gender(product: dict) -> str:
-    cats = product.get("categories") or []
-    names = []
-    for c in cats:
-        if isinstance(c, dict) and c.get("name"):
-            names.append(str(c["name"]).lower())
-
-    if any("hombre" in n for n in names):
-        return "hombre"
-    if any("mujer" in n for n in names):
-        return "mujer"
-    if any("unisex" in n for n in names):
-        return "unisex"
-    return ""
-
-
-def extract_size(product: dict) -> str:
-    """Extrae el tamaño o presentación (ej: 100ml) para diferenciar productos homónimos"""
-    for a in (product.get("attributes") or []):
-        if not isinstance(a, dict):
-            continue
-        nm = (a.get("name") or "").lower().strip()
-        if nm in (
-            "tamaño", "tamano", "size", "volumen", "mililitros", "ml",
-            "capacidad", "presentacion", "presentación"
-        ):
-            opts = a.get("options") or []
-            if isinstance(opts, list) and opts:
-                return str(opts[0]).strip()
-    return ""
-
-
-def _safe_categories(product: dict) -> List[dict]:
-    cats = product.get("categories") or []
-    out: List[dict] = []
-    if isinstance(cats, list):
-        for c in cats:
-            if isinstance(c, dict):
-                nm = (c.get("name") or "").strip()
-                if nm:
-                    out.append({"name": nm})
-    return out
-
-
-def _safe_tags(product: dict) -> List[dict]:
-    tags = product.get("tags") or []
-    out: List[dict] = []
-    if isinstance(tags, list):
-        for t in tags:
-            if isinstance(t, dict):
-                nm = (t.get("name") or "").strip()
-                if nm:
-                    out.append({"name": nm})
-    return out
-
-
-def map_product_for_ui(product: dict) -> dict:
+# ✅ NUEVO: Interactive CTA (con botón URL + header imagen opcional)
+async def send_whatsapp_interactive_cta_url(
+    to_phone: str,
+    body_text: str,
+    button_text: str,
+    button_url: str,
+    header_image_media_id: str | None = None,
+):
     """
-    Mapea el producto a un dict amigable para IA/UI.
-
-    - Incluye 'description' limpia.
-    - Incluye 'categories' y 'tags' para ranking.
+    Envía una tarjeta tipo WhatsApp con:
+    - Header (opcional): imagen usando media_id
+    - Body: texto
+    - Botón: CTA URL (abre link)
     """
-    price = product.get("price") or product.get("regular_price") or ""
-    size = extract_size(product)
-    name = product.get("name") or ""
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
 
-    if size and size.lower() not in name.lower():
-        name = f"{name} ({size})"
+    body_text = (body_text or "").strip()
+    button_text = (button_text or "").strip()[:20] or "Ver"
+    button_url = (button_url or "").strip()
 
-    short_description_raw = (product.get("short_description") or "").strip()
-    description_raw = (product.get("description") or "").strip()
+    if not button_url:
+        return {"saved": True, "sent": False, "reason": "button_url missing"}
 
-    short_description_clean = _shorten(_strip_html(short_description_raw), 260)
-    description_clean = _shorten(_strip_html(description_raw), 520)
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
 
-    cats = _safe_categories(product)
-    tags = _safe_tags(product)
-
-    return {
-        "id": product.get("id"),
-        "name": name,
-        "price": str(price),
-        "permalink": product.get("permalink") or "",
-        "featured_image": pick_first_image(product),
-
-        "short_description": short_description_clean,
-        "description": description_clean,
-
-        "categories": cats,
-        "tags": tags,
-
-        "aromas": extract_aromas(product),
-        "brand": extract_brand(product),
-        "gender": extract_gender(product),
-        "size": size,
-        "stock_status": product.get("stock_status") or "",
+    interactive: dict = {
+        "type": "cta_url",
+        "body": {"text": body_text[:1024] if body_text else " "},
+        "action": {
+            "name": "cta_url",
+            "parameters": {"display_text": button_text, "url": button_url}
+        }
     }
 
+    if header_image_media_id:
+        interactive["header"] = {"type": "image", "image": {"id": header_image_media_id}}
 
-async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
-    """
-    Búsqueda Woo robusta:
-    - intenta normal
-    - fallback normalizaciones
-    - fallback tokens
-    - si el query parece SOLO preferencias: búsqueda amplia ("perfume")
-    """
-    q = (query or "").strip()
-    if not q:
-        return []
-
-    is_pref = _looks_like_preference_query(q)
-    base_q = "perfume" if is_pref else q
-
-    effective_per_page = int(per_page)
-    if is_pref:
-        effective_per_page = max(effective_per_page, 24)
-
-    async def _search_once(qx: str) -> List[dict]:
-        params = {"search": qx, "page": 1, "per_page": int(effective_per_page), "status": "publish"}
-        data = await wc_get("/products", params=params)
-        items = [map_product_for_ui(p) for p in (data or [])]
-        items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
-        return items
-
-    items = await _search_once(base_q)
-    if items:
-        return items
-
-    if is_pref:
-        return []
-
-    q2 = _norm(q)
-    q2 = q2.replace("aqua de gio", "acqua di gio")
-    q2 = q2.replace("acqua de gio", "acqua di gio")
-    q2 = q2.replace("aqua di gio", "acqua di gio")
-    q2 = q2.replace("aqua", "acqua")
-    q2 = q2.replace(" de ", " di ")
-
-    if q2 and q2 != q:
-        items = await _search_once(q2)
-        if items:
-            return items
-
-    toks = [t for t in q2.split() if len(t) >= 2]
-    if len(toks) >= 2:
-        q3 = " ".join(toks[:3])
-        if q3 and q3 not in (q, q2):
-            items = await _search_once(q3)
-            if items:
-                return items
-
-    return []
-
-
-def looks_like_product_question(user_text: str) -> bool:
-    """
-    Detector de intención Woo (más estricto para evitar interceptar todo):
-    - Se activa por señales claras: precio, stock, disponibilidad, buscar/recomendar, perfume/fragancia + verbo
-    - Evita dispararse por "tienes/hay" solos
-    """
-    t = _norm(user_text)
-    if not t:
-        return False
-
-    generic = {
-        "ok", "listo", "dale", "gracias", "perfecto", "de una", "vale", "bien",
-        "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "interactive",
+        "interactive": interactive,
     }
-    if t in generic:
-        return False
 
-    # Señales fuertes directas
-    strong_signals = [
-        "precio", "vale", "cuanto", "cuánto", "cost", "valor",
-        "disponible", "disponibles", "stock", "hay stock", "agotado",
-        "envio", "envío", "domicilio",
-        "recomiend", "recomendar", "suger", "buscar", "encuentra", "muest", "muestr",
-    ]
-    if any(s in t for s in strong_signals):
-        return True
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
-    # Si menciona el dominio, debe tener algo más (no solo "perfume" aislado)
-    domain_words = ["perfume", "fragancia", "colonia"]
-    has_domain = any(w in t for w in domain_words)
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json=payload, headers=headers)
 
-    # Verbos genéricos SOLO si hay dominio o marca/nombre
-    generic_verbs = ["tienes", "tienen", "hay", "manej", "venden", "ofrecen"]
-    has_generic_verb = any(v in t for v in generic_verbs)
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
 
-    # Tokens de marcas / nombres frecuentes
-    strong_tokens = (
-        "gio", "armani", "dior", "versace", "azzaro", "carolina",
-        "nitro", "212", "one million", "paco", "rabanne",
-        "tom ford", "gucci", "prada", "ysl", "valentino", "gaultier",
-    )
-    has_brandish = any(tok in t for tok in strong_tokens)
-
-    # Regla final: si es “tienes/hay…” debe venir con dominio o marca
-    if has_generic_verb and (has_domain or has_brandish):
-        return True
-
-    # Si es corto, solo si tiene marca/nombre
-    if len(t.split()) <= 6 and len(t) >= 6:
-        return has_brandish
-
-    return False
+    j = r.json()
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
 
 
-def score_product_match(query: str, product_name: str) -> int:
-    q = _norm(query)
-    n = _norm(product_name)
-    if not q or not n:
-        return 0
-    if n == q:
-        return 100
-    if q in n:
-        cover = int(50 + min(40, (len(q) * 40) / max(1, len(n))))
-        return cover
-    qwords = [w for w in q.split() if len(w) >= 3]
-    if not qwords:
-        return 0
-    hit = sum(1 for w in qwords if w in n)
-    if hit == 0:
-        return 0
-    return 20 + hit * 10
+def _normalize_text(s: str) -> str:
+    s = (s or "").strip()
+    s = re.sub(r"\r\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
-def parse_choice_number(user_text: str) -> Optional[int]:
-    m = re.search(r"\b([1-9])\b", (user_text or "").strip())
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except Exception:
-        return None
+def _split_long_text(text_msg: str, max_chars: int) -> list[str]:
+    text_msg = _normalize_text(text_msg)
+    if not text_msg:
+        return [""]
+
+    if max_chars <= 0:
+        return [text_msg]
+
+    paras = [p.strip() for p in text_msg.split("\n\n") if p.strip()]
+    out: list[str] = []
+    sentence_split_re = re.compile(r"(?<=[\.\!\?])\s+")
+
+    def _push_piece(piece: str):
+        piece = piece.strip()
+        if not piece:
+            return
+        if len(piece) <= max_chars:
+            out.append(piece)
+            return
+
+        sents = sentence_split_re.split(piece)
+        if len(sents) <= 1:
+            i = 0
+            while i < len(piece):
+                chunk = piece[i:i + max_chars].strip()
+                if chunk:
+                    out.append(chunk)
+                i += max_chars
+            return
+
+        buf = ""
+        for s in sents:
+            s = s.strip()
+            if not s:
+                continue
+            cand = (buf + " " + s).strip() if buf else s
+            if len(cand) <= max_chars:
+                buf = cand
+            else:
+                if buf:
+                    out.append(buf)
+                if len(s) <= max_chars:
+                    buf = s
+                else:
+                    j = 0
+                    while j < len(s):
+                        c = s[j:j + max_chars].strip()
+                        if c:
+                            out.append(c)
+                        j += max_chars
+                    buf = ""
+        if buf:
+            out.append(buf)
+
+    buf = ""
+    for p in paras:
+        if not buf:
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+            continue
+
+        cand = (buf + "\n\n" + p).strip()
+        if len(cand) <= max_chars:
+            buf = cand
+        else:
+            out.append(buf)
+            if len(p) <= max_chars:
+                buf = p
+            else:
+                _push_piece(p)
+                buf = ""
+
+    if buf:
+        out.append(buf)
+
+    out = [x.strip() for x in out if x.strip()]
+    return out or [""]
 
 
-async def wc_fetch_product(product_id: int) -> dict:
-    if not wc_enabled():
-        raise HTTPException(status_code=500, detail="WC env vars not configured")
-    return await wc_get(f"/products/{int(product_id)}", params={})
+async def send_whatsapp_text_humanized(to_phone: str, text_msg: str) -> dict:
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    s = _get_ai_send_settings()
+    max_chars = int(s.get("reply_chunk_chars") or 480)
+    reply_delay = int(s.get("reply_delay_ms") or 900) / 1000.0
+    typing_delay = int(s.get("typing_delay_ms") or 450) / 1000.0
+
+    chunks = _split_long_text(text_msg or "", max_chars=max_chars)
+    if not chunks:
+        chunks = [""]
+
+    wa_ids: list[str] = []
+    last_resp: dict = {"saved": True, "sent": False, "reason": "no chunks"}
+
+    if typing_delay > 0:
+        await asyncio.sleep(typing_delay)
+
+    for idx, chunk in enumerate(chunks):
+        last_resp = await send_whatsapp_text(to_phone, chunk)
+        if isinstance(last_resp, dict) and last_resp.get("sent") is True:
+            mid = last_resp.get("wa_message_id")
+            if mid:
+                wa_ids.append(str(mid))
+
+        if idx < len(chunks) - 1 and reply_delay > 0:
+            await asyncio.sleep(reply_delay)
+
+    last_resp["chunks_sent"] = len(chunks)
+    last_resp["chunk_message_ids"] = wa_ids
+    last_resp["humanized"] = True
+    last_resp["settings_used"] = {
+        "reply_chunk_chars": max_chars,
+        "reply_delay_ms": int(reply_delay * 1000),
+        "typing_delay_ms": int(typing_delay * 1000),
+    }
+    return last_resp
 
 
-async def download_image_bytes(url: str) -> Tuple[bytes, str]:
-    if not url:
-        raise HTTPException(status_code=400, detail="Image url missing")
+async def upload_whatsapp_media(file_bytes: bytes, mime_type: str) -> str:
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        raise HTTPException(status_code=500, detail="WhatsApp credentials not set")
 
-    try:
-        async with httpx.AsyncClient(timeout=25) as client:
-            r = await client.get(url)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Image download failed: {e}")
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
 
-    if r.status_code != 200 or not r.content:
-        raise HTTPException(status_code=502, detail=f"Image download failed: {r.status_code}")
+    mt = (mime_type or "application/octet-stream").split(";")[0].strip().lower()
 
-    content_type = (r.headers.get("Content-Type") or "").lower()
-    return r.content, content_type
+    files = {"file": ("upload", file_bytes, mt)}
+    data = {"messaging_product": "whatsapp", "type": mt}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=headers, data=data, files=files)
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=500, detail=f"Media upload failed: {r.status_code} {r.text}")
+
+    j = r.json()
+    media_id = j.get("id")
+    if not media_id:
+        raise HTTPException(status_code=500, detail=f"No media id returned: {j}")
+
+    return media_id
 
 
-def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
-    im = Image.open(io.BytesIO(src_bytes))
-    im = im.convert("RGB")
-    out = io.BytesIO()
-    im.save(out, format="JPEG", quality=88, optimize=True)
-    return out.getvalue()
+async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, caption: str = ""):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    media_type = (media_type or "").strip().lower()
+    if media_type not in ("image", "video", "audio", "document"):
+        return {"saved": True, "sent": False, "reason": f"Unsupported media_type: {media_type}"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": media_type,
+        media_type: {"id": media_id}
+    }
+
+    if caption and media_type in ("image", "video", "document"):
+        payload[media_type]["caption"] = caption
+
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    j = r.json()
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
 
 
-def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_url: str) -> Tuple[bytes, str]:
+# =========================================================
+# ✅ Download media bytes from WhatsApp
+# =========================================================
+
+async def get_whatsapp_media_metadata(media_id: str) -> dict:
+    if not WHATSAPP_TOKEN:
+        raise HTTPException(status_code=500, detail="WHATSAPP_TOKEN not configured")
+
+    meta_url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(meta_url, headers=headers)
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Graph meta failed: {r.status_code} {r.text[:900]}")
+
+    return r.json() or {}
+
+
+async def download_whatsapp_media_bytes(media_id: str) -> tuple[bytes, str]:
     """
-    WhatsApp: mejor JPEG/PNG. Convertimos AVIF/WEBP u otros raros a JPEG.
+    Returns (bytes, mime_type).
     """
-    lower_url = (image_url or "").lower()
-    needs_convert = (
-        ("image/avif" in (content_type or "")) or ("image/webp" in (content_type or "")) or
-        lower_url.endswith(".avif") or lower_url.endswith(".webp")
-    )
+    meta = await get_whatsapp_media_metadata(media_id)
+    dl_url = meta.get("url")
+    ct = (meta.get("mime_type") or "application/octet-stream").split(";")[0].strip().lower()
 
-    try:
-        if needs_convert:
-            return _to_jpeg_bytes(image_bytes), "image/jpeg"
+    if not dl_url:
+        raise HTTPException(status_code=502, detail=f"No url in meta: {str(meta)[:400]}")
 
-        mime_type = content_type if (content_type or "").startswith("image/") else "image/jpeg"
-        if mime_type not in ("image/jpeg", "image/png"):
-            return _to_jpeg_bytes(image_bytes), "image/jpeg"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r_bin = await client.get(dl_url, headers=headers)
 
-        return image_bytes, mime_type
-    except Exception as e:
+    if r_bin.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Graph download failed: {r_bin.status_code} {r_bin.text[:900]}")
+
+    return (r_bin.content or b""), ct
+
+
+# =========================================================
+# Webhook verify
+# =========================================================
+
+@router.get("/api/whatsapp/webhook")
+async def whatsapp_verify(request: Request):
+    qp = request.query_params
+    mode = qp.get("hub.mode")
+    token = qp.get("hub.verify_token")
+    challenge = qp.get("hub.challenge")
+
+    if mode == "subscribe" and token == VERIFY_TOKEN and challenge is not None:
+        return Response(content=str(challenge), media_type="text/plain")
+
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+def _parse_forward_urls() -> list[str]:
+    urls = []
+    for part in (FORWARD_URLS or "").split(","):
+        u = (part or "").strip()
+        if u:
+            urls.append(u)
+    return urls
+
+
+async def _forward_to_targets(raw_body: bytes):
+    if not FORWARD_ENABLED:
+        return
+    urls = _parse_forward_urls()
+    if not urls:
+        return
+
+    headers = {"Content-Type": "application/json", "X-Verane-Forwarded": "1"}
+
+    async def _post_one(client: httpx.AsyncClient, url: str):
         try:
-            return _to_jpeg_bytes(image_bytes), "image/jpeg"
+            await client.post(url, content=raw_body, headers=headers)
         except Exception:
-            raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
+            return
+
+    async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
+        await asyncio.gather(*[_post_one(client, u) for u in urls])
 
 
-def build_caption(product: dict, featured_image: str, real_image: str, custom_caption: str = "") -> str:
+def _update_status_in_db(status_obj: dict):
+    wa_id = status_obj.get("id")
+    st = (status_obj.get("status") or "").lower().strip()
+    ts = status_obj.get("timestamp")
+
+    if not wa_id or not st:
+        return
+
+    dt = None
+    try:
+        if ts:
+            dt = datetime.utcfromtimestamp(int(ts))
+    except Exception:
+        dt = None
+
+    wa_error = ""
+    if st == "failed":
+        try:
+            errs = status_obj.get("errors") or []
+            if errs and isinstance(errs, list):
+                wa_error = json.dumps(errs[0], ensure_ascii=False)[:900]
+        except Exception:
+            wa_error = "failed"
+
+    with engine.begin() as conn:
+        if st == "delivered":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='delivered',
+                    wa_ts_delivered = COALESCE(wa_ts_delivered, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+        elif st == "read":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='read',
+                    wa_ts_read = COALESCE(wa_ts_read, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+        elif st == "failed":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='failed',
+                    wa_error = :wa_error
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "wa_error": wa_error or "failed"})
+
+        elif st == "sent":
+            conn.execute(text("""
+                UPDATE messages
+                SET wa_status='sent',
+                    wa_ts_sent = COALESCE(wa_ts_sent, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+
+def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
     """
-    Caption para WhatsApp "tarjeta" + texto.
+    Returns:
+      (msg_type, text_msg, media_id, mime_type)
+
+    ✅ Importante:
+    - Si es media (audio/image/video/doc), msg_type NO se convierte a text.
+    - El caption (si existe) se manda en text_msg para que IA lo use si aplica.
     """
-    name = (product.get("name", "") or "").strip()
-    price = product.get("price") or product.get("regular_price") or ""
-    permalink = (product.get("permalink", "") or "").strip()
+    msg_type = (m.get("type") or "text").strip().lower()
+    text_msg = ""
+    media_id = None
+    mime_type = None
 
-    brand = extract_brand(product)
-    gender = extract_gender(product)
-    gender_label = "Hombre" if gender == "hombre" else "Mujer" if gender == "mujer" else "Unisex" if gender == "unisex" else ""
+    if msg_type == "text":
+        text_msg = (m.get("text") or {}).get("body", "") or ""
 
-    aromas_list = extract_aromas(product)
-    aromas = ", ".join(aromas_list) if aromas_list else ""
+    elif msg_type == "interactive":
+        inter = m.get("interactive") or {}
+        lr = inter.get("list_reply") or {}
+        br = inter.get("button_reply") or {}
+        text_msg = (
+            lr.get("title") or lr.get("description") or lr.get("id") or
+            br.get("title") or br.get("id") or ""
+        ) or ""
+        msg_type = "text"
 
-    size = (product.get("size") or "").strip() or extract_size(product)
+    elif msg_type == "button":
+        btn = m.get("button") or {}
+        text_msg = (btn.get("text") or btn.get("payload") or "") or ""
+        msg_type = "text"
 
-    short_description_raw = product.get("short_description", "") or ""
-    short_description = _shorten(_strip_html(short_description_raw), 260)
+    elif msg_type in ("image", "video", "audio", "document"):
+        media_obj = m.get(msg_type) or {}
+        media_id = media_obj.get("id")
+        text_msg = (media_obj.get("caption") or "") or ""
+        mime_type = (media_obj.get("mime_type") or "").strip() or None
+        if mime_type:
+            mime_type = mime_type.split(";")[0].strip().lower()
 
-    caption_lines = []
-    if name:
-        caption_lines.append(f"✨ {name}")
-    if size:
-        caption_lines.append(f"📏 Tamaño: {size}")
-    if brand:
-        caption_lines.append(f"🏷️ Marca: {brand}")
-    if gender_label:
-        caption_lines.append(f"👤 Para: {gender_label}")
-    if aromas:
-        caption_lines.append(f"🌿 Aromas: {aromas}")
-    if price:
-        caption_lines.append(f"💰 Precio: ${price}")
-    if short_description:
-        caption_lines.append(f"\n📝 {short_description}")
-    if permalink:
-        caption_lines.append(f"\n🛒 Ver producto: {permalink}")
-    if real_image:
-        caption_lines.append(f"📸 Ver foto real: {real_image}")
+    elif msg_type == "sticker":
+        text_msg = ""
+        msg_type = "sticker"
 
-    caption = (custom_caption or "").strip() or "\n".join(caption_lines)
-    return caption.strip()
+    elif msg_type == "location":
+        loc = m.get("location") or {}
+        text_msg = f"Ubicación: {loc.get('name') or ''} {loc.get('address') or ''} {loc.get('latitude') or ''},{loc.get('longitude') or ''}".strip()
+        msg_type = "text"
+
+    elif msg_type == "contacts":
+        text_msg = "El usuario envió un contacto."
+        msg_type = "text"
+
+    else:
+        text_msg = ""
+
+    text_msg = (text_msg or "").strip()
+    return msg_type, text_msg, media_id, mime_type
+
+
+# =========================================================
+# Ingest internal call
+# =========================================================
+
+async def _ingest_internal(
+    phone: str,
+    msg_type: str,
+    text_msg: str,
+    media_id: Optional[str] = None,
+    mime_type: Optional[str] = None,
+):
+    """
+    Llama el pipeline único (run_ingest) directamente.
+    Evita importar app.main (circular imports / doble init / comportamiento raro).
+    """
+    try:
+        from app.pipeline.ingest_core import run_ingest, IngestMessage as CoreIngestMessage
+
+        payload = CoreIngestMessage(
+            phone=(phone or "").strip(),
+            direction="in",
+            msg_type=(msg_type or "text").strip().lower(),
+            text=(text_msg or "").strip(),
+            media_id=(media_id or None),
+            mime_type=(mime_type or None),
+        )
+
+        await run_ingest(payload)
+
+    except Exception as e:
+        print(
+            "INGEST_INTERNAL_ERROR:",
+            str(e)[:300],
+            "| phone:", phone,
+            "| type:", msg_type,
+            "| media_id:", (media_id or ""),
+        )
+
+
+# =========================================================
+# Webhook receiver
+# =========================================================
+
+@router.post("/api/whatsapp/webhook")
+async def whatsapp_receive(request: Request):
+    raw = await request.body()
+
+    if WA_DEBUG_RAW:
+        print("WA_WEBHOOK_RAW:", raw.decode("utf-8", errors="ignore")[:8000])
+    else:
+        try:
+            d = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+            entry = (d.get("entry") or [None])[0] or {}
+            change = ((entry.get("changes") or [None])[0] or {})
+            value = (change.get("value") or {})
+            msg_count = len(value.get("messages") or [])
+            st_count = len(value.get("statuses") or [])
+            print(f"WA_WEBHOOK: messages={msg_count} statuses={st_count}")
+        except Exception:
+            print("WA_WEBHOOK: (unparsed)")
+
+    # forward (evita loop)
+    if FORWARD_ENABLED and request.headers.get("X-Verane-Forwarded") != "1":
+        await _forward_to_targets(raw)
+
+    try:
+        data = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+    except Exception:
+        return {"ok": True}
+
+    try:
+        entry = (data.get("entry") or [])[0]
+        change = (entry.get("changes") or [])[0]
+        value = change.get("value") or {}
+
+        # 1) Status updates -> DB
+        statuses = value.get("statuses") or []
+        for s in statuses:
+            _update_status_in_db(s)
+
+        # 2) Incoming messages -> ingest
+        messages = value.get("messages") or []
+        for m in messages:
+            phone = (m.get("from") or "").strip()
+            if not phone:
+                continue
+
+            msg_type, text_msg, media_id, mime_type = _extract_incoming(m)
+
+            if msg_type in ("audio", "image", "document") and media_id:
+                if not mime_type:
+                    try:
+                        meta = await get_whatsapp_media_metadata(media_id)
+                        mime_type = (meta.get("mime_type") or "").split(";")[0].strip().lower() or None
+                    except Exception:
+                        pass
+
+            await _ingest_internal(
+                phone=phone,
+                msg_type=msg_type,
+                text_msg=text_msg or "",
+                media_id=media_id,
+                mime_type=mime_type,
+            )
+
+    except Exception as e:
+        print("WEBHOOK_ERROR:", str(e)[:900])
+
+    return {"ok": True}
+
+
+@router.get("/api/media/proxy/{media_id}")
+async def proxy_media(media_id: str):
+    content, ct = await download_whatsapp_media_bytes(media_id)
+    return StreamingResponse(iter([content]), media_type=ct)

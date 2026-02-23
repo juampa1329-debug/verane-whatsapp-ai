@@ -25,6 +25,72 @@ from app.ai.tts import tts_synthesize
 
 
 # -------------------------
+# Internal helpers: safe conversation updates
+# -------------------------
+
+def _safe_set_last_product_in_conversation(phone: str, product_id: int, featured_image: str = "", real_image: str = "", permalink: str = "") -> None:
+    """
+    Guarda el último producto enviado por conversación.
+    Intentamos varias columnas posibles sin romper si no existen.
+
+    Esto sirve para el caso: "sí envíame la foto" -> enviar tarjeta del último producto.
+    """
+    phone = (phone or "").strip()
+    if not phone or not product_id:
+        return
+
+    payload = {
+        "last_product_id": int(product_id),
+        "last_product_featured_image": (featured_image or "")[:500],
+        "last_product_real_image": (real_image or "")[:500],
+        "last_product_permalink": (permalink or "")[:500],
+        "ts": datetime.utcnow().isoformat(),
+    }
+
+    # Intento 1: columna dedicada last_product_id
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE conversations
+                SET last_product_id = :pid,
+                    updated_at = COALESCE(updated_at, NOW())
+                WHERE phone = :phone
+            """), {"phone": phone, "pid": int(product_id)})
+        return
+    except Exception:
+        pass
+
+    # Intento 2: guardar en crm_meta JSONB (si existe)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE conversations
+                SET crm_meta = COALESCE(crm_meta, '{}'::jsonb) || CAST(:m AS jsonb),
+                    updated_at = COALESCE(updated_at, NOW())
+                WHERE phone = :phone
+            """), {"phone": phone, "m": json.dumps(payload, ensure_ascii=False)})
+        return
+    except Exception:
+        pass
+
+    # Intento 3: guardar en crm_slots JSONB (si existe)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE conversations
+                SET crm_slots = COALESCE(crm_slots, '{}'::jsonb) || CAST(:m AS jsonb),
+                    updated_at = COALESCE(updated_at, NOW())
+                WHERE phone = :phone
+            """), {"phone": phone, "m": json.dumps(payload, ensure_ascii=False)})
+        return
+    except Exception:
+        pass
+
+    # Si no existe ninguna, no hacemos nada (silencioso).
+    return
+
+
+# -------------------------
 # DB helpers
 # -------------------------
 
@@ -555,3 +621,15 @@ async def send_ai_reply_as_voice(phone: str, text_to_say: str) -> dict:
         "tts_voice_id": tts_voice_id,
         "tts_model_id": tts_model_id,
     }
+
+
+# -------------------------
+# Public: helper for other modules
+# -------------------------
+
+def remember_last_product_sent(phone: str, product_id: int, featured_image: str = "", real_image: str = "", permalink: str = "") -> None:
+    """
+    Llamar esto cuando se envía una tarjeta/producto.
+    No rompe si tu DB no tiene columnas: hace best-effort.
+    """
+    _safe_set_last_product_in_conversation(phone, product_id, featured_image, real_image, permalink)

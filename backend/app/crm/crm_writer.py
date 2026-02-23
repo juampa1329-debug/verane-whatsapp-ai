@@ -216,3 +216,113 @@ def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
 
     if tags:
         update_crm_fields(phone, tags_add=tags)
+
+
+# =========================================================
+# ✅ NUEVO: Memoria del último producto enviado
+# (para "envíame la foto", "mándame la imagen", etc.)
+# =========================================================
+
+def remember_last_product_sent(
+    phone: str,
+    *,
+    product_id: int,
+    featured_image: str = "",
+    real_image: str = "",
+    permalink: str = "",
+) -> None:
+    """
+    Guarda "memoria" del último producto enviado en conversations.notes.
+
+    No asume cambios de DB (porque no sabemos si hay columnas extras).
+    Es robusto y funciona aunque solo exista la columna notes.
+
+    Formato (línea única):
+      last_product_id=123|featured=...|real=...|permalink=...|ts=2026-02-23T...
+    """
+    phone = (phone or "").strip()
+    if not phone:
+        return
+
+    ensure_conversation_row(phone)
+
+    try:
+        pid = int(product_id)
+        if pid <= 0:
+            return
+    except Exception:
+        return
+
+    line = (
+        f"last_product_id={pid}"
+        f"|featured={(featured_image or '').strip()}"
+        f"|real={(real_image or '').strip()}"
+        f"|permalink={(permalink or '').strip()}"
+        f"|ts={datetime.utcnow().isoformat(timespec='seconds')}Z"
+    ).strip()
+
+    # Guardamos al FINAL (append). Si ya existe otra línea last_product_id, la dejamos:
+    # al leer tomaremos la ÚLTIMA.
+    update_crm_fields(phone, notes_append=line)
+
+
+def get_last_product_sent(phone: str) -> dict:
+    """
+    Recupera el último producto enviado desde conversations.notes.
+    Devuelve:
+      {"ok": True, "product_id": int, "featured_image": str, "real_image": str, "permalink": str, "raw": str}
+    o:
+      {"ok": False, "reason": "..."}
+    """
+    phone = (phone or "").strip()
+    if not phone:
+        return {"ok": False, "reason": "missing_phone"}
+
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text("""
+                SELECT COALESCE(notes,'') AS notes
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+        notes = (row or {}).get("notes") or ""
+    except Exception:
+        return {"ok": False, "reason": "db_error"}
+
+    notes = str(notes or "")
+    if not notes.strip():
+        return {"ok": False, "reason": "no_notes"}
+
+    # buscamos la última línea que contenga last_product_id=
+    last_line = ""
+    for ln in [x.strip() for x in notes.split("\n") if x.strip()]:
+        if "last_product_id=" in ln:
+            last_line = ln
+
+    if not last_line:
+        return {"ok": False, "reason": "no_last_product"}
+
+    # parse
+    try:
+        parts = last_line.split("|")
+        kv = {}
+        for p in parts:
+            if "=" in p:
+                k, v = p.split("=", 1)
+                kv[_clean(k).lower()] = (v or "").strip()
+
+        pid = int(kv.get("last_product_id") or "0")
+        if pid <= 0:
+            return {"ok": False, "reason": "invalid_product_id", "raw": last_line}
+
+        return {
+            "ok": True,
+            "product_id": pid,
+            "featured_image": kv.get("featured", ""),
+            "real_image": kv.get("real", ""),
+            "permalink": kv.get("permalink", ""),
+            "raw": last_line,
+        }
+    except Exception:
+        return {"ok": False, "reason": "parse_error", "raw": last_line}

@@ -61,10 +61,22 @@ def _get_ai_send_settings() -> dict:
 # =========================================================
 
 def _extract_wa_message_id(resp_json: dict) -> str | None:
+    """
+    Meta a veces responde:
+      - {"messages":[{"id":"..."}]}
+      - {"message_id":"..."}  (menos común)
+    """
     try:
-        msgs = resp_json.get("messages") or []
-        if msgs and isinstance(msgs, list):
-            return (msgs[0] or {}).get("id")
+        if isinstance(resp_json, dict):
+            mid = resp_json.get("message_id")
+            if mid:
+                return str(mid)
+
+            msgs = resp_json.get("messages") or []
+            if msgs and isinstance(msgs, list):
+                mid2 = (msgs[0] or {}).get("id")
+                if mid2:
+                    return str(mid2)
     except Exception:
         pass
     return None
@@ -266,6 +278,73 @@ async def send_whatsapp_media_id(to_phone: str, media_type: str, media_id: str, 
 
     if caption and media_type in ("image", "video", "document"):
         payload[media_type]["caption"] = caption
+
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json=payload, headers=headers)
+
+    if r.status_code >= 400:
+        return {"saved": True, "sent": False, "whatsapp_status": r.status_code, "whatsapp_body": r.text}
+
+    j = r.json()
+    return {"saved": True, "sent": True, "wa_message_id": _extract_wa_message_id(j), "whatsapp": j}
+
+
+# =========================================================
+# ✅ NUEVO: Interactive CTA URL (botón que abre link)
+# =========================================================
+
+async def send_whatsapp_interactive_cta_url(
+    to_phone: str,
+    body_text: str,
+    button_text: str,
+    url_to_open: str,
+    *,
+    header_image_media_id: Optional[str] = None,
+) -> dict:
+    """
+    Envía un mensaje 'interactive' tipo CTA URL:
+      - body con texto
+      - botón con display_text que abre un URL
+      - opcional: header image por media_id (subido previamente)
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        return {"saved": True, "sent": False, "reason": "WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set"}
+
+    body_text = (body_text or "").strip()
+    button_text = (button_text or "").strip() or "Ver"
+    url_to_open = (url_to_open or "").strip()
+
+    if not url_to_open:
+        return {"saved": True, "sent": False, "reason": "url_to_open is required"}
+
+    url = f"https://graph.facebook.com/{WHATSAPP_GRAPH_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+
+    interactive: dict = {
+        "type": "cta_url",
+        "body": {"text": body_text or " "},
+        "action": {
+            "name": "cta_url",
+            "parameters": {
+                "display_text": button_text[:20],   # WA suele limitar longitud del texto
+                "url": url_to_open,
+            },
+        },
+    }
+
+    if header_image_media_id:
+        interactive["header"] = {
+            "type": "image",
+            "image": {"id": header_image_media_id},
+        }
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone,
+        "type": "interactive",
+        "interactive": interactive,
+    }
 
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
 
@@ -572,12 +651,7 @@ async def whatsapp_receive(request: Request):
 
             msg_type, text_msg, media_id, mime_type = _extract_incoming(m)
 
-            # ✅ CORRECCIÓN CLAVE:
-            # NO conviertas audio/image/document a "text" aquí.
-            # Eso rompe el frontend (no se renderiza el reproductor).
-            # El multimodal (STT/OCR/Gemini) se hace en app.main ingest y se guarda en extracted_text/ai_meta.
             if msg_type in ("audio", "image", "document") and media_id:
-                # Si WhatsApp no envía mime_type en el webhook, lo resolvemos (sin bajar bytes)
                 if not mime_type:
                     try:
                         meta = await get_whatsapp_media_metadata(media_id)
@@ -588,7 +662,7 @@ async def whatsapp_receive(request: Request):
             await _ingest_internal(
                 phone=phone,
                 msg_type=msg_type,
-                text_msg=text_msg or "",   # caption si existe
+                text_msg=text_msg or "",
                 media_id=media_id,
                 mime_type=mime_type,
             )

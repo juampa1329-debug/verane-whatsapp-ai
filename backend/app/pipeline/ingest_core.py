@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -41,6 +42,7 @@ from app.crm.crm_writer import (
     ensure_conversation_row,
     apply_wc_slots_to_crm,
     update_crm_fields,
+    get_last_product_sent,  # ✅ NUEVO
 )
 
 # =========================================================
@@ -86,6 +88,67 @@ def _log(trace_id: str, event: str, **kv):
         print("[INGEST]", json.dumps(payload, ensure_ascii=False))
     except Exception:
         print("[INGEST]", trace_id, event, kv)
+
+
+# =========================================================
+# ✅ Intent detector: "envíame la foto"
+# =========================================================
+
+def _norm_text(s: str) -> str:
+    s = (s or "").strip().lower()
+    replacements = {"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n"}
+    for a, b in replacements.items():
+        s = s.replace(a, b)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _is_photo_request(text: str) -> bool:
+    """
+    Detecta mensajes como:
+      - "si enviame la foto"
+      - "envia la imagen"
+      - "mandame la foto real"
+      - "quiero ver la foto"
+      - "pasa foto"
+      - "enviala"
+    Evita dispararse por cosas genéricas.
+    """
+    t = _norm_text(text)
+    if not t:
+        return False
+
+    # muy genéricos / acknowledgements
+    if t in {"ok", "dale", "listo", "gracias", "perfecto", "vale", "bien", "👍", "👌", "✅"}:
+        return False
+
+    # si solo es "si" o "sí" no alcanza
+    if t in {"si", "sí"}:
+        return False
+
+    # reglas: debe haber una intención clara de foto/imagen
+    photo_tokens = [
+        "foto", "imagen", "picture", "pic", "phot",
+        "ver foto", "ver la foto", "ver imagen", "foto real", "imagen real"
+    ]
+    send_tokens = [
+        "envia", "enviame", "mandame", "manda", "pasame", "pasa",
+        "muestrame", "muestra", "compart", "reenvi", "enviala", "enviarla"
+    ]
+
+    has_photo = any(p in t for p in photo_tokens)
+    has_send = any(s in t for s in send_tokens)
+
+    # casos típicos: "si enviame la foto", "mandame la imagen", "quiero ver la foto"
+    if has_photo and (has_send or "quiero ver" in t or "me la puedes" in t or "me puedes" in t):
+        return True
+
+    # "enviala" / "envíala" sin decir foto: a veces viene en contexto, pero es riesgoso.
+    # Solo lo activamos si es MUY corto y no parece otra cosa.
+    if t in {"enviala", "enviarla", "enviala por favor", "mandala", "mandala por favor"}:
+        return True
+
+    return False
 
 
 # =========================================================
@@ -229,7 +292,6 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
         if kw in t:
             return True, f"keyword:{kw}"
 
-    # Si solo manda "1" sin estado activo, no lo tratamos como selección
     if t.isdigit():
         return False, "digit_without_state"
 
@@ -494,6 +556,62 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     _clear_ai_state(msg.phone)
 
             # =========================================================
+            # ✅ NUEVO: si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
+            # =========================================================
+            if msg_type == "text" and _is_photo_request(user_text):
+                last = get_last_product_sent(msg.phone)
+                _log(trace_id, "PHOTO_REQUEST_DETECTED", ok=bool(last.get("ok")), last=last.get("raw", "")[:220])
+
+                if isinstance(last, dict) and last.get("ok") is True:
+                    pid = int(last.get("product_id") or 0)
+                    if pid > 0:
+                        update_crm_fields(
+                            msg.phone,
+                            tags_add=["intencion:ver_foto"],
+                            notes_append=f"Cliente pidió foto -> reenviar tarjeta (product_id={pid})"
+                        )
+
+                        # Reenviamos tarjeta de producto (la bonita / interactive)
+                        try:
+                            wa = await wc_send_product(phone=msg.phone, product_id=pid, custom_caption="")
+                        except Exception as e:
+                            wa = {"sent": False, "reason": "wc_send_exception", "error": str(e)[:900]}
+
+                        sent_ok = bool(isinstance(wa, dict) and wa.get("sent") is True)
+
+                        _log(trace_id, "PHOTO_REQUEST_SENT_CARD", sent=sent_ok, product_id=pid)
+                        return {
+                            "saved": True,
+                            "sent": sent_ok,
+                            "ai": False,
+                            "woo": True,
+                            "reason": "photo_request_resend_last_product",
+                            "product_id": pid,
+                            "wa": wa,
+                        }
+
+                # Si no hay memoria del producto, respondemos claro
+                update_crm_fields(
+                    msg.phone,
+                    tags_add=["intencion:ver_foto"],
+                    notes_append="Cliente pidió foto pero no hay producto previo registrado"
+                )
+
+                txt = (
+                    "¡Claro! 😊\n\n"
+                    "¿De cuál perfume quieres la foto?\n"
+                    "Dime el nombre del producto o envíame un mensaje con el perfume que estás mirando."
+                )
+                send_result = await send_ai_reply_in_chunks(msg.phone, txt)
+                return {
+                    "saved": True,
+                    "sent": bool(send_result.get("sent")),
+                    "ai": False,
+                    "reason": "photo_request_no_last_product",
+                    "wa_last": send_result.get("last_wa") or {},
+                }
+
+            # =========================================================
             # WooCommerce assistant (SOLO si aplica)
             # =========================================================
             if wc_enabled() and user_text:
@@ -502,7 +620,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
                 if should_wc:
                     async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
-                        # ✅ usa el sender oficial
                         return await wc_send_product(phone=phone, product_id=product_id, custom_caption=caption)
 
                     wc_result = await handle_wc_if_applicable(

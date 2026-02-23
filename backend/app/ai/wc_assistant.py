@@ -13,6 +13,7 @@ from app.integrations.woocommerce import (
 
 # ============================================================
 # Woo Advisor V2 (State machine + Slots + Scoring + Anti-stuck)
+# + Photo request => send product card
 # ============================================================
 
 STATE_PREFIX_V2 = "wc_state:"
@@ -79,6 +80,38 @@ def _is_exit_command(text: str) -> bool:
     ])
 
 
+# -------------------------
+# Intent: request photo/image (hard rules)
+# -------------------------
+
+_PHOTO_KEYWORDS = [
+    "foto", "fotos", "imagen", "imagenes", "imágenes",
+    "foto real", "ver foto", "ver la foto", "verlo", "verla",
+    "muestrame", "muéstrame", "mandame", "mándame", "enviame", "envíame",
+    "quiero ver", "tienes foto", "tiene foto",
+]
+
+_CONFIRM_WORDS = {
+    "si", "sí", "dale", "ok", "okay", "listo", "de una", "enviala", "envíala",
+    "manda", "mandala", "mándala", "hazlo", "listo entonces"
+}
+
+def _is_photo_request(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+
+    for kw in _PHOTO_KEYWORDS:
+        if _norm(kw) in t:
+            return True
+
+    # confirmación corta: "sí", "dale", etc. (solo será efectiva si hay contexto)
+    if len(t) <= 12 and t in _CONFIRM_WORDS:
+        return True
+
+    return False
+
+
 def _looks_like_refinement(text: str) -> bool:
     """
     Detecta refinamiento REAL (preferencias) sin dispararse por cualquier frase.
@@ -112,7 +145,10 @@ def _looks_like_refinement(text: str) -> bool:
     # Frases comunes de refinamiento
     if any(x in t for x in ["mas ", "más ", "menos ", "no tan", "que sea", "para ", "tipo "]):
         # pero evitamos cosas genéricas como "para ti" o "para mi"
-        if "para " in t and not any(k in t for k in ["para hombre", "para mujer", "para unisex", "para oficina", "para noche", "para diario", "para fiesta", "para cita"]):
+        if "para " in t and not any(k in t for k in [
+            "para hombre", "para mujer", "para unisex",
+            "para oficina", "para noche", "para diario", "para fiesta", "para cita"
+        ]):
             return False
         return True
 
@@ -505,6 +541,23 @@ async def handle_wc_if_applicable(
             clear_state(phone)
             return {"handled": False}
 
+        # ✅ NUEVO: si piden foto y hay opciones, enviamos la 1 (o pedimos número)
+        if _is_photo_request(text) and options:
+            # Si solo hay 1 opción, la enviamos directo
+            if len(options) == 1:
+                picked = options[0]
+                clear_state(phone)
+                return {
+                    "handled": True,
+                    "wc": True,
+                    "reason": "photo_send_v1_single",
+                    "slots": {},
+                    "wa": await send_product_fn(phone, int(picked["id"]), ""),
+                }
+            # Si hay varias, pedimos número (no inventamos)
+            await send_text_fn(phone, "📸 Claro. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
+            return {"handled": True, "wc": True, "reason": "photo_need_choice_v1", "slots": {}}
+
         if options:
             choice = parse_choice_number(text)
             if choice and 1 <= choice <= len(options):
@@ -514,6 +567,7 @@ async def handle_wc_if_applicable(
                     "handled": True,
                     "wc": True,
                     "reason": "choice_send_v1",
+                    "slots": {},
                     "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
 
@@ -546,6 +600,35 @@ async def handle_wc_if_applicable(
     candidates = wc_state.get("candidates") or []
 
     # -----------------------------------------
+    # ✅ NUEVO: si piden FOTO y hay candidatos en state -> enviar tarjeta
+    # -----------------------------------------
+    if _is_photo_request(text):
+        # Si hay candidato único o ya venimos con shortlist, mandamos el primero
+        if candidates:
+            picked = candidates[0]
+            pid = _safe_int(picked.get("id"))
+            if pid:
+                # NO limpiamos state si quieres que siga el flujo; pero para foto, es mejor no quedar atascado.
+                # Dejamos stage en await_choice si había, pero refrescamos timestamp.
+                wc_state["ts"] = _now_ts()
+                set_state(phone, _state_v2_pack(wc_state))
+                return {
+                    "handled": True,
+                    "wc": True,
+                    "reason": "photo_send_from_state_v2",
+                    "slots": slots,
+                    "wa": await send_product_fn(phone, int(pid), ""),
+                }
+
+        # Si no hay candidatos, pedimos nombre exacto (sin inventar)
+        await send_text_fn(
+            phone,
+            "📸 ¡Claro! ¿De cuál perfume quieres la foto?\n\n"
+            "Dime el *nombre exacto* o dime si quieres que te muestre opciones para elegir."
+        )
+        return {"handled": True, "wc": True, "reason": "photo_need_product_v2", "slots": slots}
+
+    # -----------------------------------------
     # 2) Woo aplica SOLO si:
     # - hay state activo esperando elección
     # - o el texto parece pregunta de producto real
@@ -576,6 +659,7 @@ async def handle_wc_if_applicable(
                 "handled": True,
                 "wc": True,
                 "reason": "choice_send_v2",
+                "slots": slots,
                 "wa": await send_product_fn(phone, int(picked["id"]), ""),
             }
 
@@ -598,7 +682,7 @@ async def handle_wc_if_applicable(
         wc_state["stage"] = "discovery"
         set_state(phone, _state_v2_pack(wc_state))
         await send_text_fn(phone, f"No encontré resultados con eso 😕\n{_pick_followup_question(slots)}")
-        return {"handled": True, "wc": True, "reason": "no_results_v2"}
+        return {"handled": True, "wc": True, "reason": "no_results_v2", "slots": slots}
 
     # -----------------------------------------
     # 6) Ranking
@@ -638,7 +722,7 @@ async def handle_wc_if_applicable(
             except Exception:
                 pass
         await send_text_fn(phone, menu_text)
-        return {"handled": True, "wc": True, "reason": "menu_options_v2"}
+        return {"handled": True, "wc": True, "reason": "menu_options_v2", "slots": slots}
 
     if strong_name_score >= 80:
         clear_state(phone)
@@ -646,6 +730,7 @@ async def handle_wc_if_applicable(
             "handled": True,
             "wc": True,
             "reason": "strong_match_send_v2",
+            "slots": slots,
             "wa": await send_product_fn(phone, int(top1["id"]), ""),
         }
 
@@ -676,4 +761,4 @@ async def handle_wc_if_applicable(
     set_state(phone, _state_v2_pack(wc_state))
 
     await send_text_fn(phone, "\n".join(summary_lines))
-    return {"handled": True, "wc": True, "reason": "advisor_reco_v2"}
+    return {"handled": True, "wc": True, "reason": "advisor_reco_v2", "slots": slots}

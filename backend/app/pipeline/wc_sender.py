@@ -6,7 +6,12 @@ from fastapi import HTTPException
 
 from app.db import engine
 from app.pipeline.reply_sender import save_message, set_wa_send_result
-from app.routes.whatsapp import upload_whatsapp_media, send_whatsapp_media_id
+
+from app.routes.whatsapp import (
+    upload_whatsapp_media,
+    send_whatsapp_media_id,
+    send_whatsapp_interactive_cta_url,
+)
 
 from app.integrations.woocommerce import (
     wc_fetch_product,
@@ -18,15 +23,18 @@ from app.integrations.woocommerce import (
     WC_CONSUMER_SECRET,
 )
 
+from app.crm.crm_writer import remember_last_product_sent
+
 
 async def wc_send_product(phone: str, product_id: int, custom_caption: str = "") -> dict:
     """
-    Envía una "tarjeta" de producto por WhatsApp:
-    - baja imagen del producto
-    - la sube a WhatsApp (media_id)
-    - manda imagen + caption
-    - guarda en DB como msg_type='product'
-    - guarda wa_status/wa_message_id/errores
+    Envía una tarjeta de producto por WhatsApp:
+
+    ✅ Prioridad:
+    1) Interactive CTA URL (como la tarjeta 2) si hay real_image o permalink
+    2) Fallback: image + caption
+
+    Además guarda memoria del último producto enviado para “envíame la foto”.
     """
 
     # Pillow AVIF (opcional)
@@ -55,6 +63,8 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
     if not featured_image:
         raise HTTPException(status_code=400, detail="Product image src missing")
 
+    permalink = (product.get("permalink") or "").strip()
+
     # 2) Descargar imagen + normalizar a formato WhatsApp
     img_bytes, content_type = await download_image_bytes(featured_image)
     if not img_bytes:
@@ -67,7 +77,7 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
     if not media_id:
         raise HTTPException(status_code=502, detail="WhatsApp media upload failed (no media_id)")
 
-    # 4) Construir caption
+    # 4) Caption (texto del cuerpo)
     caption = build_caption(
         product=product,
         featured_image=featured_image,
@@ -75,9 +85,7 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
         custom_caption=(custom_caption or ""),
     )
 
-    permalink = (product.get("permalink") or "").strip()
-
-    # 5) Guardar en DB el OUT como product (incluyendo media_id + mime + size)
+    # 5) Guardar en DB el OUT como product
     with engine.begin() as conn:
         local_id = save_message(
             conn,
@@ -94,13 +102,41 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
             permalink=permalink,
         )
 
-    # 6) Enviar a WhatsApp
-    wa_resp = await send_whatsapp_media_id(
-        to_phone=phone,
-        media_type="image",
-        media_id=media_id,
-        caption=caption,
+    # ✅ 5.1) Memoria del último producto enviado
+    remember_last_product_sent(
+        phone,
+        product_id=int(product_id),
+        featured_image=featured_image,
+        real_image=real_image,
+        permalink=permalink,
     )
+
+    # 6) Enviar (preferimos TARJETA con botón)
+    wa_resp = None
+
+    cta_url = (real_image or "").strip() or (permalink or "").strip()
+    cta_text = "Ver foto real" if (real_image or "").strip() else "Ver producto"
+
+    if cta_url:
+        try:
+            wa_resp = await send_whatsapp_interactive_cta_url(
+                to_phone=phone,
+                body_text=caption,
+                button_text=cta_text,
+                button_url=cta_url,
+                header_image_media_id=media_id,
+            )
+        except Exception as e:
+            wa_resp = {"sent": False, "reason": "interactive_exception", "error": str(e)[:900]}
+
+    # Fallback: si interactive falla
+    if not (isinstance(wa_resp, dict) and wa_resp.get("sent") is True):
+        wa_resp = await send_whatsapp_media_id(
+            to_phone=phone,
+            media_type="image",
+            media_id=media_id,
+            caption=caption,
+        )
 
     # 7) Persistir resultado WA
     wa_message_id = wa_resp.get("wa_message_id") if isinstance(wa_resp, dict) else None
@@ -117,10 +153,11 @@ async def wc_send_product(phone: str, product_id: int, custom_caption: str = "")
             )
             set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
-    # 8) Respuesta consistente (útil para debug)
     out = wa_resp if isinstance(wa_resp, dict) else {"sent": False, "reason": "invalid wa_resp"}
     out["local_message_id"] = local_id
     out["media_id"] = media_id
     out["mime_type"] = mime_type
     out["product_id"] = int(product_id)
+    out["card_mode"] = "interactive_cta" if cta_url else "image_caption"
+    out["cta_url"] = cta_url
     return out

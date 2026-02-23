@@ -9,10 +9,6 @@ import httpx
 from fastapi import HTTPException
 from PIL import Image
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
 WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
 WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
@@ -21,10 +17,6 @@ WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
 def wc_enabled() -> bool:
     return bool(WC_BASE_URL and WC_CONSUMER_KEY and WC_CONSUMER_SECRET)
 
-
-# =========================================================
-# Text utils
-# =========================================================
 
 def _norm(s: str) -> str:
     s = (s or "").lower().strip()
@@ -46,21 +38,13 @@ def _shorten(s: str, max_chars: int = 260) -> str:
 
 
 def _looks_like_preference_query(q: str) -> bool:
-    """
-    Heurística: si el texto parece describir gustos/ocasión (no nombre exacto),
-    usamos un fallback de búsqueda amplia para traer productos y rankear después.
-
-    IMPORTANTE: NO usar "2+ palabras" como criterio (eso dispara falsos positivos).
-    """
     t = _norm(q)
     if not t:
         return False
 
-    # Si hay números/modelos típicos -> probablemente nombre
     if re.search(r"\b\d{2,4}\b", t):
         return False
 
-    # Si contiene tokens de marcas comunes -> probablemente nombre
     brandish = [
         "dior", "versace", "armani", "azzaro", "carolina", "rabanne", "paco",
         "givenchy", "jean", "gaultier", "valentino", "gucci", "prada", "ysl",
@@ -69,7 +53,6 @@ def _looks_like_preference_query(q: str) -> bool:
     if any(b in t for b in brandish):
         return False
 
-    # Palabras típicas de preferencias (dominio perfumes)
     prefs = [
         "maduro", "elegante", "serio", "juvenil", "seductor", "sofisticado",
         "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
@@ -82,10 +65,6 @@ def _looks_like_preference_query(q: str) -> bool:
     ]
     return any(p in t for p in prefs)
 
-
-# =========================================================
-# Woo HTTP
-# =========================================================
 
 async def wc_get(path: str, params: dict | None = None):
     if not wc_enabled():
@@ -108,15 +87,10 @@ async def wc_get(path: str, params: dict | None = None):
     return r.json()
 
 
-# =========================================================
-# Product helpers
-# =========================================================
-
 def pick_first_image(product: dict) -> Optional[str]:
     imgs = product.get("images") or []
     if imgs and isinstance(imgs, list):
-        src = (imgs[0] or {}).get("src")
-        return src
+        return (imgs[0] or {}).get("src")
     return None
 
 
@@ -179,15 +153,11 @@ def extract_gender(product: dict) -> str:
 
 
 def extract_size(product: dict) -> str:
-    """Extrae el tamaño o presentación (ej: 100ml) para diferenciar productos homónimos"""
     for a in (product.get("attributes") or []):
         if not isinstance(a, dict):
             continue
         nm = (a.get("name") or "").lower().strip()
-        if nm in (
-            "tamaño", "tamano", "size", "volumen", "mililitros", "ml",
-            "capacidad", "presentacion", "presentación"
-        ):
+        if nm in ("tamaño", "tamano", "size", "volumen", "mililitros", "ml", "capacidad", "presentacion", "presentación"):
             opts = a.get("options") or []
             if isinstance(opts, list) and opts:
                 return str(opts[0]).strip()
@@ -219,12 +189,6 @@ def _safe_tags(product: dict) -> List[dict]:
 
 
 def map_product_for_ui(product: dict) -> dict:
-    """
-    Mapea el producto a un dict amigable para IA/UI.
-
-    - Incluye 'description' limpia.
-    - Incluye 'categories' y 'tags' para ranking.
-    """
     price = product.get("price") or product.get("regular_price") or ""
     size = extract_size(product)
     name = product.get("name") or ""
@@ -238,22 +202,16 @@ def map_product_for_ui(product: dict) -> dict:
     short_description_clean = _shorten(_strip_html(short_description_raw), 260)
     description_clean = _shorten(_strip_html(description_raw), 520)
 
-    cats = _safe_categories(product)
-    tags = _safe_tags(product)
-
     return {
         "id": product.get("id"),
         "name": name,
         "price": str(price),
         "permalink": product.get("permalink") or "",
         "featured_image": pick_first_image(product),
-
         "short_description": short_description_clean,
         "description": description_clean,
-
-        "categories": cats,
-        "tags": tags,
-
+        "categories": _safe_categories(product),
+        "tags": _safe_tags(product),
         "aromas": extract_aromas(product),
         "brand": extract_brand(product),
         "gender": extract_gender(product),
@@ -262,18 +220,7 @@ def map_product_for_ui(product: dict) -> dict:
     }
 
 
-# =========================================================
-# Search + intent helpers used by wc_assistant / ai.engine
-# =========================================================
-
 async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
-    """
-    Búsqueda Woo robusta:
-    - intenta normal
-    - fallback normalizaciones
-    - fallback tokens
-    - si el query parece SOLO preferencias: búsqueda amplia ("perfume")
-    """
     q = (query or "").strip()
     if not q:
         return []
@@ -323,11 +270,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
 
 
 def looks_like_product_question(user_text: str) -> bool:
-    """
-    Detector de intención Woo (más estricto para evitar interceptar todo):
-    - Se activa por señales claras: precio, stock, disponibilidad, buscar/recomendar, perfume/fragancia + verbo
-    - Evita dispararse por "tienes/hay" solos
-    """
     t = _norm(user_text)
     if not t:
         return False
@@ -339,7 +281,6 @@ def looks_like_product_question(user_text: str) -> bool:
     if t in generic:
         return False
 
-    # Señales fuertes directas
     strong_signals = [
         "precio", "vale", "cuanto", "cuánto", "cost", "valor",
         "disponible", "disponibles", "stock", "hay stock", "agotado",
@@ -349,15 +290,12 @@ def looks_like_product_question(user_text: str) -> bool:
     if any(s in t for s in strong_signals):
         return True
 
-    # Si menciona el dominio, debe tener algo más (no solo "perfume" aislado)
     domain_words = ["perfume", "fragancia", "colonia"]
     has_domain = any(w in t for w in domain_words)
 
-    # Verbos genéricos SOLO si hay dominio o marca/nombre
     generic_verbs = ["tienes", "tienen", "hay", "manej", "venden", "ofrecen"]
     has_generic_verb = any(v in t for v in generic_verbs)
 
-    # Tokens de marcas / nombres frecuentes
     strong_tokens = (
         "gio", "armani", "dior", "versace", "azzaro", "carolina",
         "nitro", "212", "one million", "paco", "rabanne",
@@ -365,59 +303,20 @@ def looks_like_product_question(user_text: str) -> bool:
     )
     has_brandish = any(tok in t for tok in strong_tokens)
 
-    # Regla final: si es “tienes/hay…” debe venir con dominio o marca
     if has_generic_verb and (has_domain or has_brandish):
         return True
 
-    # Si es corto, solo si tiene marca/nombre
     if len(t.split()) <= 6 and len(t) >= 6:
         return has_brandish
 
     return False
 
 
-def score_product_match(query: str, product_name: str) -> int:
-    q = _norm(query)
-    n = _norm(product_name)
-    if not q or not n:
-        return 0
-    if n == q:
-        return 100
-    if q in n:
-        cover = int(50 + min(40, (len(q) * 40) / max(1, len(n))))
-        return cover
-    qwords = [w for w in q.split() if len(w) >= 3]
-    if not qwords:
-        return 0
-    hit = sum(1 for w in qwords if w in n)
-    if hit == 0:
-        return 0
-    return 20 + hit * 10
-
-
-def parse_choice_number(user_text: str) -> Optional[int]:
-    m = re.search(r"\b([1-9])\b", (user_text or "").strip())
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except Exception:
-        return None
-
-
-# =========================================================
-# Fetch product
-# =========================================================
-
 async def wc_fetch_product(product_id: int) -> dict:
     if not wc_enabled():
         raise HTTPException(status_code=500, detail="WC env vars not configured")
     return await wc_get(f"/products/{int(product_id)}", params={})
 
-
-# =========================================================
-# Images helpers for WhatsApp
-# =========================================================
 
 async def download_image_bytes(url: str) -> Tuple[bytes, str]:
     if not url:
@@ -445,9 +344,6 @@ def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
 
 
 def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_url: str) -> Tuple[bytes, str]:
-    """
-    WhatsApp: mejor JPEG/PNG. Convertimos AVIF/WEBP u otros raros a JPEG.
-    """
     lower_url = (image_url or "").lower()
     needs_convert = (
         ("image/avif" in (content_type or "")) or ("image/webp" in (content_type or "")) or
@@ -470,14 +366,7 @@ def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_ur
             raise HTTPException(status_code=500, detail=f"Image decode/convert failed: {e}")
 
 
-# =========================================================
-# Caption builder
-# =========================================================
-
 def build_caption(product: dict, featured_image: str, real_image: str, custom_caption: str = "") -> str:
-    """
-    Caption para WhatsApp "tarjeta" + texto.
-    """
     name = (product.get("name", "") or "").strip()
     price = product.get("price") or product.get("regular_price") or ""
     permalink = (product.get("permalink", "") or "").strip()

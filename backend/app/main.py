@@ -38,7 +38,11 @@ try:
 except Exception:
     ai_router = None
 
+from app.routes.wc_cache import router as wc_cache_router
+app.include_router(wc_cache_router)
 
+from app.routes.wc_webhooks import router as wc_webhooks_router
+app.include_router(wc_webhooks_router)
 # =========================================================
 # APP
 # =========================================================
@@ -259,7 +263,41 @@ def ensure_schema():
                 mm_max_retries = COALESCE(mm_max_retries, 2)
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
+        # -------------------------
+        # wc_products_cache (Plan B)
+        # -------------------------
+        try:
+            conn.execute(text("""CREATE EXTENSION IF NOT EXISTS pg_trgm"""))
+        except Exception:
+            pass
 
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS wc_products_cache (
+                id BIGINT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                price TEXT NOT NULL DEFAULT '',
+                permalink TEXT NOT NULL DEFAULT '',
+                featured_image TEXT NOT NULL DEFAULT '',
+                real_image TEXT NOT NULL DEFAULT '',
+                short_description TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                categories JSONB,
+                tags JSONB,
+                brand TEXT NOT NULL DEFAULT '',
+                gender TEXT NOT NULL DEFAULT '',
+                size TEXT NOT NULL DEFAULT '',
+                stock_status TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        # índices (si pg_trgm existe, ayuda a buscar rápido)
+        try:
+            conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_name_trgm ON wc_products_cache USING gin (name gin_trgm_ops)"""))
+        except Exception:
+            pass
+
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_updated_at ON wc_products_cache (updated_at)"""))
 
 ensure_schema()
 

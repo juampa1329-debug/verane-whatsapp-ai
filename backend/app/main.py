@@ -265,6 +265,9 @@ def ensure_schema():
         # -------------------------
         # wc_products_cache (Plan B)
         # -------------------------
+        # -------------------------
+        # wc_products_cache (Plan B) - V2 (cache_repo compatible)
+        # -------------------------
         try:
             conn.execute(text("""CREATE EXTENSION IF NOT EXISTS pg_trgm"""))
         except Exception:
@@ -272,33 +275,33 @@ def ensure_schema():
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS wc_products_cache (
-                id BIGINT PRIMARY KEY,
+                product_id BIGINT PRIMARY KEY,
+                data JSONB NOT NULL DEFAULT '{}'::jsonb,
+
                 name TEXT NOT NULL DEFAULT '',
                 price TEXT NOT NULL DEFAULT '',
                 permalink TEXT NOT NULL DEFAULT '',
+
                 featured_image TEXT NOT NULL DEFAULT '',
                 real_image TEXT NOT NULL DEFAULT '',
-                short_description TEXT NOT NULL DEFAULT '',
-                description TEXT NOT NULL DEFAULT '',
-                categories JSONB,
-                tags JSONB,
-                brand TEXT NOT NULL DEFAULT '',
-                gender TEXT NOT NULL DEFAULT '',
-                size TEXT NOT NULL DEFAULT '',
                 stock_status TEXT NOT NULL DEFAULT '',
-                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+
+                updated_at_woo TIMESTAMP NULL,
+                synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
+
+                search_blob TEXT NOT NULL DEFAULT ''
             )
         """))
 
-        # índices (si pg_trgm existe, ayuda a buscar rápido)
+        # índices
         try:
             conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_name_trgm ON wc_products_cache USING gin (name gin_trgm_ops)"""))
         except Exception:
             pass
 
-        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_updated_at ON wc_products_cache (updated_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"""))
 
-ensure_schema()
+        ensure_schema()
 
 
 # =========================================================

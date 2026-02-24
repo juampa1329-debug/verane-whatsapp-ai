@@ -3,7 +3,7 @@
 import os
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import List
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,7 @@ from starlette.requests import Request as StarletteRequest
 
 from app.db import engine
 
-# ✅ Pipeline core (nuevo flujo real)
+# ✅ Pipeline core
 from app.pipeline.ingest_core import run_ingest, IngestMessage
 
 # ✅ Woo sender (endpoint manual)
@@ -39,7 +39,6 @@ except Exception:
     ai_router = None
 
 
-
 # =========================================================
 # APP
 # =========================================================
@@ -60,8 +59,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routes.wc_webhooks import router as wc_webhooks_router
+# Routers
+app.include_router(whatsapp_router)
+if ai_router is not None:
+    app.include_router(ai_router, prefix="/api/ai")
+
+# Woo webhooks
+from app.routes.wc_webhooks import router as wc_webhooks_router  # noqa: E402
 app.include_router(wc_webhooks_router)
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):
@@ -75,12 +81,6 @@ async def unhandled_exception_handler(request: StarletteRequest, exc: Exception)
     )
 
 
-# Routers
-app.include_router(whatsapp_router)
-if ai_router is not None:
-    app.include_router(ai_router, prefix="/api/ai")
-
-
 # =========================================================
 # DATABASE SCHEMA
 # =========================================================
@@ -88,7 +88,7 @@ if ai_router is not None:
 def ensure_schema():
     """
     Crea/actualiza el schema mínimo que el CRM + pipeline necesita.
-    (Seguro si ya existe; usa IF NOT EXISTS)
+    (Seguro si ya existe; usa IF NOT EXISTS y ALTER TABLE ADD COLUMN IF NOT EXISTS)
     """
     with engine.begin() as conn:
         # -------------------------
@@ -117,11 +117,9 @@ def ensure_schema():
             )
         """))
 
-        
         # -------------------------
         # conversations (CRM intelligence columns)
         # -------------------------
-        # Add columns safely if DB already existed
         conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pref_gender TEXT"))
         conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pref_budget BIGINT"))
         conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_current TEXT"))
@@ -132,7 +130,10 @@ def ensure_schema():
         conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_stage TEXT"))
         conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_followup_question TEXT"))
 
-conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
+            ON conversations (updated_at)
+        """))
 
         # -------------------------
         # messages
@@ -172,9 +173,14 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
             )
         """))
 
-        # Índices útiles para tu UI
-        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at ON messages (phone, created_at)"""))
-        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at ON messages (phone, direction, created_at)"""))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at
+            ON messages (phone, created_at)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at
+            ON messages (phone, direction, created_at)
+        """))
 
         # -------------------------
         # ai_settings
@@ -224,19 +230,15 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
             )
         """))
 
-        # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
             INSERT INTO ai_settings (
                 is_enabled, provider, model, system_prompt,
                 max_tokens, temperature,
                 fallback_provider, fallback_model,
                 timeout_sec, max_retries,
-
                 reply_chunk_chars, reply_delay_ms, typing_delay_ms,
-
                 voice_enabled, voice_prefer_voice, voice_max_notes_per_reply,
                 voice_tts_provider, voice_tts_voice_id, voice_tts_model_id,
-
                 mm_enabled, mm_provider, mm_model, mm_timeout_sec, mm_max_retries
             )
             SELECT
@@ -244,17 +246,13 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
                 512, 0.7,
                 'groq', 'llama-3.1-8b-instant',
                 25, 1,
-
                 480, 900, 450,
-
                 FALSE, FALSE, 1,
                 'google', '', '',
-
                 TRUE, 'google', 'gemini-2.5-flash', 75, 2
             WHERE NOT EXISTS (SELECT 1 FROM ai_settings)
         """))
 
-        # Asegurar defaults si quedaron NULL
         conn.execute(text("""
             UPDATE ai_settings
             SET
@@ -277,14 +275,12 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
                 mm_max_retries = COALESCE(mm_max_retries, 2)
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
+
         # -------------------------
-        # wc_products_cache (Plan B)
-        # -------------------------
-        # -------------------------
-        # wc_products_cache (Plan B) - V2 (cache_repo compatible)
+        # wc_products_cache (schema unificado)
         # -------------------------
         try:
-            conn.execute(text("""CREATE EXTENSION IF NOT EXISTS pg_trgm"""))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         except Exception:
             pass
 
@@ -292,7 +288,6 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
             CREATE TABLE IF NOT EXISTS wc_products_cache (
               product_id BIGINT PRIMARY KEY,
 
-              -- UI-ready data
               data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
               name TEXT NOT NULL DEFAULT '',
               price TEXT NOT NULL DEFAULT '',
@@ -310,10 +305,8 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
               size TEXT NOT NULL DEFAULT '',
               stock_status TEXT NOT NULL DEFAULT '',
 
-              -- search
               search_blob TEXT NOT NULL DEFAULT '',
 
-              -- sync / control
               raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
               is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
 
@@ -323,9 +316,7 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
             )
         """))
 
-        # -------------------------
-        # Best-effort migrations (for older schemas)
-        # -------------------------
+        # Best-effort migrations
         try:
             conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS data_json JSONB NOT NULL DEFAULT '{}'::jsonb"))
             conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS short_description TEXT NOT NULL DEFAULT ''"))
@@ -343,24 +334,39 @@ conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON 
 
         # Backfill data_json from legacy column `data` if it exists
         try:
-            conn.execute(text("UPDATE wc_products_cache SET data_json = COALESCE(data_json, data) WHERE data_json = '{}'::jsonb"))
+            conn.execute(text("""
+                UPDATE wc_products_cache
+                SET data_json = COALESCE(data_json, data)
+                WHERE data_json = '{}'::jsonb
+            """))
         except Exception:
             pass
 
-        # indexes
+        # Indexes
         try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_search_blob ON wc_products_cache USING gin (search_blob gin_trgm_ops)"))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_wc_cache_search_blob
+                ON wc_products_cache USING gin (search_blob gin_trgm_ops)
+            """))
         except Exception:
             pass
 
         try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_updated_at ON wc_products_cache (updated_at)"))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_wc_cache_updated_at
+                ON wc_products_cache (updated_at)
+            """))
         except Exception:
             pass
 
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at
+            ON wc_products_cache (synced_at)
+        """))
 
-        ensure_schema()
+
+# Ejecutar schema al iniciar
+ensure_schema()
 
 
 # =========================================================
@@ -404,12 +410,8 @@ def _parse_tags_param(tags: str) -> List[str]:
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "build": "2026-02-22-api-main-clean-1"}
+    return {"ok": True, "build": "2026-02-24-api-main-fixed-indent"}
 
-
-# -------------------------
-# Woo endpoints UI
-# -------------------------
 
 @app.get("/api/wc/products")
 async def wc_products(
@@ -441,10 +443,6 @@ async def send_wc_product(payload: dict):
     return {"ok": True, "sent": bool(wa.get("sent")), "wa": wa}
 
 
-# -------------------------
-# Media upload (UI)
-# -------------------------
-
 @app.post("/api/media/upload")
 async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     import tempfile
@@ -458,7 +456,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     mime = (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
     filename = file.filename or "upload"
 
-    # Si suben webm (browser), lo convertimos a ogg/opus para WhatsApp
     if kind == "audio" and mime == "audio/webm":
         with tempfile.TemporaryDirectory() as tmp:
             in_path = os.path.join(tmp, "in.webm")
@@ -482,10 +479,6 @@ async def upload_media(file: UploadFile = File(...), kind: str = Form("image")):
     media_id = await upload_whatsapp_media(content, mime)
     return {"ok": True, "media_id": media_id, "mime_type": mime, "filename": filename, "kind": kind}
 
-
-# -------------------------
-# Conversations / CRM
-# -------------------------
 
 @app.post("/api/conversations/{phone}/read")
 def mark_conversation_read(phone: str):
@@ -665,10 +658,6 @@ def get_messages(phone: str):
 
     return {"messages": [dict(r) for r in rows]}
 
-
-# -------------------------
-# Ingest (core pipeline)
-# -------------------------
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):

@@ -58,7 +58,7 @@ def _admin_guard(request: Request) -> None:
         raise HTTPException(status_code=403, detail="WC_SYNC_ADMIN_TOKEN not configured")
 
     tok = (request.headers.get("X-Admin-Token") or "").strip()
-    if tok != WC_SYNC_ADMIN_TOKEN:
+    if tok != WC_SYNC_ADMIN_TOKENIN_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid admin token")
 
 
@@ -87,7 +87,7 @@ def _cache_one_product_from_payload(payload: dict) -> int:
         return 0
 
     mapped = map_product_for_ui(payload)
-    upsert_cached_product(mapped, updated_at_woo=None)
+    upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
     return pid
 
 
@@ -105,7 +105,7 @@ async def _cache_one_product_by_id(product_id: int) -> int:
         return 0
 
     mapped = map_product_for_ui(data)
-    upsert_cached_product(mapped, updated_at_woo=None)
+    upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
     return pid
 
 
@@ -134,7 +134,7 @@ def _cache_deleted(product_id: int) -> None:
         "size": "",
         "stock_status": "deleted",
     }
-    upsert_cached_product(tombstone, updated_at_woo=None)
+    upsert_cached_product(tombstone, updated_at_woo=None, raw_json=tombstone, is_deleted=True)
 
 
 # =========================================================
@@ -210,7 +210,7 @@ async def wc_cache_sync_full(request: Request):
         for p in data:
             if isinstance(p, dict) and p.get("id"):
                 mapped = map_product_for_ui(p)
-                upsert_cached_product(mapped, updated_at_woo=None)
+                upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
                 total += 1
 
         page += 1

@@ -19,12 +19,18 @@ from app.ai.context_builder import build_ai_meta
 # Multimodal
 from app.ai.multimodal import extract_text_from_media, is_effectively_empty_text
 
+# Intent router V3
+from app.ai.intent_router import detect_intent
+
 # Woo (assistant)
 from app.ai.wc_assistant import handle_wc_if_applicable
 from app.integrations.woocommerce import wc_enabled
 
 # ✅ Woo sender oficial (el bueno)
 from app.pipeline.wc_sender import wc_send_product
+
+# CRM intelligence
+from app.crm.crm_writer import update_intent, update_preferences_structured, update_summary_auto, update_last_products
 
 # Sender helpers + DB helpers
 from app.pipeline.reply_sender import (
@@ -295,7 +301,7 @@ _WC_KEYWORDS = {
 }
 
 
-def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
+def _should_call_wc_assistant(phone: str, user_text: str, *, msg_type: str = "text", extracted_text: str = "") -> tuple[bool, str]:
     """
     Evita el loop: solo llamamos Woo si realmente aplica.
     - Si el estado actual ya es wc_* -> True
@@ -308,6 +314,11 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
 
     t = (user_text or "").strip().lower()
     if not t:
+        # Si es media (imagen/doc/audio) y tenemos extracted_text, dejamos que Woo intente.
+        mt = (msg_type or "").strip().lower()
+        et = (extracted_text or "").strip()
+        if mt in ("image", "document") and et:
+            return True, "media_with_extracted_text"
         return False, "empty_text"
 
     # ✅ Selección por número si hay “memoria” reciente de opciones
@@ -319,6 +330,11 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     for kw in _WC_KEYWORDS:
         if kw in t:
             return True, f"keyword:{kw}"
+
+    mt = (msg_type or "").strip().lower()
+    et = (extracted_text or "").strip()
+    if mt in ("image", "document") and et:
+        return True, "media_with_extracted_text"
 
     return False, "no_intent"
 
@@ -580,10 +596,30 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 if st_now.startswith("wc_") or st_now.startswith("wc_state") or st_now.startswith("wc_await"):
                     _clear_ai_state(msg.phone)
 
+            
             # =========================================================
+            # ✅ Intent Router V3 (PHOTO_REQUEST / PRODUCT_SEARCH / PREFERENCE_RECO / etc.)
+            # =========================================================
+            st_now = (_get_ai_state(msg.phone) or "").strip()
+            intent_res = detect_intent(
+                user_text=user_text,
+                msg_type=msg_type,
+                state=st_now,
+                extracted_text=(extracted or ""),
+                crm_snapshot=None,
+            )
+            update_intent(msg.phone, intent_current=intent_res.intent, intent_confidence=float(intent_res.confidence or 0.0))
+
+            # Resumen corto (muy simple, sin LLM)
+            try:
+                summary = f"Intent={intent_res.intent} conf={intent_res.confidence:.2f}. Último mensaje: {user_text[:160]}"
+                update_summary_auto(msg.phone, summary)
+            except Exception:
+                pass
+# =========================================================
             # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
             # =========================================================
-            if msg_type == "text" and _is_photo_request(user_text):
+            if intent_res.intent == "PHOTO_REQUEST" or (msg_type == "text" and _is_photo_request(user_text)):
                 last = get_last_product_sent(msg.phone)
                 _log(trace_id, "PHOTO_REQUEST_DETECTED", ok=bool(last.get("ok")), last=last.get("raw", "")[:220])
 
@@ -638,7 +674,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
             # WooCommerce assistant (SOLO si aplica)
             # =========================================================
             if wc_enabled() and user_text:
-                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
+                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text, msg_type=msg.msg_type, extracted_text=user_text)
                 _log(trace_id, "ROUTER_WC_DECISION", should_wc=should_wc, reason=reason_wc)
 
                 if should_wc:
@@ -648,24 +684,50 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     wc_result = await handle_wc_if_applicable(
                         phone=msg.phone,
                         user_text=user_text,
-                        msg_type="text",
+                        msg_type=msg.msg_type,
                         get_state=_get_ai_state,
                         set_state=_set_ai_state,
                         clear_state=_clear_ai_state,
                         send_product_fn=_send_product_and_cleanup,
                         send_text_fn=lambda phone, text: send_ai_reply_in_chunks(phone, text),
+                        intent=intent_res.intent,
+                        intent_payload=intent_res.payload,
+                        extracted_text=(extracted or ''),
                     )
 
                     if isinstance(wc_result, dict) and wc_result.get("handled") is True:
                         slots = wc_result.get("slots")
                         if isinstance(slots, dict) and slots:
                             apply_wc_slots_to_crm(msg.phone, slots)
+                            update_preferences_structured(msg.phone, slots)
 
                         update_crm_fields(
                             msg.phone,
                             tags_add=["estado:asesoria_woo"],
                             notes_append=f"Woo handled: {wc_result.get('reason','')}"
                         )
+
+                        # CRM state: productos vistos / etapa / follow-up (best-effort)
+                        try:
+                            pid = wc_result.get("product_id")
+                            opts = wc_result.get("options") or wc_result.get("candidates") or []
+                            ids = []
+                            if isinstance(opts, list):
+                                for o in opts:
+                                    if isinstance(o, dict):
+                                        try:
+                                            ids.append(int(o.get("id") or 0))
+                                        except Exception:
+                                            pass
+                            update_last_products(
+                                msg.phone,
+                                last_product_id=int(pid) if pid else None,
+                                last_products_seen=ids if ids else None,
+                                last_stage=str((wc_result.get("reason") or ""))[:80],
+                                last_followup_question="",
+                            )
+                        except Exception:
+                            pass
 
                         _log(trace_id, "WOO_HANDLED", reason=wc_result.get("reason", ""))
                         return {

@@ -38,11 +38,8 @@ try:
 except Exception:
     ai_router = None
 
-from app.routes.wc_cache import router as wc_cache_router
-app.include_router(wc_cache_router)
 
-from app.routes.wc_webhooks import router as wc_webhooks_router
-app.include_router(wc_webhooks_router)
+
 # =========================================================
 # APP
 # =========================================================
@@ -63,6 +60,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.routes.wc_webhooks import router as wc_webhooks_router
+app.include_router(wc_webhooks_router)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):

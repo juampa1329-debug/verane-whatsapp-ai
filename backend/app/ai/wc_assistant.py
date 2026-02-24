@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import json
 import time
 import re
+from datetime import datetime
 from typing import Callable, Awaitable, Any, Optional
 
+from sqlalchemy import text
+
+from app.db import engine
 from app.integrations.woocommerce import (
     wc_enabled,
     wc_search_products,
@@ -13,11 +19,87 @@ from app.integrations.woocommerce import (
 
 # ============================================================
 # Woo Advisor V2 (State machine + Slots + Scoring + Anti-stuck)
-# + Photo request => send product card
+# + DB-backed options (plan B)
 # ============================================================
 
 STATE_PREFIX_V2 = "wc_state:"
 STATE_PREFIX_V1 = "wc_await:"
+
+
+# -------------------------
+# DB helpers (Plan B)
+# conversations.wc_last_options JSONB
+# conversations.wc_last_options_at TIMESTAMP
+# -------------------------
+
+async def _db_save_recent_options(phone: str, options: list[dict]) -> None:
+    """
+    Guarda opciones recientes (1-5) en conversations para recuperar contexto si:
+    - se pierde ai_state
+    - restart / redeploy
+    - webhook retry raro
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO conversations (phone, wc_last_options, wc_last_options_at, updated_at)
+                VALUES (:phone, :opts::jsonb, :ts, :ts)
+                ON CONFLICT (phone)
+                DO UPDATE SET
+                    wc_last_options = EXCLUDED.wc_last_options,
+                    wc_last_options_at = EXCLUDED.wc_last_options_at,
+                    updated_at = EXCLUDED.updated_at
+            """), {
+                "phone": phone,
+                "opts": json.dumps(options or [], ensure_ascii=False),
+                "ts": datetime.utcnow(),
+            })
+    except Exception:
+        return
+
+
+async def _db_load_recent_options(phone: str, *, max_age_sec: int = 20 * 60) -> list[dict]:
+    """
+    Recupera opciones recientes (si no han expirado).
+    """
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT wc_last_options, wc_last_options_at
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+
+        if not r:
+            return []
+
+        ts = r.get("wc_last_options_at")
+        if not ts:
+            return []
+
+        try:
+            age = (datetime.utcnow() - ts).total_seconds()
+            if age > max_age_sec:
+                return []
+        except Exception:
+            pass
+
+        data = r.get("wc_last_options")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            # por si quedara mal guardado
+            return []
+        if isinstance(data, str):
+            try:
+                j = json.loads(data)
+                return j if isinstance(j, list) else []
+            except Exception:
+                return []
+        return []
+    except Exception:
+        return []
 
 
 # -------------------------
@@ -96,6 +178,7 @@ _CONFIRM_WORDS = {
     "manda", "mandala", "mándala", "hazlo", "listo entonces"
 }
 
+
 def _is_photo_request(text: str) -> bool:
     t = _norm(text)
     if not t:
@@ -105,51 +188,8 @@ def _is_photo_request(text: str) -> bool:
         if _norm(kw) in t:
             return True
 
-    # confirmación corta: "sí", "dale", etc. (solo será efectiva si hay contexto)
+    # confirmación corta SOLO con contexto (lo validamos donde se usa)
     if len(t) <= 12 and t in _CONFIRM_WORDS:
-        return True
-
-    return False
-
-
-def _looks_like_refinement(text: str) -> bool:
-    """
-    Detecta refinamiento REAL (preferencias) sin dispararse por cualquier frase.
-    Importante: NO usar "len>=2" como regla, porque intercepta mensajes normales.
-    """
-    t = _norm(text)
-    if not t:
-        return False
-
-    # Si es un número puro, NO es refinamiento
-    if re.fullmatch(r"\d{1,2}", t):
-        return False
-
-    # Presupuesto casi siempre es refinamiento
-    if _is_budget_mention(text):
-        return True
-
-    # Palabras típicas de preferencias (dominio perfumes)
-    keywords = [
-        "maduro", "elegante", "serio", "juvenil", "fresco", "dulce", "seco",
-        "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
-        "verano", "invierno", "calor", "frio",
-        "fuerte", "suave", "duracion", "duración", "proyeccion", "proyección", "intenso",
-        "amader", "ambar", "vainill", "citr", "acuatic", "aromatic", "espec",
-        "cuero", "almizcle", "musk", "iris", "floral", "oriental", "gourmand",
-        "unisex", "hombre", "mujer", "mascul", "femen"
-    ]
-    if any(k in t for k in keywords):
-        return True
-
-    # Frases comunes de refinamiento
-    if any(x in t for x in ["mas ", "más ", "menos ", "no tan", "que sea", "para ", "tipo "]):
-        # pero evitamos cosas genéricas como "para ti" o "para mi"
-        if "para " in t and not any(k in t for k in [
-            "para hombre", "para mujer", "para unisex",
-            "para oficina", "para noche", "para diario", "para fiesta", "para cita"
-        ]):
-            return False
         return True
 
     return False
@@ -167,14 +207,12 @@ def _extract_budget(text: str) -> Optional[int]:
     if not t:
         return None
 
-    # 200 mil / 150k
     m = re.search(r"\b(\d{1,3})\s*(mil|k)\b", t)
     if m:
         base = _safe_int(m.group(1), 0)
         if base > 0:
             return base * 1000
 
-    # 120000 / 120.000 / 120,000
     m2 = re.search(r"\b(\d{2,6})(?:[.,]\d{3})?\b", t)
     if m2:
         raw = m2.group(0).replace(".", "").replace(",", "")
@@ -183,6 +221,40 @@ def _extract_budget(text: str) -> Optional[int]:
             return val
 
     return None
+
+
+def _looks_like_refinement(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+
+    if re.fullmatch(r"\d{1,2}", t):
+        return False
+
+    if _is_budget_mention(text):
+        return True
+
+    keywords = [
+        "maduro", "elegante", "serio", "juvenil", "fresco", "dulce", "seco",
+        "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
+        "verano", "invierno", "calor", "frio",
+        "fuerte", "suave", "duracion", "duración", "proyeccion", "proyección", "intenso",
+        "amader", "ambar", "vainill", "citr", "acuatic", "aromatic", "espec",
+        "cuero", "almizcle", "musk", "iris", "floral", "oriental", "gourmand",
+        "unisex", "hombre", "mujer", "mascul", "femen"
+    ]
+    if any(k in t for k in keywords):
+        return True
+
+    if any(x in t for x in ["mas ", "más ", "menos ", "no tan", "que sea", "para ", "tipo "]):
+        if "para " in t and not any(k in t for k in [
+            "para hombre", "para mujer", "para unisex",
+            "para oficina", "para noche", "para diario", "para fiesta", "para cita"
+        ]):
+            return False
+        return True
+
+    return False
 
 
 def _get_list_names(obj_list: Any) -> list[str]:
@@ -455,7 +527,7 @@ def _build_menu_lines(items: list[dict]) -> tuple[str, list[dict]]:
 
     for i, p in enumerate(top, start=1):
         name = (p.get("name") or "").strip()
-        price = (p.get("price") or "").strip()
+        price = str(p.get("price") or "").strip()
         stock = (p.get("stock_status") or "").strip()
         stock_label = "✅ disponible" if stock == "instock" else "⛔ agotado"
 
@@ -463,9 +535,7 @@ def _build_menu_lines(items: list[dict]) -> tuple[str, list[dict]]:
         desc_part = f" — {short_desc}" if short_desc else ""
 
         price_part = f"${price}" if price else ""
-        price_sep = " — "
-
-        lines.append(f"{i}) {name}{price_sep}{price_part} ({stock_label}){desc_part}")
+        lines.append(f"{i}) {name} — {price_part} ({stock_label}){desc_part}")
         opts.append({"id": _safe_int(p.get("id")), "name": name})
 
     lines.append("")
@@ -498,7 +568,6 @@ async def handle_wc_if_applicable(
     if not wc_enabled():
         return {"handled": False}
 
-    # Si no es texto, dejamos a la IA normal.
     if msg_type != "text":
         clear_state(phone)
         return {"handled": False}
@@ -507,14 +576,18 @@ async def handle_wc_if_applicable(
     if not text:
         return {"handled": False}
 
-    # Salir explícito del flujo Woo
     if _is_exit_command(text):
         clear_state(phone)
         return {"handled": False, "reason": "exit_command"}
 
-    # Evitar que "ok/gracias/hola" dispare Woo
     if _is_tiny_ack(text):
         return {"handled": False}
+
+    # Defaults DB-backed (Plan B) si no pasan funciones desde ingest_core
+    if save_options_fn is None:
+        save_options_fn = _db_save_recent_options
+    if load_recent_options_fn is None:
+        load_recent_options_fn = _db_load_recent_options
 
     raw_state = (get_state(phone) or "").strip()
 
@@ -541,9 +614,8 @@ async def handle_wc_if_applicable(
             clear_state(phone)
             return {"handled": False}
 
-        # ✅ NUEVO: si piden foto y hay opciones, enviamos la 1 (o pedimos número)
+        # Foto: SOLO si hay opciones/contexto
         if _is_photo_request(text) and options:
-            # Si solo hay 1 opción, la enviamos directo
             if len(options) == 1:
                 picked = options[0]
                 clear_state(phone)
@@ -554,7 +626,6 @@ async def handle_wc_if_applicable(
                     "slots": {},
                     "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
-            # Si hay varias, pedimos número (no inventamos)
             await send_text_fn(phone, "📸 Claro. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
             return {"handled": True, "wc": True, "reason": "photo_need_choice_v1", "slots": {}}
 
@@ -571,7 +642,6 @@ async def handle_wc_if_applicable(
                     "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
 
-            # si no es número, no atrapamos: liberamos para IA normal
             clear_state(phone)
             return {"handled": False, "reason": "v1_no_number_release"}
 
@@ -600,16 +670,38 @@ async def handle_wc_if_applicable(
     candidates = wc_state.get("candidates") or []
 
     # -----------------------------------------
-    # ✅ NUEVO: si piden FOTO y hay candidatos en state -> enviar tarjeta
+    # ✅ Foto: si hay candidatos => enviar la tarjeta del primero
+    # (pero ojo: confirmación corta "sí/dale" solo si HAY contexto)
     # -----------------------------------------
     if _is_photo_request(text):
-        # Si hay candidato único o ya venimos con shortlist, mandamos el primero
+        # Si es confirmación corta, exigimos candidatos/recientes, si no: pedimos aclaración
+        tnorm = _norm(text)
+        is_short_confirm = (len(tnorm) <= 12 and tnorm in _CONFIRM_WORDS)
+
+        if not candidates:
+            # Intentar recuperar opciones de DB como contexto
+            recovered = []
+            try:
+                recovered = await load_recent_options_fn(phone) if load_recent_options_fn else []
+            except Exception:
+                recovered = []
+
+            if recovered:
+                candidates = recovered
+                wc_state["candidates"] = candidates
+                wc_state["stage"] = "await_choice"
+                wc_state["ts"] = _now_ts()
+                set_state(phone, _state_v2_pack(wc_state))
+
         if candidates:
+            # si hay varias opciones y el usuario dijo "sí/dale/envíala", pedimos número
+            if is_short_confirm and len(candidates) > 1:
+                await send_text_fn(phone, "📸 Perfecto. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
+                return {"handled": True, "wc": True, "reason": "photo_confirm_need_choice_v2", "slots": slots}
+
             picked = candidates[0]
             pid = _safe_int(picked.get("id"))
             if pid:
-                # NO limpiamos state si quieres que siga el flujo; pero para foto, es mejor no quedar atascado.
-                # Dejamos stage en await_choice si había, pero refrescamos timestamp.
                 wc_state["ts"] = _now_ts()
                 set_state(phone, _state_v2_pack(wc_state))
                 return {
@@ -620,7 +712,6 @@ async def handle_wc_if_applicable(
                     "wa": await send_product_fn(phone, int(pid), ""),
                 }
 
-        # Si no hay candidatos, pedimos nombre exacto (sin inventar)
         await send_text_fn(
             phone,
             "📸 ¡Claro! ¿De cuál perfume quieres la foto?\n\n"
@@ -632,23 +723,22 @@ async def handle_wc_if_applicable(
     # 2) Woo aplica SOLO si:
     # - hay state activo esperando elección
     # - o el texto parece pregunta de producto real
-    # - o hay refinamiento real (keywords/slots), no genérico
+    # - o hay refinamiento real
     # -----------------------------------------
     has_active_wc_flow = (stage == "await_choice" and bool(candidates))
-
     wc_applicable = has_active_wc_flow or looks_like_product_question(text) or _looks_like_refinement(text)
     if not wc_applicable:
         return {"handled": False}
 
     # -----------------------------------------
-    # 3) Actualizar slots
+    # 3) Update slots
     # -----------------------------------------
     slots = _extract_slots(text, slots)
     wc_state["slots"] = slots
     wc_state["ts"] = _now_ts()
 
     # -----------------------------------------
-    # 4) Si está esperando elección y llega número -> enviar
+    # 4) Si espera elección y llega número -> enviar
     # -----------------------------------------
     if stage == "await_choice" and candidates:
         choice = parse_choice_number(text)
@@ -663,7 +753,6 @@ async def handle_wc_if_applicable(
                 "wa": await send_product_fn(phone, int(picked["id"]), ""),
             }
 
-        # si no es número, pasamos a recalcular shortlist
         stage = "shortlist"
         wc_state["stage"] = "shortlist"
 
@@ -711,19 +800,23 @@ async def handle_wc_if_applicable(
     top_name = (top1.get("name") or "").strip()
     strong_name_score = score_product_match(text, top_name)
 
+    # Si el usuario pidió lista -> menú 1-5 + guardar en DB
     if wants_list and len(top) >= 2:
         menu_text, opts = _build_menu_lines(top)
         wc_state["stage"] = "await_choice"
         wc_state["candidates"] = opts
         set_state(phone, _state_v2_pack(wc_state))
+
         if save_options_fn is not None:
             try:
                 await save_options_fn(phone, opts)
             except Exception:
                 pass
+
         await send_text_fn(phone, menu_text)
         return {"handled": True, "wc": True, "reason": "menu_options_v2", "slots": slots}
 
+    # Match fuerte -> enviar directo
     if strong_name_score >= 80:
         clear_state(phone)
         return {
@@ -734,6 +827,7 @@ async def handle_wc_if_applicable(
             "wa": await send_product_fn(phone, int(top1["id"]), ""),
         }
 
+    # Recomendación: enviar 2 tarjetas + texto resumen + guardar candidatos
     recs = top[:2]
     for p in recs:
         try:
@@ -755,10 +849,18 @@ async def handle_wc_if_applicable(
         summary_lines.append(_one_liner(p))
 
     summary_lines.append("")
+    summary_lines.append("Si quieres, te muestro 5 opciones para que elijas con número.")
     summary_lines.append(_pick_followup_question(slots))
 
     wc_state["stage"] = "await_choice"
     set_state(phone, _state_v2_pack(wc_state))
+
+    # Guardar top 5 en DB para recuperarlo aunque se pierda state
+    if save_options_fn is not None:
+        try:
+            await save_options_fn(phone, wc_state["candidates"])
+        except Exception:
+            pass
 
     await send_text_fn(phone, "\n".join(summary_lines))
     return {"handled": True, "wc": True, "reason": "advisor_reco_v2", "slots": slots}

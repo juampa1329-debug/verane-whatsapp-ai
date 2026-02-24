@@ -9,6 +9,10 @@ import httpx
 from fastapi import HTTPException
 from PIL import Image
 
+from app.utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+from app.catalog.cache_repo import search_cached_products, get_cached_product
+
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -16,6 +20,21 @@ from PIL import Image
 WC_BASE_URL = os.getenv("WC_BASE_URL", "").rstrip("/")
 WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY", "")
 WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET", "")
+
+WC_HTTP_CONNECT_TIMEOUT = float(os.getenv("WC_HTTP_CONNECT_TIMEOUT", "5"))
+WC_HTTP_READ_TIMEOUT = float(os.getenv("WC_HTTP_READ_TIMEOUT", "15"))
+WC_HTTP_WRITE_TIMEOUT = float(os.getenv("WC_HTTP_WRITE_TIMEOUT", "15"))
+WC_HTTP_POOL_TIMEOUT = float(os.getenv("WC_HTTP_POOL_TIMEOUT", "5"))
+WC_HTTP_RETRIES = int(os.getenv("WC_HTTP_RETRIES", "2"))  # reintentos ante fallos de red / 5xx
+WC_HTTP_RETRY_BACKOFF_MS = int(os.getenv("WC_HTTP_RETRY_BACKOFF_MS", "250"))
+
+WC_BREAKER_FAILS = int(os.getenv("WC_BREAKER_FAILS", "3"))
+WC_BREAKER_COOLDOWN_SEC = int(os.getenv("WC_BREAKER_COOLDOWN_SEC", "90"))
+
+_BREAKER = CircuitBreaker(CircuitBreakerConfig(
+    fail_threshold=max(1, WC_BREAKER_FAILS),
+    cooldown_sec=max(10, WC_BREAKER_COOLDOWN_SEC),
+))
 
 
 def wc_enabled() -> bool:
@@ -46,21 +65,13 @@ def _shorten(s: str, max_chars: int = 260) -> str:
 
 
 def _looks_like_preference_query(q: str) -> bool:
-    """
-    Heurística: si el texto parece describir gustos/ocasión (no nombre exacto),
-    usamos un fallback de búsqueda amplia para traer productos y rankear después.
-
-    IMPORTANTE: NO usar "2+ palabras" como criterio (eso dispara falsos positivos).
-    """
     t = _norm(q)
     if not t:
         return False
 
-    # Si hay números/modelos típicos -> probablemente nombre
     if re.search(r"\b\d{2,4}\b", t):
         return False
 
-    # Si contiene tokens de marcas comunes -> probablemente nombre
     brandish = [
         "dior", "versace", "armani", "azzaro", "carolina", "rabanne", "paco",
         "givenchy", "jean", "gaultier", "valentino", "gucci", "prada", "ysl",
@@ -69,7 +80,6 @@ def _looks_like_preference_query(q: str) -> bool:
     if any(b in t for b in brandish):
         return False
 
-    # Palabras típicas de preferencias (dominio perfumes)
     prefs = [
         "maduro", "elegante", "serio", "juvenil", "seductor", "sofisticado",
         "oficina", "trabajo", "diario", "noche", "fiesta", "cita", "formal",
@@ -84,28 +94,74 @@ def _looks_like_preference_query(q: str) -> bool:
 
 
 # =========================================================
-# Woo API
+# Woo API (con breaker + timeouts completos + retry)
 # =========================================================
+
+def _http_timeout() -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=max(1.0, WC_HTTP_CONNECT_TIMEOUT),
+        read=max(1.0, WC_HTTP_READ_TIMEOUT),
+        write=max(1.0, WC_HTTP_WRITE_TIMEOUT),
+        pool=max(1.0, WC_HTTP_POOL_TIMEOUT),
+    )
+
 
 async def wc_get(path: str, params: dict | None = None):
     if not wc_enabled():
         raise HTTPException(status_code=500, detail="WooCommerce env vars not set")
+
+    # breaker abierto => evitamos pegarle a Woo y obligamos fallback
+    if _BREAKER.is_open():
+        raise HTTPException(status_code=503, detail="Woo breaker open (fallback recommended)")
 
     url = f"{WC_BASE_URL}/wp-json/wc/v3{path}"
     params = params or {}
     params["consumer_key"] = WC_CONSUMER_KEY
     params["consumer_secret"] = WC_CONSUMER_SECRET
 
-    try:
-        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "verane-bot/1.0"}) as client:
-            r = await client.get(url, params=params)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"WooCommerce request error: {e}")
+    last_err = None
 
-    if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text}")
+    for attempt in range(0, max(0, WC_HTTP_RETRIES) + 1):
+        try:
+            async with httpx.AsyncClient(
+                timeout=_http_timeout(),
+                headers={"User-Agent": "verane-bot/1.0"},
+            ) as client:
+                r = await client.get(url, params=params)
 
-    return r.json()
+            # 5xx => puede ser temporal, reintenta
+            if r.status_code >= 500:
+                last_err = f"WooCommerce 5xx {r.status_code}: {r.text[:300]}"
+                raise RuntimeError(last_err)
+
+            # 4xx => no sirve reintentar (credenciales, permisos, etc.)
+            if r.status_code >= 400:
+                _BREAKER.record_failure()
+                raise HTTPException(status_code=502, detail=f"WooCommerce error {r.status_code}: {r.text[:900]}")
+
+            _BREAKER.record_success()
+            return r.json()
+
+        except HTTPException:
+            # ya es un error “final”
+            raise
+
+        except Exception as e:
+            last_err = str(e)[:900]
+            _BREAKER.record_failure()
+
+            # backoff simple
+            if attempt < max(0, WC_HTTP_RETRIES):
+                try:
+                    import asyncio
+                    await asyncio.sleep(max(0.05, (WC_HTTP_RETRY_BACKOFF_MS / 1000.0) * (attempt + 1)))
+                except Exception:
+                    pass
+                continue
+
+            raise HTTPException(status_code=502, detail=f"WooCommerce request error: {last_err}")
+
+    raise HTTPException(status_code=502, detail=f"WooCommerce request error: {last_err or 'unknown'}")
 
 
 # =========================================================
@@ -179,7 +235,6 @@ def extract_gender(product: dict) -> str:
 
 
 def extract_size(product: dict) -> str:
-    """Extrae el tamaño o presentación (ej: 100ml) para diferenciar productos homónimos"""
     for a in (product.get("attributes") or []):
         if not isinstance(a, dict):
             continue
@@ -219,12 +274,6 @@ def _safe_tags(product: dict) -> List[dict]:
 
 
 def map_product_for_ui(product: dict) -> dict:
-    """
-    Mapea el producto a un dict amigable para IA/UI.
-
-    - Incluye 'description' limpia.
-    - Incluye 'categories' y 'tags' para ranking.
-    """
     price = product.get("price") or product.get("regular_price") or ""
     size = extract_size(product)
     name = product.get("name") or ""
@@ -241,12 +290,16 @@ def map_product_for_ui(product: dict) -> dict:
     cats = _safe_categories(product)
     tags = _safe_tags(product)
 
+    imgs = product.get("images") or []
+    real_image = (imgs[1] or {}).get("src") if isinstance(imgs, list) and len(imgs) > 1 else ""
+
     return {
         "id": product.get("id"),
         "name": name,
         "price": str(price),
         "permalink": product.get("permalink") or "",
         "featured_image": pick_first_image(product),
+        "real_image": real_image or "",
 
         "short_description": short_description_clean,
         "description": description_clean,
@@ -268,11 +321,9 @@ def map_product_for_ui(product: dict) -> dict:
 
 async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     """
-    Búsqueda Woo robusta:
-    - intenta normal
-    - fallback normalizaciones
-    - fallback tokens
-    - si el query parece SOLO preferencias: búsqueda amplia ("perfume")
+    PERFECTA:
+    1) Woo first
+    2) Si falla o breaker open => DB cache
     """
     q = (query or "").strip()
     if not q:
@@ -285,20 +336,33 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     if is_pref:
         effective_per_page = max(effective_per_page, 24)
 
-    async def _search_once(qx: str) -> List[dict]:
+    async def _search_woo(qx: str) -> List[dict]:
         params = {"search": qx, "page": 1, "per_page": int(effective_per_page), "status": "publish"}
         data = await wc_get("/products", params=params)
         items = [map_product_for_ui(p) for p in (data or [])]
         items.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
         return items
 
-    items = await _search_once(base_q)
-    if items:
-        return items
+    # 1) Woo
+    try:
+        items = await _search_woo(base_q)
+        if items:
+            return items
+        if is_pref:
+            return []
+    except Exception:
+        pass
+
+    # 2) DB cache
+    cached = search_cached_products(base_q, limit=max(12, effective_per_page))
+    if cached:
+        cached.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+        return cached[:max(1, effective_per_page)]
 
     if is_pref:
         return []
 
+    # normalizaciones extra (solo cache para no golpear Woo otra vez)
     q2 = _norm(q)
     q2 = q2.replace("aqua de gio", "acqua di gio")
     q2 = q2.replace("acqua de gio", "acqua di gio")
@@ -307,27 +371,23 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     q2 = q2.replace(" de ", " di ")
 
     if q2 and q2 != q:
-        items = await _search_once(q2)
-        if items:
-            return items
+        cached2 = search_cached_products(q2, limit=max(12, effective_per_page))
+        if cached2:
+            cached2.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+            return cached2[:max(1, effective_per_page)]
 
     toks = [t for t in q2.split() if len(t) >= 2]
     if len(toks) >= 2:
         q3 = " ".join(toks[:3])
-        if q3 and q3 not in (q, q2):
-            items = await _search_once(q3)
-            if items:
-                return items
+        cached3 = search_cached_products(q3, limit=max(12, effective_per_page))
+        if cached3:
+            cached3.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+            return cached3[:max(1, effective_per_page)]
 
     return []
 
 
 def looks_like_product_question(user_text: str) -> bool:
-    """
-    Detector de intención Woo (más estricto para evitar interceptar todo):
-    - Se activa por señales claras: precio, stock, disponibilidad, buscar/recomendar, perfume/fragancia + verbo
-    - Evita dispararse por "tienes/hay" solos
-    """
     t = _norm(user_text)
     if not t:
         return False
@@ -400,13 +460,50 @@ def parse_choice_number(user_text: str) -> Optional[int]:
 
 
 # =========================================================
-# Fetch product
+# Fetch product (con fallback)
 # =========================================================
 
 async def wc_fetch_product(product_id: int) -> dict:
-    if not wc_enabled():
-        raise HTTPException(status_code=500, detail="WC env vars not configured")
-    return await wc_get(f"/products/{int(product_id)}", params={})
+    pid = int(product_id)
+    if pid <= 0:
+        raise HTTPException(status_code=400, detail="invalid product_id")
+
+    # 1) Woo
+    try:
+        data = await wc_get(f"/products/{pid}", params={})
+        if isinstance(data, dict) and data.get("id"):
+            return data
+    except Exception:
+        pass
+
+    # 2) DB cache
+    cached = get_cached_product(pid)
+    if cached:
+        feat = (cached.get("featured_image") or "").strip()
+        real = (cached.get("real_image") or "").strip()
+        images = []
+        if feat:
+            images.append({"src": feat})
+        if real:
+            images.append({"src": real})
+
+        return {
+            "id": cached.get("id"),
+            "name": cached.get("name"),
+            "price": cached.get("price"),
+            "regular_price": cached.get("price"),
+            "permalink": cached.get("permalink"),
+            "short_description": cached.get("short_description"),
+            "description": cached.get("description"),
+            "categories": cached.get("categories") or [],
+            "tags": cached.get("tags") or [],
+            "attributes": [],  # opcional
+            "images": images,
+            "stock_status": cached.get("stock_status") or "",
+            "meta_data": [],
+        }
+
+    raise HTTPException(status_code=503, detail="Product not available (Woo down and not in cache)")
 
 
 # =========================================================
@@ -418,7 +515,7 @@ async def download_image_bytes(url: str) -> Tuple[bytes, str]:
         raise HTTPException(status_code=400, detail="Image url missing")
 
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5, read=20, write=20, pool=5)) as client:
             r = await client.get(url)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Image download failed: {e}")
@@ -439,9 +536,6 @@ def _to_jpeg_bytes(src_bytes: bytes) -> bytes:
 
 
 def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_url: str) -> Tuple[bytes, str]:
-    """
-    WhatsApp: mejor JPEG/PNG. Convertimos AVIF/WEBP u otros raros a JPEG.
-    """
     lower_url = (image_url or "").lower()
     needs_convert = (
         ("image/avif" in (content_type or "")) or ("image/webp" in (content_type or "")) or
@@ -469,9 +563,6 @@ def ensure_whatsapp_image_compat(image_bytes: bytes, content_type: str, image_ur
 # =========================================================
 
 def build_caption(product: dict, featured_image: str, real_image: str, custom_caption: str = "") -> str:
-    """
-    Caption para WhatsApp "tarjeta" + texto.
-    """
     name = (product.get("name", "") or "").strip()
     price = product.get("price") or product.get("regular_price") or ""
     permalink = (product.get("permalink", "") or "").strip()

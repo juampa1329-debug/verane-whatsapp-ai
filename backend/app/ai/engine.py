@@ -5,7 +5,7 @@ import re
 import asyncio
 from typing import Any, Dict, Optional, Tuple, List
 
-import requests
+import httpx
 from sqlalchemy import text
 
 from app.db import engine as db_engine
@@ -22,8 +22,7 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
     "Gemini 2.5 Flash Preview TTS": "gemini-2.5-flash-preview-tts",
     "Gemini 2.5 Pro Preview TTS": "gemini-2.5-pro-preview-tts",
 
-    # (Dejamos estos por compatibilidad si ya están guardados en DB/UI,
-    # pero NO los usamos como default)
+    # Compatibilidad si ya están guardados en DB/UI
     "Gemini 2.0 Flash": "gemini-2.0-flash",
     "Gemini 2.0 Flash 001": "gemini-2.0-flash-001",
     "Gemini 2.0 Flash-Lite": "gemini-2.0-flash-lite",
@@ -40,12 +39,10 @@ MODEL_MAP_GOOGLE: Dict[str, str] = {
 
 
 def _default_google_chat_model() -> str:
-    # ✅ Default nuevo (chat): Gemini 2.5 Flash
     return (os.getenv("GOOGLE_DEFAULT_MODEL", "").strip() or "gemini-2.5-flash").strip().lower()
 
 
 def _fallback_google_chat_model() -> str:
-    # ✅ fallback cuando hay 404 por modelo o error temporal
     return (os.getenv("GOOGLE_FALLBACK_MODEL", "").strip() or "gemini-2.5-flash-lite").strip().lower()
 
 
@@ -81,16 +78,12 @@ def _truthy(v: Any) -> bool:
 
 
 def _build_voice_style_block(s: Dict[str, Any]) -> str:
-    """
-    Esto NO genera audio.
-    Solo “entrena” el texto para que suene como voz con estilo/acentos.
-    """
     enabled = _truthy(s.get("voice_enabled", False))
     if not enabled:
         return ""
 
-    gender = (s.get("voice_gender") or "neutral").strip().lower()  # male|female|neutral
-    lang = (s.get("voice_language") or "es-CO").strip()           # ej: es-CO, es-MX, es-ES
+    gender = (s.get("voice_gender") or "neutral").strip().lower()
+    lang = (s.get("voice_language") or "es-CO").strip()
     accent = (s.get("voice_accent") or "colombiano").strip()
     speaking_rate = float(s.get("voice_speaking_rate") or 1.0)
     speaking_rate = max(0.6, min(1.4, speaking_rate))
@@ -109,10 +102,9 @@ def _build_voice_style_block(s: Dict[str, Any]) -> str:
         "- Escribe frases naturales, como habladas por WhatsApp.",
         "- Evita textos demasiado largos; usa pausas naturales y párrafos cortos.",
         "- No uses lenguaje robótico. No repitas el mensaje del usuario.",
+        f"- Máximo sugerido de segmentos de voz por respuesta: {max_voice_notes}",
+        f"- Preferir voz sobre texto: {'sí' if prefer_voice else 'no'}",
     ]
-
-    lines.append(f"- Máximo sugerido de segmentos de voz por respuesta: {max_voice_notes}")
-    lines.append(f"- Preferir voz sobre texto: {'sí' if prefer_voice else 'no'}")
 
     if style_prompt:
         lines.append("- Instrucciones personalizadas del admin (Voice Prompt):")
@@ -132,9 +124,6 @@ def _merge_system_prompt(system_prompt: str, voice_block: str) -> str:
 
 
 def _norm_tts_provider(p: Any) -> str:
-    """
-    Normaliza provider tts desde DB para que NO se quede en google por mismatch.
-    """
     raw = str(p or "").strip().lower()
     raw = raw.replace("_", "").replace("-", "").replace(" ", "")
     if raw in ("", "default", "auto"):
@@ -149,15 +138,10 @@ def _norm_tts_provider(p: Any) -> str:
 
 
 # =========================================================
-# Settings (engine reads voice settings; TTS happens elsewhere)
+# Settings
 # =========================================================
 
 def _get_settings() -> Dict[str, Any]:
-    """
-    Lee settings desde DB.
-
-    - engine devuelve reply_text + voice settings (para que main.py decida si hace TTS).
-    """
     try:
         with db_engine.begin() as conn:
             r = conn.execute(text("""
@@ -173,7 +157,6 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(timeout_sec, 25) AS timeout_sec,
                     COALESCE(max_retries, 1) AS max_retries,
 
-                    -- ✅ VOICE SETTINGS
                     COALESCE(voice_enabled, FALSE) AS voice_enabled,
                     COALESCE(voice_gender, 'neutral') AS voice_gender,
                     COALESCE(voice_language, 'es-CO') AS voice_language,
@@ -183,11 +166,9 @@ def _get_settings() -> Dict[str, Any]:
                     COALESCE(voice_prefer_voice, FALSE) AS voice_prefer_voice,
                     COALESCE(voice_speaking_rate, 1.0) AS voice_speaking_rate,
 
-                    -- ✅ TTS ROUTER SETTINGS
                     COALESCE(voice_tts_provider, 'google') AS voice_tts_provider,
                     COALESCE(voice_tts_voice_id, '') AS voice_tts_voice_id,
                     COALESCE(voice_tts_model_id, '') AS voice_tts_model_id
-
                 FROM ai_settings
                 ORDER BY id ASC
                 LIMIT 1
@@ -235,7 +216,6 @@ def _get_settings() -> Dict[str, Any]:
     d["max_tokens"] = int(d.get("max_tokens") or 512)
     d["temperature"] = float(d.get("temperature") or 0.7)
 
-    # voice normalize
     d["voice_enabled"] = _truthy(d.get("voice_enabled", False))
     d["voice_gender"] = (d.get("voice_gender") or "neutral").strip().lower()
     d["voice_language"] = (d.get("voice_language") or "es-CO").strip()
@@ -249,7 +229,7 @@ def _get_settings() -> Dict[str, Any]:
         d["voice_speaking_rate"] = 1.0
     d["voice_speaking_rate"] = max(0.6, min(1.4, float(d["voice_speaking_rate"])))
 
-    # ✅ tts normalize
+
     d["voice_tts_provider"] = _norm_tts_provider(d.get("voice_tts_provider") or "google") or "google"
     d["voice_tts_voice_id"] = (d.get("voice_tts_voice_id") or "").strip()
     d["voice_tts_model_id"] = (d.get("voice_tts_model_id") or "").strip()
@@ -400,7 +380,33 @@ def _build_context_from_kb(user_text: str, max_chunks: int = 6, max_chars: int =
     return "\n\n".join(picked).strip()
 
 
+# =========================================================
+# Extra system block: ventas/catálogo (solo guía)
+# =========================================================
 
+def _sales_assistant_block(user_text: str) -> str:
+    """
+    NO ejecuta Woo.
+    Solo le da reglas al LLM para responder como asesor de perfumes.
+    """
+    t = (user_text or "").strip()
+    if not t:
+        return ""
+
+    if not wc_enabled():
+        return ""
+
+    if not looks_like_product_question(t):
+        return ""
+
+    return (
+        "MODO ASESOR PERFUMES (reglas):\n"
+        "- Actúa como asesor de perfumes de Perfumes Verané.\n"
+        "- Si el usuario pregunta por precio/stock/si hay X perfume: pide 1 dato faltante si es necesario (tamaño, para hombre/mujer/unisex, rango de precio).\n"
+        "- Si el usuario describe gustos (fresco/dulce/amaderado, ocasión, edad): recomienda 2 a 4 opciones concretas.\n"
+        "- Mantén respuestas cortas, con bullets y 1 pregunta de cierre.\n"
+        "- Si no tienes certeza de disponibilidad exacta, dilo y ofrece buscar.\n"
+    ).strip()
 
 
 # =========================================================
@@ -424,7 +430,6 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
     meta = meta or {}
     user_text = (text or "").strip()
 
-
     existing_ctx = (meta.get("context") or "").strip() if isinstance(meta, dict) else ""
     if not existing_ctx and user_text:
         kb_ctx = _build_context_from_kb(user_text=user_text, max_chunks=6, max_chars=4000)
@@ -432,7 +437,13 @@ async def process_message(phone: str, text: str, meta: Optional[Dict[str, Any]] 
             meta["context"] = kb_ctx
 
     voice_block = _build_voice_style_block(s)
+
+    # ✅ extra block de ventas/catálogo (solo guía)
+    sales_block = _sales_assistant_block(user_text)
+
     merged_system = _merge_system_prompt(str(s.get("system_prompt") or ""), voice_block)
+    if sales_block:
+        merged_system = _merge_system_prompt(merged_system, sales_block)
 
     messages = _build_messages(
         system_prompt=merged_system,
@@ -618,7 +629,7 @@ async def _call_provider(
 
 
 # =========================================================
-# Provider implementations (HTTP)
+# Provider implementations (HTTP) - async httpx
 # =========================================================
 
 def _system_text(messages: list[Dict[str, str]]) -> str:
@@ -665,9 +676,14 @@ def _looks_like_model_not_found(body_text: str) -> bool:
         return True
     if "no longer available" in t:
         return True
-    if "this model models/" in t and "not available" in t:
+    if "not available" in t and "model" in t:
         return True
     return False
+
+
+def _timeout(timeout_sec: int) -> httpx.Timeout:
+    sec = max(3, int(timeout_sec or 25))
+    return httpx.Timeout(connect=min(10, sec), read=sec, write=sec, pool=min(10, sec))
 
 
 async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:
@@ -690,11 +706,10 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
             "maxOutputTokens": int(max_tokens),
         },
     }
-
     if sys:
         payload["systemInstruction"] = {"parts": [{"text": sys}]}
 
-    # Retries específicos para Google (además de los del engine)
+    # Retries específicos para Google (además del engine)
     try:
         override = os.getenv("GOOGLE_MAX_RETRIES_OVERRIDE", "").strip()
         google_retries = int(override) if override else 2
@@ -702,68 +717,59 @@ async def _call_google_gemma(model: str, messages: list[Dict[str, str]], max_tok
         google_retries = 2
     google_retries = max(0, min(google_retries, 8))
 
-    def _do_call(model_name: str) -> str:
+    async def _do_call(model_name: str) -> str:
         url = url_tpl.format(model=model_name, api_key=api_key)
-
         attempts = google_retries + 1
         last_err = ""
 
-        for i in range(attempts):
-            r = requests.post(url, json=payload, timeout=timeout_sec)
-            if r.status_code < 400:
-                data = r.json() or {}
-                cands = data.get("candidates") or []
-                if not cands:
+        async with httpx.AsyncClient(timeout=_timeout(timeout_sec)) as client:
+            for i in range(attempts):
+                r = await client.post(url, json=payload)
+                if r.status_code < 400:
+                    data = r.json() if r.content else {}
+                    cands = data.get("candidates") or []
+                    if not cands:
+                        return ""
+                    content = (cands[0] or {}).get("content") or {}
+                    parts = content.get("parts") or []
+                    if parts and isinstance(parts, list):
+                        out = []
+                        for p in parts:
+                            if isinstance(p, dict) and p.get("text"):
+                                out.append(str(p.get("text") or ""))
+                        return "".join(out).strip()
                     return ""
 
-                content = (cands[0] or {}).get("content") or {}
-                parts = content.get("parts") or []
-                if parts and isinstance(parts, list):
-                    out = []
-                    for p in parts:
-                        if isinstance(p, dict) and p.get("text"):
-                            out.append(str(p.get("text") or ""))
-                    return "".join(out).strip()
-                return ""
+                body = (r.text or "")[:900]
+                last_err = f"google error {r.status_code}: {body}"
 
-            body = r.text[:900]
-            last_err = f"google error {r.status_code}: {body}"
+                # 404 => modelo no existe/no disponible
+                if r.status_code == 404:
+                    raise RuntimeError(last_err)
 
-            # 404 modelo -> no reintentar aquí
-            if r.status_code == 404:
+                # 429 / 5xx => backoff
+                if r.status_code == 429 or (500 <= r.status_code <= 599):
+                    ra = _extract_retry_after_seconds(dict(r.headers), r.text or "")
+                    if ra is None:
+                        ra = min(0.8 * (2 ** i), 12.0)
+                    await asyncio.sleep(float(ra))
+                    continue
+
+                # otros 4xx => parar
                 raise RuntimeError(last_err)
-
-            # 429 / 5xx -> backoff
-            if r.status_code == 429 or (500 <= r.status_code <= 599):
-                ra = _extract_retry_after_seconds(r.headers, r.text or "")
-                if ra is None:
-                    ra = min(0.8 * (2 ** i), 12.0)
-                try:
-                    import time
-                    time.sleep(float(ra))
-                except Exception:
-                    pass
-                continue
-
-            # otros 4xx -> parar
-            raise RuntimeError(last_err)
 
         raise RuntimeError(last_err)
 
-    # 1) Intento con modelo principal
+    # 1) modelo principal
     try:
-        return await asyncio.to_thread(_do_call, model)
+        return await _do_call(model)
     except Exception as e:
         err = str(e)[:900]
 
-        # 2) Si es 404 por modelo, intentar fallback_model 1 vez
+        # 2) fallback si es 404 / modelo no disponible
         if "google error 404" in err.lower() and fallback_model and fallback_model != model:
-            # Solo intentamos fallback si parece deprecación/modelo no disponible
             if _looks_like_model_not_found(err):
-                try:
-                    return await asyncio.to_thread(_do_call, fallback_model)
-                except Exception as e2:
-                    raise RuntimeError(str(e2)[:900])
+                return await _do_call(fallback_model)
 
         raise RuntimeError(err)
 
@@ -782,21 +788,18 @@ async def _call_groq(model: str, messages: list[Dict[str, str]], max_tokens: int
         "max_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    def _do() -> str:
-        r = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
-        if r.status_code >= 400:
-            raise RuntimeError(f"groq error {r.status_code}: {r.text[:600]}")
-        data = r.json() or {}
-        ch = (data.get("choices") or [{}])[0]
-        msg = (ch.get("message") or {})
-        return str(msg.get("content") or "")
+    async with httpx.AsyncClient(timeout=_timeout(timeout_sec)) as client:
+        r = await client.post(url, headers=headers, json=payload)
 
-    return await asyncio.to_thread(_do)
+    if r.status_code >= 400:
+        raise RuntimeError(f"groq error {r.status_code}: {(r.text or '')[:600]}")
+
+    data = r.json() if r.content else {}
+    ch = (data.get("choices") or [{}])[0]
+    msg = (ch.get("message") or {})
+    return str(msg.get("content") or "")
 
 
 async def _call_openrouter(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:
@@ -820,16 +823,16 @@ async def _call_openrouter(model: str, messages: list[Dict[str, str]], max_token
         "X-Title": os.getenv("OPENROUTER_APP_NAME", "verane-whatsapp-ai"),
     }
 
-    def _do() -> str:
-        r = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
-        if r.status_code >= 400:
-            raise RuntimeError(f"openrouter error {r.status_code}: {r.text[:600]}")
-        data = r.json() or {}
-        ch = (data.get("choices") or [{}])[0]
-        msg = (ch.get("message") or {})
-        return str(msg.get("content") or "")
+    async with httpx.AsyncClient(timeout=_timeout(timeout_sec)) as client:
+        r = await client.post(url, headers=headers, json=payload)
 
-    return await asyncio.to_thread(_do)
+    if r.status_code >= 400:
+        raise RuntimeError(f"openrouter error {r.status_code}: {(r.text or '')[:600]}")
+
+    data = r.json() if r.content else {}
+    ch = (data.get("choices") or [{}])[0]
+    msg = (ch.get("message") or {})
+    return str(msg.get("content") or "")
 
 
 async def _call_mistral(model: str, messages: list[Dict[str, str]], max_tokens: int, temperature: float, timeout_sec: int) -> str:
@@ -846,18 +849,15 @@ async def _call_mistral(model: str, messages: list[Dict[str, str]], max_tokens: 
         "max_tokens": int(max_tokens),
         "temperature": float(temperature),
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    def _do() -> str:
-        r = requests.post(url, headers=headers, json=payload, timeout=timeout_sec)
-        if r.status_code >= 400:
-            raise RuntimeError(f"mistral error {r.status_code}: {r.text[:600]}")
-        data = r.json() or {}
-        ch = (data.get("choices") or [{}])[0]
-        msg = (ch.get("message") or {})
-        return str(msg.get("content") or "")
+    async with httpx.AsyncClient(timeout=_timeout(timeout_sec)) as client:
+        r = await client.post(url, headers=headers, json=payload)
 
-    return await asyncio.to_thread(_do)
+    if r.status_code >= 400:
+        raise RuntimeError(f"mistral error {r.status_code}: {(r.text or '')[:600]}")
+
+    data = r.json() if r.content else {}
+    ch = (data.get("choices") or [{}])[0]
+    msg = (ch.get("message") or {})
+    return str(msg.get("content") or "")

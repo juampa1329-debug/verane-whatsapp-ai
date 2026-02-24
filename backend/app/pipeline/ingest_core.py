@@ -1,12 +1,10 @@
-# app/pipeline/ingest_core.py
-
 from __future__ import annotations
 
 import os
 import json
 import re
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Tuple
 
 import httpx
 from pydantic import BaseModel
@@ -44,6 +42,7 @@ from app.crm.crm_writer import (
     update_crm_fields,
     get_last_product_sent,  # ✅ NUEVO
 )
+
 
 # =========================================================
 # Models
@@ -118,15 +117,12 @@ def _is_photo_request(text: str) -> bool:
     if not t:
         return False
 
-    # muy genéricos / acknowledgements
     if t in {"ok", "dale", "listo", "gracias", "perfecto", "vale", "bien", "👍", "👌", "✅"}:
         return False
 
-    # si solo es "si" o "sí" no alcanza
     if t in {"si", "sí"}:
         return False
 
-    # reglas: debe haber una intención clara de foto/imagen
     photo_tokens = [
         "foto", "imagen", "picture", "pic", "phot",
         "ver foto", "ver la foto", "ver imagen", "foto real", "imagen real"
@@ -139,12 +135,9 @@ def _is_photo_request(text: str) -> bool:
     has_photo = any(p in t for p in photo_tokens)
     has_send = any(s in t for s in send_tokens)
 
-    # casos típicos: "si enviame la foto", "mandame la imagen", "quiero ver la foto"
     if has_photo and (has_send or "quiero ver" in t or "me la puedes" in t or "me puedes" in t):
         return True
 
-    # "enviala" / "envíala" sin decir foto: a veces viene en contexto, pero es riesgoso.
-    # Solo lo activamos si es MUY corto y no parece otra cosa.
     if t in {"enviala", "enviarla", "enviala por favor", "mandala", "mandala por favor"}:
         return True
 
@@ -260,6 +253,34 @@ def _clear_ai_state(phone: str) -> None:
     _set_ai_state(phone, "")
 
 
+def _has_recent_wc_last_options(phone: str, max_age_minutes: int = 120) -> bool:
+    """
+    Si el usuario vio opciones hace poco (wc_last_options_at), permitimos selección por número
+    aunque no haya ai_state wc_*.
+    """
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT wc_last_options_at
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+
+        dt = (r or {}).get("wc_last_options_at")
+        if not dt:
+            return False
+
+        try:
+            age = datetime.utcnow() - dt
+        except Exception:
+            return False
+
+        return age <= timedelta(minutes=max(5, int(max_age_minutes)))
+    except Exception:
+        return False
+
+
 # =========================================================
 # Guard: cuándo SÍ debemos entrar al Woo assistant (anti-loop)
 # =========================================================
@@ -273,12 +294,13 @@ _WC_KEYWORDS = {
     "para hombre", "para mujer", "unisex", "dulce", "amaderado", "cítrico", "citrico",
 }
 
+
 def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     """
     Evita el loop: solo llamamos Woo si realmente aplica.
     - Si el estado actual ya es wc_* -> True
     - Si el texto tiene señales de intención de compra/búsqueda -> True
-    - Si no -> False
+    - Si el usuario manda un número y hay wc_last_options recientes -> True ✅
     """
     st = (_get_ai_state(phone) or "").strip().lower()
     if st.startswith("wc_") or st.startswith("wc:") or st.startswith("wc_state") or st.startswith("wc_await"):
@@ -288,12 +310,15 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     if not t:
         return False, "empty_text"
 
+    # ✅ Selección por número si hay “memoria” reciente de opciones
+    if t.isdigit():
+        if _has_recent_wc_last_options(phone, max_age_minutes=120):
+            return True, "digit_with_recent_wc_last_options"
+        return False, "digit_without_state_or_options"
+
     for kw in _WC_KEYWORDS:
         if kw in t:
             return True, f"keyword:{kw}"
-
-    if t.isdigit():
-        return False, "digit_without_state"
 
     return False, "no_intent"
 
@@ -556,7 +581,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     _clear_ai_state(msg.phone)
 
             # =========================================================
-            # ✅ NUEVO: si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
+            # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
             # =========================================================
             if msg_type == "text" and _is_photo_request(user_text):
                 last = get_last_product_sent(msg.phone)
@@ -571,7 +596,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                             notes_append=f"Cliente pidió foto -> reenviar tarjeta (product_id={pid})"
                         )
 
-                        # Reenviamos tarjeta de producto (la bonita / interactive)
                         try:
                             wa = await wc_send_product(phone=msg.phone, product_id=pid, custom_caption="")
                         except Exception as e:
@@ -590,7 +614,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                             "wa": wa,
                         }
 
-                # Si no hay memoria del producto, respondemos claro
                 update_crm_fields(
                     msg.phone,
                     tags_add=["intencion:ver_foto"],

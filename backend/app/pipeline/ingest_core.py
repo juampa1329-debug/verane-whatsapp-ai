@@ -50,6 +50,32 @@ from app.crm.crm_writer import (
 )
 
 
+
+# =========================================================
+# Helpers: recuperar último extracted_text de media (para "tienes este?")
+# =========================================================
+
+def _get_recent_media_extracted(phone: str, minutes: int = 15) -> str:
+    phone = (phone or "").strip()
+    if not phone:
+        return ""
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT extracted_text
+                FROM messages
+                WHERE phone = :phone
+                  AND direction = 'in'
+                  AND msg_type IN ('image','document')
+                  AND extracted_text IS NOT NULL
+                  AND created_at >= (NOW() - (:mins || ' minutes')::interval)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """), {"phone": phone, "mins": int(minutes)}).mappings().first()
+        return (r.get("extracted_text") if r else "") or ""
+    except Exception:
+        return ""
+
 # =========================================================
 # Models
 # =========================================================
@@ -501,6 +527,20 @@ async def run_ingest(msg: IngestMessage) -> dict:
             if is_effectively_empty_text(user_text):
                 user_text = ""
 
+            extracted = ""  # always defined (used later)
+
+            # Si el usuario escribió algo corto tipo "tienes este?" y antes envió una imagen,
+            # usamos el extracted_text de la imagen reciente como contexto de búsqueda.
+            try:
+                t_norm = _norm_text(user_text)
+                if msg_type == "text" and t_norm in {"tienes este?", "tienes este", "lo tienes?", "lo tienes", "tienes ese?", "tienes ese", "disponible?", "disponible"}:
+                    prev = _get_recent_media_extracted(msg.phone, minutes=20)
+                    if prev:
+                        user_text = f"{user_text} | contexto_imagen: {prev[:280]}".strip()
+            except Exception:
+                pass
+            mm_parsed = None
+
             # ✅ Multimodal: si no hay texto y llega audio/imagen/doc
             if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
@@ -562,8 +602,59 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     with engine.begin() as conn:
                         set_extracted_text(conn, local_id, extracted or "", ai_meta={"multimodal": stage_meta})
 
+                    # Si Gemini devolvió JSON estructurado, lo guardamos para decisiones posteriores
+                    try:
+                        mm_parsed = (mm_meta or {}).get("parsed_json")
+                    except Exception:
+                        mm_parsed = None
+
                     if extracted:
                         user_text = extracted
+
+                    # Si es un JSON (PERFUME/PAYMENT), usamos campos para mejorar routing y CRM
+                    if isinstance(mm_parsed, dict):
+                        mm_type = str(mm_parsed.get("type") or "").strip().upper()
+                        if mm_type == "PERFUME":
+                            perf = mm_parsed.get("perfume") or {}
+                            b = (perf.get("brand") or "").strip()
+                            n = (perf.get("name") or "").strip()
+                            v = (perf.get("variant") or "").strip()
+                            q = " ".join([x for x in [n, v, b] if x]).strip()
+                            if q:
+                                user_text = q
+                        elif mm_type == "PAYMENT":
+                            pay = mm_parsed.get("payment") or {}
+                            note_lines = []
+                            amt = (pay.get("amount") or "").strip()
+                            cur = (pay.get("currency") or "").strip()
+                            ref = (pay.get("reference") or "").strip()
+                            dt = (pay.get("date") or "").strip()
+                            bank = (pay.get("bank") or "").strip()
+                            payer = (pay.get("payer") or "").strip()
+                            payee = (pay.get("payee") or "").strip()
+                            if amt or cur:
+                                note_lines.append(f"Pago detectado: {amt} {cur}".strip())
+                            if ref:
+                                note_lines.append(f"Referencia: {ref}")
+                            if dt:
+                                note_lines.append(f"Fecha: {dt}")
+                            if bank:
+                                note_lines.append(f"Banco: {bank}")
+                            if payer:
+                                note_lines.append(f"Pagador: {payer}")
+                            if payee:
+                                note_lines.append(f"Beneficiario: {payee}")
+                            note = " | ".join([x for x in note_lines if x]).strip()
+                            if note:
+                                try:
+                                    update_crm_fields(msg.phone, tags_add=["pago_detectado"], notes_append=note)
+                                except Exception:
+                                    pass
+                                try:
+                                    update_intent(msg.phone, intent_current="PAYMENT", intent_confidence=0.95)
+                                except Exception:
+                                    pass
+
 
                 except Exception as e:
                     stage_meta["stages"]["exception"] = {"ok": False, "error": str(e)[:900]}

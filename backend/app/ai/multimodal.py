@@ -182,18 +182,24 @@ def _build_prompt(kind: str) -> str:
             "No inventes nada. "
             "Devuelve SOLO el texto transcrito, sin explicaciones."
         )
-    if kind == "document":
-        return (
-            "Extrae o resume el contenido del documento. "
-            "Si tiene texto legible, transcríbelo. "
-            "Si es una imagen o foto dentro del documento, descríbela. "
-            "Devuelve SOLO el texto útil, sin explicaciones."
-        )
-    # image
+
+    # document / image: OCR + clasificación (perfume vs pago)
+    # Importante: el modelo debe devolver SOLO JSON válido (sin Markdown)
     return (
-        "Describe la imagen con detalle útil para un asesor comercial. "
-        "Si hay texto visible (nombre del producto, etiqueta, precio, caja), extráelo. "
-        "Devuelve SOLO: (1) descripción corta. (2) texto visible si existe."
+        "Eres un asistente de ventas por WhatsApp para una tienda de perfumes. "
+        "Analiza la imagen/documento y devuelve SOLO un JSON válido (sin texto extra, sin Markdown). "
+        "1) OCR: transcribe TODO el texto visible tal cual (si no hay, ocr_text=''). "
+        "2) Clasifica type en: 'PERFUME', 'PAYMENT' o 'OTHER'. "
+        "3) Si es PERFUME, intenta identificar brand/nombre exacto; si no es exacto, llena keywords. "
+        "4) Si es PAYMENT (comprobante/recibo), extrae monto, moneda, referencia, fecha, banco, pagador y beneficiario si aparecen. "
+        "Devuelve exactamente este formato JSON (rellena con '' si no aplica): "
+        "{"
+        "\"type\":\"PERFUME|PAYMENT|OTHER\","
+        "\"ocr_text\":\"\","
+        "\"perfume\":{\"brand\":\"\",\"name\":\"\",\"variant\":\"\",\"gender_hint\":\"hombre|mujer|unisex|\",\"keywords\":[\"\"]},"
+        "\"payment\":{\"amount\":\"\",\"currency\":\"\",\"reference\":\"\",\"date\":\"\",\"bank\":\"\",\"payer\":\"\",\"payee\":\"\"},"
+        "\"notes\":\"\""
+        "}"
     )
 
 
@@ -273,6 +279,15 @@ async def _gemini_generate_with_model(
     except Exception:
         out_text = ""
 
+    parsed_json = None
+    if out_text:
+        try:
+            parsed_json = json.loads(out_text)
+            if not isinstance(parsed_json, dict):
+                parsed_json = None
+        except Exception:
+            parsed_json = None
+
     return out_text, {
         "ok": True,
         "stage": "generate",
@@ -280,6 +295,7 @@ async def _gemini_generate_with_model(
         "model": model,
         "mime_type": mime_clean,
         "latency_ms": latency_ms,
+        "parsed_json": parsed_json,
     }
 
 

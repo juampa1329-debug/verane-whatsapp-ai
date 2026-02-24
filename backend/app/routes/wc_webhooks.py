@@ -25,17 +25,20 @@ WC_SYNC_ADMIN_TOKEN = (os.getenv("WC_SYNC_ADMIN_TOKEN", "") or "").strip()
 # Helpers
 # =========================================================
 
-def _require_secret():
-    if not WC_WEBHOOK_SECRET:
-        raise HTTPException(status_code=500, detail="WC_WEBHOOK_SECRET not configured")
+def _require_secret() -> bool:
+    # Si no hay secret, no bloqueamos (permite configurar Woo primero).
+    # Recomendado: definir WC_WEBHOOK_SECRET en producción para validar firma.
+    return bool(WC_WEBHOOK_SECRET)
 
 
 def _verify_woocommerce_signature(raw_body: bytes, signature_header: str | None) -> None:
     """
-    Woo header: X-WC-Webhook-Signature
-    = base64(hmac_sha256(raw_body, secret))
+    Woo header: X-WC-Webhook-Signature = base64(hmac_sha256(raw_body, secret))
+
+    Si WC_WEBHOOK_SECRET no está configurado, se omite validación (modo setup).
     """
-    _require_secret()
+    if not _require_secret():
+        return
 
     if not signature_header:
         raise HTTPException(status_code=401, detail="Missing X-WC-Webhook-Signature")
@@ -52,13 +55,15 @@ def _verify_woocommerce_signature(raw_body: bytes, signature_header: str | None)
     if not hmac.compare_digest(expected_b64, provided):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
 
 def _admin_guard(request: Request) -> None:
     if not WC_SYNC_ADMIN_TOKEN:
         raise HTTPException(status_code=403, detail="WC_SYNC_ADMIN_TOKEN not configured")
 
     tok = (request.headers.get("X-Admin-Token") or "").strip()
-    if tok != WC_SYNC_ADMIN_TOKENIN_TOKEN:
+    if tok != WC_SYNC_ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid admin token")
 
 
@@ -87,7 +92,7 @@ def _cache_one_product_from_payload(payload: dict) -> int:
         return 0
 
     mapped = map_product_for_ui(payload)
-    upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
+    upsert_cached_product(mapped, updated_at_woo=None, raw_json=payload, is_deleted=False)
     return pid
 
 
@@ -210,7 +215,7 @@ async def wc_cache_sync_full(request: Request):
         for p in data:
             if isinstance(p, dict) and p.get("id"):
                 mapped = map_product_for_ui(p)
-                upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
+                upsert_cached_product(mapped, updated_at_woo=None, raw_json=payload, is_deleted=False)
                 total += 1
 
         page += 1

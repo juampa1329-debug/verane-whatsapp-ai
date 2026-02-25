@@ -399,14 +399,35 @@ def looks_like_product_question(user_text: str) -> bool:
     if t in generic:
         return False
 
+    # ⚠️ IMPORTANTE:
+    # "vale" por sí solo suele ser una confirmación (especialmente en audios: "vale, sí...")
+    # y NO debe disparar búsqueda Woo.
+    # Solo consideramos "cuánto vale" como señal fuerte (ver más abajo).
     strong_signals = [
-        "precio", "vale", "cuanto", "cuánto", "cost", "valor",
+        "precio", "cuanto", "cuánto", "cost", "valor",
         "disponible", "disponibles", "stock", "hay stock", "agotado",
         "envio", "envío", "domicilio",
         "recomiend", "recomendar", "suger", "buscar", "encuentra", "muest", "muestr",
     ]
     if any(s in t for s in strong_signals):
         return True
+
+    # Señal compuesta: "cuánto vale" / "cuanto vale"
+    if ("cuanto" in t or "cuánto" in t) and "vale" in t:
+        return True
+
+    # Confirmaciones típicas (no deben activar Woo si no hay señal de producto)
+    confirm_phrases = [
+        "me parece bien",
+        "claro que si",
+        "claro que sí",
+        "si me parece bien",
+        "sí me parece bien",
+    ]
+    if any(p in t for p in confirm_phrases):
+        has_domain = any(w in t for w in ["perfume", "fragancia", "colonia"])
+        if not has_domain:
+            return False
 
     domain_words = ["perfume", "fragancia", "colonia"]
     has_domain = any(w in t for w in domain_words)
@@ -418,6 +439,9 @@ def looks_like_product_question(user_text: str) -> bool:
         "gio", "armani", "dior", "versace", "azzaro", "carolina",
         "nitro", "212", "one million", "paco", "rabanne",
         "tom ford", "gucci", "prada", "ysl", "valentino", "gaultier",
+        # queries frecuentes (evita caer a IA)
+        "sehr", "biancolatte", "bianco latte", "le male", "ultramale", "ultra male",
+        "the most wanted", "wanted", "scandal", "sauvage", "invictus",
     )
     has_brandish = any(tok in t for tok in strong_tokens)
 

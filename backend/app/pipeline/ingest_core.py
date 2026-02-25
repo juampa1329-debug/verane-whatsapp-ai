@@ -357,6 +357,17 @@ def _should_call_wc_assistant(phone: str, user_text: str, *, msg_type: str = "te
         if kw in t:
             return True, f"keyword:{kw}"
 
+    # ✅ Heurística adicional:
+    # Preguntas típicas que no incluyen la palabra "perfume" pero sí son claramente de producto.
+    # Ej: "tienes el Sehr?", "tienen Biancolatte?", "precio del Le Male".
+    try:
+        from app.integrations.woocommerce import looks_like_product_question
+
+        if looks_like_product_question(user_text):
+            return True, "product_question"
+    except Exception:
+        pass
+
     mt = (msg_type or "").strip().lower()
     et = (extracted_text or "").strip()
     if mt in ("image", "document") and et:

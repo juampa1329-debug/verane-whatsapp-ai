@@ -225,6 +225,10 @@ _CONFIRM_WORDS = {
 }
 
 
+def _is_price_stock(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in ["precio", "vale", "cuanto", "costo", "stock", "disponible", "disponibilidad"])
+
 def _is_photo_request(text: str) -> bool:
     t = _norm(text)
     if not t:

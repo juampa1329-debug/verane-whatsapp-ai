@@ -53,8 +53,10 @@ def _verify_woocommerce_signature(raw_body: bytes, signature_header: str | None)
     provided = (signature_header or "").strip()
 
     if not hmac.compare_digest(expected_b64, provided):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
+        # Durante el guardado en WooCommerce, a veces se valida la URL y puede fallar la firma.
+        # Si activas WC_WEBHOOK_ALLOW_INVALID=true, no bloqueamos (pero NO es recomendado en prod).
+        if os.getenv('WC_WEBHOOK_ALLOW_INVALID', 'false').lower() in ('1','true','yes'):
+            return
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
 

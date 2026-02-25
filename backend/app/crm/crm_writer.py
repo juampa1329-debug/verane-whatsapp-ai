@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import re
-import json
 
 from sqlalchemy import text
 
@@ -159,375 +158,67 @@ def update_crm_fields(
 
 def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
     """
-    Convierte slots del Woo Assistant a tags/intereses/notes en CRM.
-
-    Ejemplos de tags que guarda:
-      - pref:gender:hombre
-      - pref:vibe:elegante
-      - pref:family:amaderado
-      - pref:sweetness:dulce
-      - pref:intensity:fuerte
-      - pref:budget:150000
+    Guarda en CRM SOLO info útil para humanos:
+    - Interests: resumen corto (familias/aromas/intención)
+    - Tags: estado del cliente (no preferencias)
+    - Notes: bullets con preferencias y lo que está pidiendo
     """
     phone = (phone or "").strip()
     if not phone or not isinstance(slots, dict):
         return
 
+    # --- Tags (estado) ---
     tags: List[str] = []
+    stage = (slots.get("stage") or "").strip()  # opcional si lo produce el modelo
+    if stage:
+        tags.append(f"estado:{_clean(stage)}")
 
+    # --- Interests (texto corto) ---
+    pieces: List[str] = []
     gender = (slots.get("gender") or "").strip()
     if gender:
-        tags.append(f"pref:gender:{gender}")
+        pieces.append(gender)
 
-    for v in (slots.get("vibe") or []):
-        vv = _clean(str(v))
-        if vv:
-            tags.append(f"pref:vibe:{vv}")
+    fam = [ _clean(str(x)) for x in (slots.get("family") or []) if _clean(str(x)) ]
+    if fam:
+        pieces.append(" / ".join(fam[:4]))
 
-    for o in (slots.get("occasion") or []):
-        oo = _clean(str(o))
-        if oo:
-            tags.append(f"pref:occasion:{oo}")
+    vibe = [ _clean(str(x)) for x in (slots.get("vibe") or []) if _clean(str(x)) ]
+    if vibe:
+        pieces.append(" ".join(vibe[:3]))
 
-    for f in (slots.get("family") or []):
-        ff = _clean(str(f))
-        if ff:
-            tags.append(f"pref:family:{ff}")
+    interests = ". ".join([p for p in pieces if p]).strip() or None
+
+    # --- Notes (bullets útiles) ---
+    bullets: List[str] = []
+
+    if gender:
+        bullets.append(f"Preferencia: {gender}")
+
+    occasion = [ _clean(str(x)) for x in (slots.get("occasion") or []) if _clean(str(x)) ]
+    if occasion:
+        bullets.append(f"Ocasión: {', '.join(occasion[:3])}")
 
     sweetness = (slots.get("sweetness") or "").strip()
     if sweetness:
-        tags.append(f"pref:sweetness:{sweetness}")
+        bullets.append(f"Dulzor: {sweetness}")
 
     intensity = (slots.get("intensity") or "").strip()
     if intensity:
-        tags.append(f"pref:intensity:{intensity}")
+        bullets.append(f"Intensidad: {intensity}")
 
     budget = slots.get("budget")
     if budget:
-        try:
-            b = int(budget)
-            if b > 0:
-                tags.append(f"pref:budget:{b}")
-        except Exception:
-            pass
+        bullets.append(f"Presupuesto: {budget}")
 
-    brand = (slots.get("brand") or "").strip()
-    if brand:
-        tags.append(f"pref:brand:{brand}")
+    asked = (slots.get("asked") or "").strip()  # opcional: 'precio', 'foto', etc.
+    if asked:
+        bullets.append(f"Pregunta: {asked}")
 
-    if tags:
-        update_crm_fields(phone, tags_add=tags)
+    note = None
+    if bullets:
+        note = "• " + "\n• ".join(bullets)
 
+    update_crm_fields(phone, tags=tags or None, interests=interests, note=note)
 
-# =========================================================
-# ✅ NUEVO: Memoria del último producto enviado
-# (para "envíame la foto", "mándame la imagen", etc.)
-# =========================================================
-
-def remember_last_product_sent(
-    phone: str,
-    *,
-    product_id: int,
-    featured_image: str = "",
-    real_image: str = "",
-    permalink: str = "",
-) -> None:
-    """
-    Guarda "memoria" del último producto enviado en conversations.notes.
-
-    No asume cambios de DB (porque no sabemos si hay columnas extras).
-    Es robusto y funciona aunque solo exista la columna notes.
-
-    Formato (línea única):
-      last_product_id=123|featured=...|real=...|permalink=...|ts=2026-02-23T...
-    """
-    phone = (phone or "").strip()
-    if not phone:
-        return
-
-    ensure_conversation_row(phone)
-
-    try:
-        pid = int(product_id)
-        if pid <= 0:
-            return
-    except Exception:
-        return
-
-    line = (
-        f"last_product_id={pid}"
-        f"|featured={(featured_image or '').strip()}"
-        f"|real={(real_image or '').strip()}"
-        f"|permalink={(permalink or '').strip()}"
-        f"|ts={datetime.utcnow().isoformat(timespec='seconds')}Z"
-    ).strip()
-
-    # Guardamos al FINAL (append). Si ya existe otra línea last_product_id, la dejamos:
-    # al leer tomaremos la ÚLTIMA.
-    try:
-        update_last_products(phone, last_product_id=pid)
-    except Exception:
-        pass
-    update_crm_fields(phone, notes_append=line)
-
-
-def get_last_product_sent(phone: str) -> dict:
-    """
-    Recupera el último producto enviado desde conversations.notes.
-    Devuelve:
-      {"ok": True, "product_id": int, "featured_image": str, "real_image": str, "permalink": str, "raw": str}
-    o:
-      {"ok": False, "reason": "..."}
-    """
-    phone = (phone or "").strip()
-    if not phone:
-        return {"ok": False, "reason": "missing_phone"}
-
-    try:
-        with engine.begin() as conn:
-            row = conn.execute(text("""
-                SELECT COALESCE(notes,'') AS notes
-                FROM conversations
-                WHERE phone = :phone
-                LIMIT 1
-            """), {"phone": phone}).mappings().first()
-        notes = (row or {}).get("notes") or ""
-    except Exception:
-        return {"ok": False, "reason": "db_error"}
-
-    notes = str(notes or "")
-    if not notes.strip():
-        return {"ok": False, "reason": "no_notes"}
-
-    # buscamos la última línea que contenga last_product_id=
-    last_line = ""
-    for ln in [x.strip() for x in notes.split("\n") if x.strip()]:
-        if "last_product_id=" in ln:
-            last_line = ln
-
-    if not last_line:
-        return {"ok": False, "reason": "no_last_product"}
-
-    # parse
-    try:
-        parts = last_line.split("|")
-        kv = {}
-        for p in parts:
-            if "=" in p:
-                k, v = p.split("=", 1)
-                kv[_clean(k).lower()] = (v or "").strip()
-
-        pid = int(kv.get("last_product_id") or "0")
-        if pid <= 0:
-            return {"ok": False, "reason": "invalid_product_id", "raw": last_line}
-
-        return {
-            "ok": True,
-            "product_id": pid,
-            "featured_image": kv.get("featured", ""),
-            "real_image": kv.get("real", ""),
-            "permalink": kv.get("permalink", ""),
-            "raw": last_line,
-        }
-    except Exception:
-        return {"ok": False, "reason": "parse_error", "raw": last_line}
-
-# =========================================================
-# ✅ NUEVO: CRM Intelligence Layer (campos estructurados)
-# =========================================================
-
-def update_intent(
-    phone: str,
-    *,
-    intent_current: str,
-    intent_confidence: float = 0.0,
-) -> None:
-    """Guarda intención actual (si existen columnas). Fallback: tags."""
-    phone = (phone or "").strip()
-    if not phone:
-        return
-
-    ensure_conversation_row(phone)
-
-    ic = _clean(intent_current).lower()
-    try:
-        conf = float(intent_confidence or 0.0)
-    except Exception:
-        conf = 0.0
-
-    # Intent como tag (fallback / histórico)
-    tags_add = []
-    if ic:
-        tags_add.append(f"intent:{ic}")
-
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE conversations
-                SET
-                    updated_at = :updated_at,
-                    intent_current = :intent_current,
-                    intent_confidence = :intent_confidence
-                WHERE phone = :phone
-            """), {
-                "phone": phone,
-                "updated_at": datetime.utcnow(),
-                "intent_current": ic,
-                "intent_confidence": conf,
-            })
-    except Exception:
-        # Si no existen columnas, guardamos en tags
-        if tags_add:
-            update_crm_fields(phone, tags_add=tags_add)
-
-
-def update_preferences_structured(phone: str, slots: Dict[str, Any]) -> None:
-    """Guarda preferencias estructuradas (pref_gender/pref_budget) y un registro útil en notes.
-
-    ✅ Importante: NO llena tags con pref_* porque eso ensucia la UI para el humano.
-    Los tags deben ser solo estados (pago_detectado, compra_inminente, etc.).
-    """
-    phone = (phone or "").strip()
-    if not phone or not isinstance(slots, dict):
-        return
-
-    gender = _clean(str(slots.get("gender") or "")).lower()
-    budget_val = slots.get("budget")
-
-    pref_budget = None
-    if budget_val is not None:
-        try:
-            pref_budget = int(budget_val)
-            if pref_budget <= 0:
-                pref_budget = None
-        except Exception:
-            pref_budget = None
-
-    # Armamos una nota corta (útil para humano)
-    bits = []
-    if gender:
-        bits.append(f"género={gender}")
-    if pref_budget:
-        bits.append(f"presupuesto≈{pref_budget}")
-    fam = slots.get("family")
-    if isinstance(fam, list) and fam:
-        bits.append("familia=" + "/".join([_clean(str(x)) for x in fam][:6]))
-    occ = slots.get("occasion")
-    if isinstance(occ, list) and occ:
-        bits.append("ocasión=" + "/".join([_clean(str(x)) for x in occ][:6]))
-
-    note_line = ""
-    if bits:
-        note_line = "[AI perfil] " + ", ".join(bits)
-
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE conversations
-                SET
-                    updated_at = :updated_at,
-                    pref_gender = COALESCE(NULLIF(:pref_gender,''), pref_gender),
-                    pref_budget = COALESCE(:pref_budget, pref_budget),
-                    notes = CASE
-                        WHEN :note_line = '' THEN notes
-                        WHEN notes IS NULL OR TRIM(notes) = '' THEN :note_line
-                        ELSE (notes || E'\n' || :note_line)
-                    END
-                WHERE phone = :phone
-            """), {
-                "phone": phone,
-                "updated_at": datetime.utcnow(),
-                "pref_gender": gender,
-                "pref_budget": pref_budget,
-                "note_line": note_line,
-            })
-    except Exception:
-        # Si no existen columnas en DB vieja, al menos deja la nota en notes.
-        if note_line:
-            update_crm_fields(phone, notes_append=note_line)
-
-
-def update_summary_auto(phone: str, summary: str) -> None:
-    """Guarda un resumen corto (<=500 chars) en summary_auto o notes."""
-    phone = (phone or "").strip()
-    if not phone:
-        return
-
-    s = _clean(summary)
-    if not s:
-        return
-    s = s[:500]
-
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE conversations
-                SET
-                    updated_at = :updated_at,
-                    summary_auto = :summary_auto
-                WHERE phone = :phone
-            """), {
-                "phone": phone,
-                "updated_at": datetime.utcnow(),
-                "summary_auto": s,
-            })
-    except Exception:
-        update_crm_fields(phone, notes_append=f"summary_auto: {s}")
-
-
-def update_last_products(
-    phone: str,
-    *,
-    last_product_id: int | None = None,
-    last_products_seen: list[int] | None = None,
-    last_stage: str | None = None,
-    last_followup_question: str | None = None,
-) -> None:
-    """Actualiza campos de estado de venta (si existen); fallback a notes."""
-    phone = (phone or "").strip()
-    if not phone:
-        return
-
-    ensure_conversation_row(phone)
-
-    pid = None
-    if last_product_id is not None:
-        try:
-            pid = int(last_product_id)
-        except Exception:
-            pid = None
-
-    lps = None
-    if last_products_seen is not None:
-        out = []
-        for x in last_products_seen:
-            try:
-                out.append(int(x))
-            except Exception:
-                continue
-        lps = out
-
-    ls = _clean(last_stage or "")
-    lf = _clean(last_followup_question or "")
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE conversations
-                SET
-                    updated_at = :updated_at,
-                    last_product_id = COALESCE(:last_product_id, last_product_id),
-                    last_products_seen = COALESCE(:last_products_seen, last_products_seen),
-                    last_stage = COALESCE(NULLIF(:last_stage,''), last_stage),
-                    last_followup_question = COALESCE(NULLIF(:last_followup_question,''), last_followup_question)
-                WHERE phone = :phone
-            """), {
-                "phone": phone,
-                "updated_at": datetime.utcnow(),
-                "last_product_id": pid,
-                "last_products_seen": json.dumps(lps) if lps is not None else None,
-                "last_stage": ls,
-                "last_followup_question": lf,
-            })
-    except Exception:
-        note = f"last_product_id={pid}|last_stage={ls}|followup={lf}".strip()
-        update_crm_fields(phone, notes_append=note)
+}

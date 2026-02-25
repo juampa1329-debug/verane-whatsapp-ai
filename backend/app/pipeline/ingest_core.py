@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import json
 import re
 from datetime import datetime, timedelta
@@ -19,18 +20,12 @@ from app.ai.context_builder import build_ai_meta
 # Multimodal
 from app.ai.multimodal import extract_text_from_media, is_effectively_empty_text
 
-# Intent router V3
-from app.ai.intent_router import detect_intent
-
 # Woo (assistant)
 from app.ai.wc_assistant import handle_wc_if_applicable
 from app.integrations.woocommerce import wc_enabled
 
 # ✅ Woo sender oficial (el bueno)
 from app.pipeline.wc_sender import wc_send_product
-
-# CRM intelligence
-from app.crm.crm_writer import update_intent, update_preferences_structured, update_summary_auto, update_last_products
 
 # Sender helpers + DB helpers
 from app.pipeline.reply_sender import (
@@ -49,32 +44,6 @@ from app.crm.crm_writer import (
     get_last_product_sent,  # ✅ NUEVO
 )
 
-
-
-# =========================================================
-# Helpers: recuperar último extracted_text de media (para "tienes este?")
-# =========================================================
-
-def _get_recent_media_extracted(phone: str, minutes: int = 15) -> str:
-    phone = (phone or "").strip()
-    if not phone:
-        return ""
-    try:
-        with engine.begin() as conn:
-            r = conn.execute(text("""
-                SELECT extracted_text
-                FROM messages
-                WHERE phone = :phone
-                  AND direction = 'in'
-                  AND msg_type IN ('image','document')
-                  AND extracted_text IS NOT NULL
-                  AND created_at >= (NOW() - (:mins || ' minutes')::interval)
-                ORDER BY created_at DESC
-                LIMIT 1
-            """), {"phone": phone, "mins": int(minutes)}).mappings().first()
-        return (r.get("extracted_text") if r else "") or ""
-    except Exception:
-        return ""
 
 # =========================================================
 # Models
@@ -327,7 +296,7 @@ _WC_KEYWORDS = {
 }
 
 
-def _should_call_wc_assistant(phone: str, user_text: str, *, msg_type: str = "text", extracted_text: str = "") -> tuple[bool, str]:
+def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     """
     Evita el loop: solo llamamos Woo si realmente aplica.
     - Si el estado actual ya es wc_* -> True
@@ -340,11 +309,6 @@ def _should_call_wc_assistant(phone: str, user_text: str, *, msg_type: str = "te
 
     t = (user_text or "").strip().lower()
     if not t:
-        # Si es media (imagen/doc/audio) y tenemos extracted_text, dejamos que Woo intente.
-        mt = (msg_type or "").strip().lower()
-        et = (extracted_text or "").strip()
-        if mt in ("image", "document") and et:
-            return True, "media_with_extracted_text"
         return False, "empty_text"
 
     # ✅ Selección por número si hay “memoria” reciente de opciones
@@ -356,11 +320,6 @@ def _should_call_wc_assistant(phone: str, user_text: str, *, msg_type: str = "te
     for kw in _WC_KEYWORDS:
         if kw in t:
             return True, f"keyword:{kw}"
-
-    mt = (msg_type or "").strip().lower()
-    et = (extracted_text or "").strip()
-    if mt in ("image", "document") and et:
-        return True, "media_with_extracted_text"
 
     return False, "no_intent"
 
@@ -455,6 +414,82 @@ async def run_ingest(msg: IngestMessage) -> dict:
         _log(trace_id, "DB_SAVE_FAIL", error=str(e)[:900])
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
+
+# ---------------------------------------------------------
+# Debounce: wait a bit to collect short follow-ups, then
+# process the conversation as a whole (not message-by-message).
+# Example: "El Yum Yum" + "Que vale?" => 1 search.
+# ---------------------------------------------------------
+cooldown = int(os.getenv("CONV_COOLDOWN_SEC", "6") or 0)
+if direction == "in" and cooldown > 0:
+    try:
+        await asyncio.sleep(cooldown)
+
+        # If a newer inbound message arrived meanwhile, let that one handle it.
+        with engine.begin() as conn:
+            latest_in_id = conn.execute(text("""
+                SELECT id FROM messages
+                WHERE phone=:phone AND direction='in'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """), {"phone": phone}).scalar()
+
+        if int(latest_in_id or 0) != int(local_id):
+            _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
+            return {"ok": True, "queued": True}
+
+        # Build one combined user_text from all inbound messages since last outbound.
+        with engine.begin() as conn:
+            last_out_id = conn.execute(text("""
+                SELECT id FROM messages
+                WHERE phone=:phone AND direction='out'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """), {"phone": phone}).scalar()
+
+            params = {"phone": phone}
+            if last_out_id:
+                params["last_out_id"] = int(last_out_id)
+                rows = conn.execute(text("""
+                    SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
+                    FROM messages
+                    WHERE phone=:phone AND direction='in' AND id > :last_out_id
+                    ORDER BY created_at ASC
+                    LIMIT 25
+                """), params).mappings().all()
+            else:
+                rows = conn.execute(text("""
+                    SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
+                    FROM messages
+                    WHERE phone=:phone AND direction='in'
+                    ORDER BY created_at DESC
+                    LIMIT 25
+                """), params).mappings().all()
+                rows = list(reversed(rows))
+
+        if rows:
+            parts = []
+            last = rows[-1]
+            for r in rows:
+                t = (r.get("text") or "").strip()
+                xt = (r.get("extracted_text") or "").strip()
+                if xt and (r.get("msg_type") in ("image", "audio", "video", "document")):
+                    parts.append(xt)
+                elif t:
+                    parts.append(t)
+
+            combined = "\n".join([p for p in parts if p]).strip()
+            if combined:
+                msg.text = combined
+            # ensure we keep latest media context
+            msg.msg_type = last.get("msg_type") or msg.msg_type
+            msg.media_id = last.get("media_id") or msg.media_id
+            msg.mime_type = last.get("mime_type") or msg.mime_type
+
+            _log(trace_id, "BATCH_READY", combined_len=len(msg.text or ""), batch_count=len(rows))
+    except Exception as e:
+        _log(trace_id, "BATCH_ERROR", error=str(e)[:500])
+
     # ✅ 3) Si es OUT: enviamos y marcamos estado
     if direction == "out":
         try:
@@ -527,20 +562,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
             if is_effectively_empty_text(user_text):
                 user_text = ""
 
-            extracted = ""  # always defined (used later)
-
-            # Si el usuario escribió algo corto tipo "tienes este?" y antes envió una imagen,
-            # usamos el extracted_text de la imagen reciente como contexto de búsqueda.
-            try:
-                t_norm = _norm_text(user_text)
-                if msg_type == "text" and t_norm in {"tienes este?", "tienes este", "lo tienes?", "lo tienes", "tienes ese?", "tienes ese", "disponible?", "disponible"}:
-                    prev = _get_recent_media_extracted(msg.phone, minutes=20)
-                    if prev:
-                        user_text = f"{user_text} | contexto_imagen: {prev[:280]}".strip()
-            except Exception:
-                pass
-            mm_parsed = None
-
             # ✅ Multimodal: si no hay texto y llega audio/imagen/doc
             if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
@@ -602,59 +623,8 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     with engine.begin() as conn:
                         set_extracted_text(conn, local_id, extracted or "", ai_meta={"multimodal": stage_meta})
 
-                    # Si Gemini devolvió JSON estructurado, lo guardamos para decisiones posteriores
-                    try:
-                        mm_parsed = (mm_meta or {}).get("parsed_json")
-                    except Exception:
-                        mm_parsed = None
-
                     if extracted:
                         user_text = extracted
-
-                    # Si es un JSON (PERFUME/PAYMENT), usamos campos para mejorar routing y CRM
-                    if isinstance(mm_parsed, dict):
-                        mm_type = str(mm_parsed.get("type") or "").strip().upper()
-                        if mm_type == "PERFUME":
-                            perf = mm_parsed.get("perfume") or {}
-                            b = (perf.get("brand") or "").strip()
-                            n = (perf.get("name") or "").strip()
-                            v = (perf.get("variant") or "").strip()
-                            q = " ".join([x for x in [n, v, b] if x]).strip()
-                            if q:
-                                user_text = q
-                        elif mm_type == "PAYMENT":
-                            pay = mm_parsed.get("payment") or {}
-                            note_lines = []
-                            amt = (pay.get("amount") or "").strip()
-                            cur = (pay.get("currency") or "").strip()
-                            ref = (pay.get("reference") or "").strip()
-                            dt = (pay.get("date") or "").strip()
-                            bank = (pay.get("bank") or "").strip()
-                            payer = (pay.get("payer") or "").strip()
-                            payee = (pay.get("payee") or "").strip()
-                            if amt or cur:
-                                note_lines.append(f"Pago detectado: {amt} {cur}".strip())
-                            if ref:
-                                note_lines.append(f"Referencia: {ref}")
-                            if dt:
-                                note_lines.append(f"Fecha: {dt}")
-                            if bank:
-                                note_lines.append(f"Banco: {bank}")
-                            if payer:
-                                note_lines.append(f"Pagador: {payer}")
-                            if payee:
-                                note_lines.append(f"Beneficiario: {payee}")
-                            note = " | ".join([x for x in note_lines if x]).strip()
-                            if note:
-                                try:
-                                    update_crm_fields(msg.phone, tags_add=["pago_detectado"], notes_append=note)
-                                except Exception:
-                                    pass
-                                try:
-                                    update_intent(msg.phone, intent_current="PAYMENT", intent_confidence=0.95)
-                                except Exception:
-                                    pass
-
 
                 except Exception as e:
                     stage_meta["stages"]["exception"] = {"ok": False, "error": str(e)[:900]}
@@ -687,30 +657,10 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 if st_now.startswith("wc_") or st_now.startswith("wc_state") or st_now.startswith("wc_await"):
                     _clear_ai_state(msg.phone)
 
-            
             # =========================================================
-            # ✅ Intent Router V3 (PHOTO_REQUEST / PRODUCT_SEARCH / PREFERENCE_RECO / etc.)
-            # =========================================================
-            st_now = (_get_ai_state(msg.phone) or "").strip()
-            intent_res = detect_intent(
-                user_text=user_text,
-                msg_type=msg_type,
-                state=st_now,
-                extracted_text=(extracted or ""),
-                crm_snapshot=None,
-            )
-            update_intent(msg.phone, intent_current=intent_res.intent, intent_confidence=float(intent_res.confidence or 0.0))
-
-            # Resumen corto (muy simple, sin LLM)
-            try:
-                summary = f"Intent={intent_res.intent} conf={intent_res.confidence:.2f}. Último mensaje: {user_text[:160]}"
-                update_summary_auto(msg.phone, summary)
-            except Exception:
-                pass
-# =========================================================
             # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
             # =========================================================
-            if intent_res.intent == "PHOTO_REQUEST" or (msg_type == "text" and _is_photo_request(user_text)):
+            if msg_type == "text" and _is_photo_request(user_text):
                 last = get_last_product_sent(msg.phone)
                 _log(trace_id, "PHOTO_REQUEST_DETECTED", ok=bool(last.get("ok")), last=last.get("raw", "")[:220])
 
@@ -765,7 +715,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
             # WooCommerce assistant (SOLO si aplica)
             # =========================================================
             if wc_enabled() and user_text:
-                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text, msg_type=msg.msg_type, extracted_text=user_text)
+                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
                 _log(trace_id, "ROUTER_WC_DECISION", should_wc=should_wc, reason=reason_wc)
 
                 if should_wc:
@@ -775,50 +725,24 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     wc_result = await handle_wc_if_applicable(
                         phone=msg.phone,
                         user_text=user_text,
-                        msg_type=msg.msg_type,
+                        msg_type="text",
                         get_state=_get_ai_state,
                         set_state=_set_ai_state,
                         clear_state=_clear_ai_state,
                         send_product_fn=_send_product_and_cleanup,
                         send_text_fn=lambda phone, text: send_ai_reply_in_chunks(phone, text),
-                        intent=intent_res.intent,
-                        intent_payload=intent_res.payload,
-                        extracted_text=(extracted or ''),
                     )
 
                     if isinstance(wc_result, dict) and wc_result.get("handled") is True:
                         slots = wc_result.get("slots")
                         if isinstance(slots, dict) and slots:
                             apply_wc_slots_to_crm(msg.phone, slots)
-                            update_preferences_structured(msg.phone, slots)
 
                         update_crm_fields(
                             msg.phone,
                             tags_add=["estado:asesoria_woo"],
-                            notes_append=_human_wc_note(text, wc_result)
+                            notes_append=None
                         )
-
-                        # CRM state: productos vistos / etapa / follow-up (best-effort)
-                        try:
-                            pid = wc_result.get("product_id")
-                            opts = wc_result.get("options") or wc_result.get("candidates") or []
-                            ids = []
-                            if isinstance(opts, list):
-                                for o in opts:
-                                    if isinstance(o, dict):
-                                        try:
-                                            ids.append(int(o.get("id") or 0))
-                                        except Exception:
-                                            pass
-                            update_last_products(
-                                msg.phone,
-                                last_product_id=int(pid) if pid else None,
-                                last_products_seen=ids if ids else None,
-                                last_stage=str((wc_result.get("reason") or ""))[:80],
-                                last_followup_question="",
-                            )
-                        except Exception:
-                            pass
 
                         _log(trace_id, "WOO_HANDLED", reason=wc_result.get("reason", ""))
                         return {

@@ -25,20 +25,17 @@ WC_SYNC_ADMIN_TOKEN = (os.getenv("WC_SYNC_ADMIN_TOKEN", "") or "").strip()
 # Helpers
 # =========================================================
 
-def _require_secret() -> bool:
-    # Si no hay secret, no bloqueamos (permite configurar Woo primero).
-    # Recomendado: definir WC_WEBHOOK_SECRET en producción para validar firma.
-    return bool(WC_WEBHOOK_SECRET)
+def _require_secret():
+    if not WC_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="WC_WEBHOOK_SECRET not configured")
 
 
 def _verify_woocommerce_signature(raw_body: bytes, signature_header: str | None) -> None:
     """
-    Woo header: X-WC-Webhook-Signature = base64(hmac_sha256(raw_body, secret))
-
-    Si WC_WEBHOOK_SECRET no está configurado, se omite validación (modo setup).
+    Woo header: X-WC-Webhook-Signature
+    = base64(hmac_sha256(raw_body, secret))
     """
-    if not _require_secret():
-        return
+    _require_secret()
 
     if not signature_header:
         raise HTTPException(status_code=401, detail="Missing X-WC-Webhook-Signature")
@@ -53,10 +50,6 @@ def _verify_woocommerce_signature(raw_body: bytes, signature_header: str | None)
     provided = (signature_header or "").strip()
 
     if not hmac.compare_digest(expected_b64, provided):
-        # Durante el guardado en WooCommerce, a veces se valida la URL y puede fallar la firma.
-        # Si activas WC_WEBHOOK_ALLOW_INVALID=true, no bloqueamos (pero NO es recomendado en prod).
-        if os.getenv('WC_WEBHOOK_ALLOW_INVALID', 'false').lower() in ('1','true','yes'):
-            return
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
 
@@ -94,7 +87,7 @@ def _cache_one_product_from_payload(payload: dict) -> int:
         return 0
 
     mapped = map_product_for_ui(payload)
-    upsert_cached_product(mapped, updated_at_woo=None, raw_json=payload, is_deleted=False)
+    upsert_cached_product(mapped, updated_at_woo=None)
     return pid
 
 
@@ -112,7 +105,7 @@ async def _cache_one_product_by_id(product_id: int) -> int:
         return 0
 
     mapped = map_product_for_ui(data)
-    upsert_cached_product(mapped, updated_at_woo=None, raw_json=data, is_deleted=False)
+    upsert_cached_product(mapped, updated_at_woo=None)
     return pid
 
 
@@ -141,7 +134,7 @@ def _cache_deleted(product_id: int) -> None:
         "size": "",
         "stock_status": "deleted",
     }
-    upsert_cached_product(tombstone, updated_at_woo=None, raw_json=tombstone, is_deleted=True)
+    upsert_cached_product(tombstone, updated_at_woo=None)
 
 
 # =========================================================
@@ -217,7 +210,7 @@ async def wc_cache_sync_full(request: Request):
         for p in data:
             if isinstance(p, dict) and p.get("id"):
                 mapped = map_product_for_ui(p)
-                upsert_cached_product(mapped, updated_at_woo=None, raw_json=payload, is_deleted=False)
+                upsert_cached_product(mapped, updated_at_woo=None)
                 total += 1
 
         page += 1

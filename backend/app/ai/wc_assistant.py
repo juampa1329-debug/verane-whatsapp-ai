@@ -26,52 +26,6 @@ STATE_PREFIX_V2 = "wc_state:"
 STATE_PREFIX_V1 = "wc_await:"
 
 
-
-
-# -------------------------
-# Gender filtering (Woo categories)
-# En WooCommerce, género está modelado por categorías: "Hombre", "Mujer".
-# Unisex suele estar en ambas.
-# -------------------------
-
-def _category_names(p: dict) -> list[str]:
-    cats = p.get("categories") or []
-    out: list[str] = []
-    if isinstance(cats, list):
-        for c in cats:
-            if isinstance(c, dict):
-                nm = (c.get("name") or "").strip()
-                if nm:
-                    out.append(nm.lower())
-    return out
-
-
-def gender_category_filter(items: list[dict], gender: str | None) -> list[dict]:
-    """
-    Hard filter by Woo categories:
-    - hombre: incluye categoría 'hombre' (incluye unisex porque está en hombre+mujer)
-    - mujer: incluye categoría 'mujer'
-    - unisex: requiere ambas categorías
-    """
-    g = (gender or "").strip().lower()
-    if not g:
-        return items
-
-    out: list[dict] = []
-    for p in items:
-        cn = _category_names(p)
-        has_h = any("hombre" in x for x in cn)
-        has_m = any("mujer" in x for x in cn)
-
-        if g == "hombre" and has_h:
-            out.append(p)
-        elif g == "mujer" and has_m:
-            out.append(p)
-        elif g == "unisex" and has_h and has_m:
-            out.append(p)
-
-    return out
-
 # -------------------------
 # DB helpers (Plan B)
 # conversations.wc_last_options JSONB
@@ -224,10 +178,6 @@ _CONFIRM_WORDS = {
     "manda", "mandala", "mándala", "hazlo", "listo entonces"
 }
 
-
-def _is_price_stock(text: str) -> bool:
-    t = (text or "").lower()
-    return any(k in t for k in ["precio", "vale", "cuanto", "costo", "stock", "disponible", "disponibilidad"])
 
 def _is_photo_request(text: str) -> bool:
     t = _norm(text)
@@ -618,26 +568,11 @@ async def handle_wc_if_applicable(
     if not wc_enabled():
         return {"handled": False}
 
-    extracted_text = (kwargs.get("extracted_text") or "").strip()
-    intent = (kwargs.get("intent") or "").strip()
-    intent_payload = kwargs.get("intent_payload") or {}
-
-    # ✅ Permitimos imagen/documento si hay extracted_text
     if msg_type != "text":
-        if extracted_text:
-            text = _clean_text(extracted_text)
-        else:
-            clear_state(phone)
-            return {"handled": False}
-    else:
-        text = _clean_text(user_text)
+        clear_state(phone)
+        return {"handled": False}
 
-    # Si el intent router sugiere un query mejor, lo usamos como override
-    if intent == "PRODUCT_SEARCH":
-        q = (intent_payload.get("query") or "").strip()
-        if q:
-            text = _clean_text(q) or text
-
+    text = _clean_text(user_text)
     if not text:
         return {"handled": False}
 
@@ -647,20 +582,6 @@ async def handle_wc_if_applicable(
 
     if _is_tiny_ack(text):
         return {"handled": False}
-
-    # PHOTO_REQUEST: el ingest_core lo maneja, pero aquí damos fallback por robustez
-    if intent == "PHOTO_REQUEST":
-        try:
-            from app.crm.crm_writer import get_last_product_sent, update_crm_fields
-            last = get_last_product_sent(phone)
-            if isinstance(last, dict) and last.get("ok") is True:
-                pid = int(last.get("product_id") or 0)
-                if pid > 0:
-                    update_crm_fields(phone, tags_add=["intencion:ver_foto"])
-                    wa = await send_product_fn(phone, pid, "")
-                    return {"handled": True, "intent": "PHOTO_REQUEST", "product_id": pid, "wa": wa}
-        except Exception:
-            pass
 
     # Defaults DB-backed (Plan B) si no pasan funciones desde ingest_core
     if save_options_fn is None:
@@ -701,10 +622,12 @@ async def handle_wc_if_applicable(
                 return {
                     "handled": True,
                     "wc": True,
-                    "reason": "photo_send_v1_single", "slots": {}, "product_id": int(picked["id"]), "wa": await send_product_fn(phone, int(picked["id"]), ""),
+                    "reason": "photo_send_v1_single",
+                    "slots": {},
+                    "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
             await send_text_fn(phone, "📸 Claro. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
-            return {"handled": True, "wc": True, "reason": "photo_need_choice_v1", "slots": {}, "options": options}
+            return {"handled": True, "wc": True, "reason": "photo_need_choice_v1", "slots": {}}
 
         if options:
             choice = parse_choice_number(text)
@@ -714,7 +637,9 @@ async def handle_wc_if_applicable(
                 return {
                     "handled": True,
                     "wc": True,
-                    "reason": "choice_send_v1", "slots": {}, "product_id": int(picked["id"]), "wa": await send_product_fn(phone, int(picked["id"]), ""),
+                    "reason": "choice_send_v1",
+                    "slots": {},
+                    "wa": await send_product_fn(phone, int(picked["id"]), ""),
                 }
 
             clear_state(phone)
@@ -772,7 +697,7 @@ async def handle_wc_if_applicable(
             # si hay varias opciones y el usuario dijo "sí/dale/envíala", pedimos número
             if is_short_confirm and len(candidates) > 1:
                 await send_text_fn(phone, "📸 Perfecto. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
-                return {"handled": True, "wc": True, "reason": "photo_confirm_need_choice_v2", "slots": slots, "candidates": candidates}
+                return {"handled": True, "wc": True, "reason": "photo_confirm_need_choice_v2", "slots": slots}
 
             picked = candidates[0]
             pid = _safe_int(picked.get("id"))
@@ -784,7 +709,6 @@ async def handle_wc_if_applicable(
                     "wc": True,
                     "reason": "photo_send_from_state_v2",
                     "slots": slots,
-                    "product_id": int(pid),
                     "wa": await send_product_fn(phone, int(pid), ""),
                 }
 
@@ -840,7 +764,6 @@ async def handle_wc_if_applicable(
 
     try:
         items = await wc_search_products(query, per_page=12)
-        items = gender_category_filter(items, slots.get("gender"))
     except Exception:
         return {"handled": False}
 

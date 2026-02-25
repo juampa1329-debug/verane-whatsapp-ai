@@ -117,21 +117,6 @@ def ensure_schema():
             )
         """))
 
-        
-        # -------------------------
-        # conversations (CRM intelligence columns)
-        # -------------------------
-        # Add columns safely if DB already existed
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pref_gender TEXT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pref_budget BIGINT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_current TEXT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_confidence DOUBLE PRECISION"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS summary_auto TEXT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_id BIGINT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_products_seen JSONB"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_stage TEXT"))
-        conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_followup_question TEXT"))
-
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
 
         # -------------------------
@@ -290,77 +275,34 @@ def ensure_schema():
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS wc_products_cache (
-              product_id BIGINT PRIMARY KEY,
+                product_id BIGINT PRIMARY KEY,
+                data JSONB NOT NULL DEFAULT '{}'::jsonb,
 
-              -- UI-ready data
-              data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-              name TEXT NOT NULL DEFAULT '',
-              price TEXT NOT NULL DEFAULT '',
-              permalink TEXT NOT NULL DEFAULT '',
-              featured_image TEXT NOT NULL DEFAULT '',
-              real_image TEXT NOT NULL DEFAULT '',
-              short_description TEXT NOT NULL DEFAULT '',
-              description TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL DEFAULT '',
+                price TEXT NOT NULL DEFAULT '',
+                permalink TEXT NOT NULL DEFAULT '',
 
-              categories JSONB NOT NULL DEFAULT '[]'::jsonb,
-              tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+                featured_image TEXT NOT NULL DEFAULT '',
+                real_image TEXT NOT NULL DEFAULT '',
+                stock_status TEXT NOT NULL DEFAULT '',
 
-              brand TEXT NOT NULL DEFAULT '',
-              gender TEXT NOT NULL DEFAULT '',
-              size TEXT NOT NULL DEFAULT '',
-              stock_status TEXT NOT NULL DEFAULT '',
+                updated_at_woo TIMESTAMP NULL,
+                synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
 
-              -- search
-              search_blob TEXT NOT NULL DEFAULT '',
-
-              -- sync / control
-              raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-              is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-
-              updated_at_woo TIMESTAMP NULL,
-              synced_at TIMESTAMP NOT NULL DEFAULT NOW(),
-              updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+                search_blob TEXT NOT NULL DEFAULT ''
             )
         """))
 
-        # -------------------------
-        # Best-effort migrations (for older schemas)
-        # -------------------------
+        # índices
         try:
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS data_json JSONB NOT NULL DEFAULT '{}'::jsonb"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS short_description TEXT NOT NULL DEFAULT ''"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS categories JSONB NOT NULL DEFAULT '[]'::jsonb"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT ''"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT ''"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS size TEXT NOT NULL DEFAULT ''"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS raw_json JSONB NOT NULL DEFAULT '{}'::jsonb"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE"))
-            conn.execute(text("ALTER TABLE wc_products_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()"))
+            conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_name_trgm ON wc_products_cache USING gin (name gin_trgm_ops)"""))
         except Exception:
             pass
 
-        # Backfill data_json from legacy column `data` if it exists
-        try:
-            conn.execute(text("UPDATE wc_products_cache SET data_json = COALESCE(data_json, data) WHERE data_json = '{}'::jsonb"))
-        except Exception:
-            pass
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"""))
 
-        # indexes
-        try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_search_blob ON wc_products_cache USING gin (search_blob gin_trgm_ops)"))
-        except Exception:
-            pass
+        ensure_schema()
 
-        try:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_updated_at ON wc_products_cache (updated_at)"))
-        except Exception:
-            pass
-
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"))
-
-ensure_schema()
 
 # =========================================================
 # MODELS (solo los que son de API/UI)

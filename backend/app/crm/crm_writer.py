@@ -382,7 +382,11 @@ def update_intent(
 
 
 def update_preferences_structured(phone: str, slots: Dict[str, Any]) -> None:
-    """Escribe pref_gender y pref_budget si hay columnas; si no, usa tags."""
+    """Guarda preferencias estructuradas (pref_gender/pref_budget) y un registro útil en notes.
+
+    ✅ Importante: NO llena tags con pref_* porque eso ensucia la UI para el humano.
+    Los tags deben ser solo estados (pago_detectado, compra_inminente, etc.).
+    """
     phone = (phone or "").strip()
     if not phone or not isinstance(slots, dict):
         return
@@ -399,12 +403,22 @@ def update_preferences_structured(phone: str, slots: Dict[str, Any]) -> None:
         except Exception:
             pref_budget = None
 
-    # Fallback tags
-    tags_add = []
+    # Armamos una nota corta (útil para humano)
+    bits = []
     if gender:
-        tags_add.append(f"pref_gender:{gender}")
+        bits.append(f"género={gender}")
     if pref_budget:
-        tags_add.append(f"pref_budget:{pref_budget}")
+        bits.append(f"presupuesto≈{pref_budget}")
+    fam = slots.get("family")
+    if isinstance(fam, list) and fam:
+        bits.append("familia=" + "/".join([_clean(str(x)) for x in fam][:6]))
+    occ = slots.get("occasion")
+    if isinstance(occ, list) and occ:
+        bits.append("ocasión=" + "/".join([_clean(str(x)) for x in occ][:6]))
+
+    note_line = ""
+    if bits:
+        note_line = "[AI perfil] " + ", ".join(bits)
 
     try:
         with engine.begin() as conn:
@@ -413,17 +427,24 @@ def update_preferences_structured(phone: str, slots: Dict[str, Any]) -> None:
                 SET
                     updated_at = :updated_at,
                     pref_gender = COALESCE(NULLIF(:pref_gender,''), pref_gender),
-                    pref_budget = COALESCE(:pref_budget, pref_budget)
+                    pref_budget = COALESCE(:pref_budget, pref_budget),
+                    notes = CASE
+                        WHEN :note_line = '' THEN notes
+                        WHEN notes IS NULL OR TRIM(notes) = '' THEN :note_line
+                        ELSE (notes || E'\n' || :note_line)
+                    END
                 WHERE phone = :phone
             """), {
                 "phone": phone,
                 "updated_at": datetime.utcnow(),
                 "pref_gender": gender,
                 "pref_budget": pref_budget,
+                "note_line": note_line,
             })
     except Exception:
-        if tags_add:
-            update_crm_fields(phone, tags_add=tags_add)
+        # Si no existen columnas en DB vieja, al menos deja la nota en notes.
+        if note_line:
+            update_crm_fields(phone, notes_append=note_line)
 
 
 def update_summary_auto(phone: str, summary: str) -> None:

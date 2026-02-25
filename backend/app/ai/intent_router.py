@@ -17,6 +17,8 @@ _PHOTO_PAT = re.compile(r"\b(foto|imagen|foto real|muestrame|muestrame la|envia(
 _BUY_PAT = re.compile(r"\b(comprar|carrito|pagar|pago|checkout|envio|domicilio|direccion)\b", re.I)
 _PRICE_PAT = re.compile(r"\b(precio|cuanto\s+vale|cuesta|valor|stock|disponible|agotad[oa])\b", re.I)
 _COMPARE_PAT = re.compile(r"\b(comparar|cual\s+es\s+mejor|entre\s+el\s+\d+\s+y\s+el\s+\d+|vs\b)\b", re.I)
+_AFFIRM_PAT = re.compile(r"\b(si|sí|vale|ok|listo|perfecto|de acuerdo|me parece bien|claro)\b", re.I)
+_PRODUCT_WORD_PAT = re.compile(r"\b(invictus|one\s*million|1\s*million|sauvage|eros|le\s*male|spicebomb|bleu\s*de\s*chanel|bad\s*boy|good\s*girl|212|dylan\s*blue|acqua\s*di\s*gio|light\s*blue|la\s*vie\s*est\s*belle|omnia|toy\s*boy|nitro\s*red)\b", re.I)
 
 # Preferencias (muy simple; el Woo Assistant hace el parse fino)
 _PREF_PAT = re.compile(r"\b(dulce|vainilla|amaderad|citr|acuatic|aromatic|especiad|cuero|floral|noche|dia|oficina|cita|fiesta|verano|invierno|elegante|juvenil|seductor|deportivo)\b", re.I)

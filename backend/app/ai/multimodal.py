@@ -190,7 +190,7 @@ def _build_prompt(kind: str) -> str:
         "Analiza la imagen/documento y devuelve SOLO un JSON válido (sin texto extra, sin Markdown). "
         "1) OCR: transcribe TODO el texto visible tal cual (si no hay, ocr_text=''). "
         "2) Clasifica type en: 'PERFUME', 'PAYMENT' o 'OTHER'. "
-        "3) Si es PERFUME, intenta identificar brand/nombre exacto; si no es exacto, llena keywords. "
+        "3) Si es PERFUME, intenta identificar brand/nombre exacto. Si NO hay texto visible, infiere por rasgos distintivos (forma del frasco/colores) y devuelve guesses (máx 3) con confianza. Si no es exacto, llena keywords útiles de búsqueda. "
         "4) Si es PAYMENT (comprobante/recibo), extrae monto, moneda, referencia, fecha, banco, pagador y beneficiario si aparecen. "
         "Devuelve exactamente este formato JSON (rellena con '' si no aplica): "
         "{"
@@ -448,6 +448,57 @@ async def extract_text_from_media(
     text_out, gen_meta = await gemini_generate_text_inline(kind=kind, media_bytes=use_bytes, mime_type=use_mime)
     meta["stages"]["gemini"] = gen_meta
     text_out = (text_out or "").strip()
+
+    # Try to parse JSON for image/document (prompt requests JSON)
+    parsed = None
+    if kind in ("image", "document") and text_out:
+        try:
+            parsed = json.loads(text_out)
+        except Exception:
+            parsed = None
+
+    if isinstance(parsed, dict):
+        meta["parsed"] = parsed
+        meta["parsed_ok"] = True
+
+        ptype = (parsed.get("type") or "").strip().upper()
+        ocr_text = (parsed.get("ocr_text") or "").strip()
+
+        # PERFUME: build a compact query for Woo search (brand+name+variant+keywords)
+        if ptype == "PERFUME":
+            perf = parsed.get("perfume") or {}
+            brand = (perf.get("brand") or "").strip()
+            name = (perf.get("name") or "").strip()
+            variant = (perf.get("variant") or "").strip()
+            kw = perf.get("keywords") or []
+            if not isinstance(kw, list):
+                kw = []
+            kw = [str(x).strip() for x in kw if str(x).strip()]
+            # fallback guesses (si el modelo los mandó)
+            guesses = parsed.get("guesses") or []
+            if (not name) and isinstance(guesses, list) and guesses:
+                g0 = guesses[0] if isinstance(guesses[0], dict) else {}
+                name = (g0.get("name") or "").strip() or name
+                brand = (g0.get("brand") or "").strip() or brand
+
+            query = " ".join([x for x in [brand, name, variant] if x]).strip()
+            if not query and ocr_text:
+                query = ocr_text[:180].strip()
+            if kw and len(query) < 6:
+                query = (query + " " + " ".join(kw[:6])).strip()
+            # Return query as extracted_text so downstream can search
+            text_out = query or ocr_text or ""
+
+        # PAYMENT: return ocr_text as extracted_text for CRM notes
+        elif ptype == "PAYMENT":
+            text_out = ocr_text or ""
+
+        else:
+            # OTHER: keep OCR if any
+            text_out = ocr_text or text_out
+
+    else:
+        meta["parsed_ok"] = False
 
     meta["ok"] = bool(text_out)
     meta["extracted_len"] = int(len(text_out))

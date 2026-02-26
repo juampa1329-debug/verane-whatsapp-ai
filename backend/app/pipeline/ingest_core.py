@@ -414,7 +414,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
         _log(trace_id, "DB_SAVE_FAIL", error=str(e)[:900])
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
-
     # ---------------------------------------------------------
     # Debounce: wait a bit to collect short follow-ups, then
     # process the conversation as a whole (not message-by-message).
@@ -432,7 +431,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     WHERE phone=:phone AND direction='in'
                     ORDER BY created_at DESC
                     LIMIT 1
-                """), {"phone": phone}).scalar()
+                """), {"phone": msg.phone}).scalar()
 
             if int(latest_in_id or 0) != int(local_id):
                 _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
@@ -445,9 +444,9 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     WHERE phone=:phone AND direction='out'
                     ORDER BY created_at DESC
                     LIMIT 1
-                """), {"phone": phone}).scalar()
+                """), {"phone": msg.phone}).scalar()
 
-                params = {"phone": phone}
+                params = {"phone": msg.phone}
                 if last_out_id:
                     params["last_out_id"] = int(last_out_id)
                     rows = conn.execute(text("""
@@ -662,7 +661,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
             # =========================================================
             if msg_type == "text" and _is_photo_request(user_text):
                 last = get_last_product_sent(msg.phone)
-                _log(trace_id, "PHOTO_REQUEST_DETECTED", ok=bool(last.get("ok")), last=last.get("raw", "")[:220])
+                _log(trace_id, "PHOTO_REQUEST_DETECTED", ok=bool(last.get("ok")), last=(last.get("raw", "")[:220] if isinstance(last, dict) else ""))
 
                 if isinstance(last, dict) and last.get("ok") is True:
                     pid = int(last.get("product_id") or 0)

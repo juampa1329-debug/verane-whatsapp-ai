@@ -23,7 +23,8 @@ from app.integrations.woocommerce import (
     WC_CONSUMER_SECRET,
 )
 
-from app.crm.crm_writer import remember_last_product_sent
+# NOTE: the helper lives in reply_sender (used by both text and card senders)
+from app.pipeline.reply_sender import remember_last_product_sent
 
 
 async def wc_send_product(phone: str, product_id: int, custom_caption: str = "") -> dict:

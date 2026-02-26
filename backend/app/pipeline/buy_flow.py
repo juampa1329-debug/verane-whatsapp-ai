@@ -132,13 +132,14 @@ async def handle_buy_or_shipping(phone: str, text_in: str) -> Optional[Dict[str,
         _append_internal_note(phone, f"[AI] Cliente quiere comprar. last_product_id={last_pid}. Falta unidades y dirección.")
         return {
             "handled": True,
-            "reply": "¡Genial! 😊 Para finalizar tu pedido, confírmame:
+        "reply": """¡Genial! 😊 Para finalizar tu pedido, confírmame:
+
 1) ¿Cuántas unidades?
 2) Nombre completo
 3) Dirección y ciudad
 4) Método de pago (transferencia o link)
 
-Con eso te lo dejo listo."
+Con eso te lo dejo listo.""",
         }
 
     return None

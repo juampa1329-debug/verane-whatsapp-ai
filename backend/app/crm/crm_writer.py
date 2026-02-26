@@ -221,4 +221,3 @@ def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
 
     update_crm_fields(phone, tags=tags or None, interests=interests, note=note)
 
-}

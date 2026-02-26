@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import re
+import json
 
 from sqlalchemy import text
 
@@ -238,7 +239,6 @@ def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
     if bullets:
         note = "• " + "\n• ".join(bullets)
 
-    # ✅ FIX: update_crm_fields usa tags_add y notes_append
     update_crm_fields(
         phone,
         tags_add=tags or None,
@@ -247,20 +247,157 @@ def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
     )
 
 
+# =========================================================
+# ✅ Last-product resolver (prefer conversations memory)
+# =========================================================
+
+def _safe_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def _json_to_dict(val: Any) -> dict:
+    """
+    Soporta:
+    - JSONB ya como dict
+    - string JSON
+    - None / otros
+    """
+    if val is None:
+        return {}
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str) and val.strip():
+        try:
+            j = json.loads(val)
+            return j if isinstance(j, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _extract_last_product_from_conversation_row(row: dict) -> dict:
+    """
+    Intenta resolver el último producto desde:
+    - conversations.last_product_id (si existe)
+    - conversations.crm_meta (jsonb) -> last_product_id
+    - conversations.crm_slots (jsonb) -> last_product_id
+    """
+    if not isinstance(row, dict):
+        return {"ok": False, "reason": "row_invalid"}
+
+    pid = _safe_int(row.get("last_product_id") or 0, 0)
+    feat = (row.get("last_product_featured_image") or "").strip()
+    real = (row.get("last_product_real_image") or "").strip()
+    link = (row.get("last_product_permalink") or "").strip()
+
+    # Si ya está en columnas directas (si existen en tu schema)
+    if pid > 0:
+        return {
+            "ok": True,
+            "product_id": int(pid),
+            "source": "conversations.last_product_id",
+            "featured_image": feat,
+            "real_image": real,
+            "permalink": link,
+        }
+
+    crm_meta = _json_to_dict(row.get("crm_meta"))
+    if crm_meta:
+        pid2 = _safe_int(crm_meta.get("last_product_id") or 0, 0)
+        if pid2 > 0:
+            return {
+                "ok": True,
+                "product_id": int(pid2),
+                "source": "conversations.crm_meta",
+                "featured_image": (crm_meta.get("last_product_featured_image") or "").strip(),
+                "real_image": (crm_meta.get("last_product_real_image") or "").strip(),
+                "permalink": (crm_meta.get("last_product_permalink") or "").strip(),
+            }
+
+    crm_slots = _json_to_dict(row.get("crm_slots"))
+    if crm_slots:
+        pid3 = _safe_int(crm_slots.get("last_product_id") or 0, 0)
+        if pid3 > 0:
+            return {
+                "ok": True,
+                "product_id": int(pid3),
+                "source": "conversations.crm_slots",
+                "featured_image": (crm_slots.get("last_product_featured_image") or "").strip(),
+                "real_image": (crm_slots.get("last_product_real_image") or "").strip(),
+                "permalink": (crm_slots.get("last_product_permalink") or "").strip(),
+            }
+
+    return {"ok": False, "reason": "no_last_product_in_conversation"}
+
+
 def get_last_product_sent(phone: str) -> Dict[str, Any]:
     """
     Devuelve el último producto "enviado" al usuario, para poder reenviar la tarjeta
     cuando el cliente dice "envíame la foto".
 
-    Como la estructura exacta puede variar según tu tabla `messages`,
-    hacemos una búsqueda robusta y tratamos de inferir product_id desde:
-      - texto (patterns como product_id=123, product_id: 123)
-      - permalink (patterns /product/123, ?p=123, post=123)
+    ✅ NUEVO (más estable):
+      1) Primero intenta leer "memoria" en conversations:
+         - last_product_id
+         - crm_meta.last_product_id
+         - crm_slots.last_product_id
+      2) Si no está, cae al fallback viejo (messages + regex).
     """
     phone = (phone or "").strip()
     if not phone:
         return {"ok": False, "reason": "missing_phone"}
 
+    # -------------------------
+    # 1) Preferir conversations memory (best effort)
+    # -------------------------
+    try:
+        with engine.begin() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        """
+                        SELECT
+                            phone,
+                            -- estas columnas pueden o no existir; si no existen, el SELECT fallará.
+                            -- por eso hacemos try/except y si falla caemos al fallback.
+                            last_product_id,
+                            COALESCE(crm_meta, '{}'::jsonb) AS crm_meta,
+                            COALESCE(crm_slots, '{}'::jsonb) AS crm_slots,
+                            COALESCE(last_product_featured_image,'') AS last_product_featured_image,
+                            COALESCE(last_product_real_image,'') AS last_product_real_image,
+                            COALESCE(last_product_permalink,'') AS last_product_permalink
+                        FROM conversations
+                        WHERE phone = :phone
+                        LIMIT 1
+                        """
+                    ),
+                    {"phone": phone},
+                )
+                .mappings()
+                .first()
+            )
+
+        if row:
+            resolved = _extract_last_product_from_conversation_row(dict(row))
+            if isinstance(resolved, dict) and resolved.get("ok") is True:
+                return {
+                    "ok": True,
+                    "product_id": int(resolved.get("product_id") or 0),
+                    "source": resolved.get("source") or "conversations",
+                    "featured_image": resolved.get("featured_image") or "",
+                    "real_image": resolved.get("real_image") or "",
+                    "permalink": resolved.get("permalink") or "",
+                }
+    except Exception:
+        # Si tu DB no tiene esas columnas, este SELECT puede fallar.
+        # Caemos al fallback basado en messages.
+        pass
+
+    # -------------------------
+    # 2) Fallback: inferir desde último outbound "tipo producto" en messages
+    # -------------------------
     def _extract_product_id_from_any(text_val: str) -> int:
         t = (text_val or "").strip()
         if not t:
@@ -269,33 +406,22 @@ def get_last_product_sent(phone: str) -> Dict[str, Any]:
         # product_id=123 / product_id: 123
         m = re.search(r"(?:product[_\s-]?id)\s*[:=]\s*(\d+)", t, re.IGNORECASE)
         if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                pass
+            return _safe_int(m.group(1), 0)
 
         # /product/123
         m = re.search(r"/product/(\d+)", t, re.IGNORECASE)
         if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                pass
+            return _safe_int(m.group(1), 0)
 
         # ?p=123 / post=123
         m = re.search(r"(?:\?|&)(?:p|post|product_id)=(\d+)", t, re.IGNORECASE)
         if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                pass
+            return _safe_int(m.group(1), 0)
 
         return 0
 
     try:
         with engine.begin() as conn:
-            # Tomamos el último outbound con señales típicas de producto (permalink o imagen),
-            # sin asumir columnas nuevas.
             row = (
                 conn.execute(
                     text(
@@ -342,6 +468,7 @@ def get_last_product_sent(phone: str) -> Dict[str, Any]:
             return {
                 "ok": False,
                 "reason": "could_not_extract_product_id",
+                "source": "messages_fallback",
                 "raw": raw_text or permalink or "",
                 "message_id": int(row.get("id") or 0),
                 "permalink": permalink,
@@ -352,6 +479,7 @@ def get_last_product_sent(phone: str) -> Dict[str, Any]:
         return {
             "ok": True,
             "product_id": int(pid),
+            "source": "messages_fallback",
             "raw": raw_text or permalink or "",
             "message_id": int(row.get("id") or 0),
             "permalink": permalink,

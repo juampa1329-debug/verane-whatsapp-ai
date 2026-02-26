@@ -438,3 +438,23 @@ async def extract_text_from_media(
     meta["mime_used"] = use_mime
 
     return text_out, meta
+
+# ---- NEW: structured extraction for image/pdf receipts & perfumes ----
+
+async def extract_structured_from_media_for_sales(
+    msg_type: str,
+    media_bytes: bytes,
+    mime_type: str,
+):
+    """
+    Usa el extractor estricto (JSON) para:
+    - perfumes
+    - comprobantes
+    """
+    from app.ai.vision_extractor import extract_structured_from_media
+
+    kind = _gemini_media_kind(msg_type, _clean_mime(mime_type))
+    if kind not in ("image", "document"):
+        return {}, {"ok": False, "reason": "not_image_or_document"}
+
+    return await extract_structured_from_media(media_bytes=media_bytes, mime_type=mime_type)

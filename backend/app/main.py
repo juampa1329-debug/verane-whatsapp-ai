@@ -1,9 +1,8 @@
 # app/main.py
 
 import os
-import json
 from datetime import datetime
-from typing import Optional, List
+from typing import List
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,7 +38,6 @@ except Exception:
     ai_router = None
 
 
-
 # =========================================================
 # APP
 # =========================================================
@@ -55,13 +53,21 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^https://.*\.perfumesverane\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Routers
+app.include_router(whatsapp_router)
+if ai_router is not None:
+    app.include_router(ai_router, prefix="/api/ai")
+
+# Webhooks Woo
 from app.routes.wc_webhooks import router as wc_webhooks_router
 app.include_router(wc_webhooks_router)
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: StarletteRequest, exc: Exception):
@@ -75,12 +81,6 @@ async def unhandled_exception_handler(request: StarletteRequest, exc: Exception)
     )
 
 
-# Routers
-app.include_router(whatsapp_router)
-if ai_router is not None:
-    app.include_router(ai_router, prefix="/api/ai")
-
-
 # =========================================================
 # DATABASE SCHEMA
 # =========================================================
@@ -88,7 +88,7 @@ if ai_router is not None:
 def ensure_schema():
     """
     Crea/actualiza el schema mínimo que el CRM + pipeline necesita.
-    (Seguro si ya existe; usa IF NOT EXISTS)
+    (Seguro si ya existe; usa IF NOT EXISTS / ALTER ... IF NOT EXISTS)
     """
     with engine.begin() as conn:
         # -------------------------
@@ -116,6 +116,14 @@ def ensure_schema():
                 wc_last_options_at TIMESTAMP
             )
         """))
+
+        # ✅ columnas extra para memoria del último producto (best-effort)
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_id BIGINT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS crm_meta JSONB"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS crm_slots JSONB"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_featured_image TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_real_image TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_permalink TEXT"""))
 
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
 
@@ -262,9 +270,7 @@ def ensure_schema():
                 mm_max_retries = COALESCE(mm_max_retries, 2)
             WHERE id = (SELECT id FROM ai_settings ORDER BY id ASC LIMIT 1)
         """))
-        # -------------------------
-        # wc_products_cache (Plan B)
-        # -------------------------
+
         # -------------------------
         # wc_products_cache (Plan B) - V2 (cache_repo compatible)
         # -------------------------
@@ -301,7 +307,11 @@ def ensure_schema():
 
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"""))
 
-        ensure_schema()
+
+@app.on_event("startup")
+def _startup():
+    # ✅ IMPORTANTE: NO recursión. Se ejecuta una sola vez al levantar el server.
+    ensure_schema()
 
 
 # =========================================================

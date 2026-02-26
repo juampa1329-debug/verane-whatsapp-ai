@@ -18,7 +18,11 @@ from app.ai.engine import process_message
 from app.ai.context_builder import build_ai_meta
 
 # Multimodal
-from app.ai.multimodal import extract_text_from_media, is_effectively_empty_text
+from app.ai.multimodal import (
+    extract_text_from_media,
+    extract_structured_from_media_for_sales,
+    is_effectively_empty_text,
+)
 
 # Woo (assistant)
 from app.ai.wc_assistant import handle_wc_if_applicable
@@ -574,6 +578,12 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     "stages": {}
                 }
 
+                vision_obj: dict = {}
+                vision_meta: dict = {}
+
+                extracted = ""
+                mm_meta: dict = {}
+
                 try:
                     media_bytes, real_mime = await download_whatsapp_media_bytes(msg.media_id)
                     stage_meta["stages"]["download"] = {
@@ -582,10 +592,8 @@ async def run_ingest(msg: IngestMessage) -> dict:
                         "bytes_len": int(len(media_bytes) if media_bytes else 0),
                     }
 
-                    extracted = ""
-                    mm_meta = {}
-
                     if media_bytes:
+                        # 1) Audio -> Groq whisper
                         if msg_type == "audio":
                             extracted, mm_meta = await _groq_transcribe_audio(
                                 media_bytes=media_bytes,
@@ -596,39 +604,113 @@ async def run_ingest(msg: IngestMessage) -> dict:
                                 **(mm_meta or {}),
                             }
                             extracted = (extracted or "").strip()
+
+                        # 2) Image/Document -> (a) structured extractor (perfume/receipt) (b) fallback OCR text extractor
                         else:
-                            mm_cfg = _get_multimodal_settings()
-                            if not mm_cfg.get("mm_enabled", True):
-                                extracted, mm_meta = "", {"ok": False, "reason": "mm_disabled"}
-                            else:
-                                os.environ["GEMINI_MM_MODEL"] = str(mm_cfg.get("mm_model") or "gemini-2.5-flash").strip()
-                                extracted, mm_meta = await extract_text_from_media(
+                            # 2.a) Structured (sales) extraction first
+                            try:
+                                vision_obj, vision_meta = await extract_structured_from_media_for_sales(
                                     msg_type=msg_type,
                                     media_bytes=media_bytes,
                                     mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
                                 )
+                            except Exception as e:
+                                vision_obj, vision_meta = {}, {"ok": False, "reason": "vision_exception", "error": str(e)[:500]}
 
-                            stage_meta["stages"]["multimodal"] = {
-                                "provider": mm_cfg.get("mm_provider", "google"),
-                                "model": mm_cfg.get("mm_model", ""),
-                                "mm_enabled": bool(mm_cfg.get("mm_enabled", True)),
-                                **(mm_meta or {}),
+                            stage_meta["stages"]["vision_structured"] = {
+                                "ok": bool(isinstance(vision_obj, dict) and vision_obj),
+                                "meta": (vision_meta or {}),
                             }
-                            extracted = (extracted or "").strip()
+
+                            # Si es receipt -> CRM inmediato + extracted resumen
+                            if isinstance(vision_obj, dict) and (vision_obj.get("type") == "receipt"):
+                                rcp = vision_obj.get("receipt") or {}
+                                amount = rcp.get("amount")
+                                currency = rcp.get("currency")
+                                ref = rcp.get("reference")
+                                bank = rcp.get("bank")
+                                date = rcp.get("date")
+                                payer = rcp.get("payer_name")
+
+                                summary = []
+                                if amount:
+                                    summary.append(f"Pago detectado: {amount} {currency or ''}".strip())
+                                if ref:
+                                    summary.append(f"Ref: {ref}")
+                                if bank:
+                                    summary.append(f"Banco: {bank}")
+                                if date:
+                                    summary.append(f"Fecha: {date}")
+                                if payer:
+                                    summary.append(f"Titular: {payer}")
+
+                                extracted = "\n".join(summary).strip() or "Comprobante de pago recibido."
+
+                                try:
+                                    update_crm_fields(
+                                        msg.phone,
+                                        tags_add=["pago:comprobante_recibido"],
+                                        notes_append=extracted,
+                                    )
+                                except Exception:
+                                    pass
+
+                            # Si es perfume -> extracted = search_text para Woo
+                            elif isinstance(vision_obj, dict) and (vision_obj.get("type") == "perfume"):
+                                search_text = (vision_obj.get("search_text") or "").strip()
+                                if not search_text:
+                                    cands = vision_obj.get("product_candidates") or []
+                                    if isinstance(cands, list) and cands:
+                                        top = cands[0] or {}
+                                        nm = (top.get("name") or "").strip()
+                                        br = (top.get("brand") or "").strip()
+                                        search_text = " ".join([br, nm]).strip()
+                                extracted = search_text.strip()
+
+                            # 2.b) Si no sacamos nada útil con structured, hacemos OCR/text extractor clásico
+                            if not extracted:
+                                mm_cfg = _get_multimodal_settings()
+                                if not mm_cfg.get("mm_enabled", True):
+                                    extracted, mm_meta = "", {"ok": False, "reason": "mm_disabled"}
+                                else:
+                                    os.environ["GEMINI_MM_MODEL"] = str(mm_cfg.get("mm_model") or "gemini-2.5-flash").strip()
+                                    extracted, mm_meta = await extract_text_from_media(
+                                        msg_type=msg_type,
+                                        media_bytes=media_bytes,
+                                        mime_type=(real_mime or msg.mime_type or "application/octet-stream"),
+                                    )
+
+                                stage_meta["stages"]["multimodal"] = {
+                                    "provider": mm_cfg.get("mm_provider", "google"),
+                                    "model": mm_cfg.get("mm_model", ""),
+                                    "mm_enabled": bool(mm_cfg.get("mm_enabled", True)),
+                                    **(mm_meta or {}),
+                                }
+                                extracted = (extracted or "").strip()
 
                     stage_meta["ok"] = bool(extracted)
                     stage_meta["extracted_len"] = int(len(extracted))
 
+                    ai_meta_payload = {"multimodal": stage_meta}
+                    if isinstance(vision_obj, dict) and vision_obj:
+                        ai_meta_payload["vision"] = vision_obj
+
                     with engine.begin() as conn:
-                        set_extracted_text(conn, local_id, extracted or "", ai_meta={"multimodal": stage_meta})
+                        set_extracted_text(conn, local_id, extracted or "", ai_meta=ai_meta_payload)
 
                     if extracted:
                         user_text = extracted
 
                 except Exception as e:
                     stage_meta["stages"]["exception"] = {"ok": False, "error": str(e)[:900]}
+
+                    ai_meta_payload = {"multimodal": stage_meta}
+                    if isinstance(vision_obj, dict) and vision_obj:
+                        ai_meta_payload["vision"] = vision_obj
+
                     with engine.begin() as conn:
-                        set_extracted_text(conn, local_id, "", ai_meta={"multimodal": stage_meta})
+                        set_extracted_text(conn, local_id, "", ai_meta=ai_meta_payload)
+
                     user_text = ""
 
             if is_effectively_empty_text(user_text):

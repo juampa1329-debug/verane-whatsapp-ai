@@ -415,80 +415,80 @@ async def run_ingest(msg: IngestMessage) -> dict:
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
 
-# ---------------------------------------------------------
-# Debounce: wait a bit to collect short follow-ups, then
-# process the conversation as a whole (not message-by-message).
-# Example: "El Yum Yum" + "Que vale?" => 1 search.
-# ---------------------------------------------------------
-cooldown = int(os.getenv("CONV_COOLDOWN_SEC", "6") or 0)
-if direction == "in" and cooldown > 0:
-    try:
-        await asyncio.sleep(cooldown)
+    # ---------------------------------------------------------
+    # Debounce: wait a bit to collect short follow-ups, then
+    # process the conversation as a whole (not message-by-message).
+    # Example: "El Yum Yum" + "Que vale?" => 1 search.
+    # ---------------------------------------------------------
+    cooldown = int(os.getenv("CONV_COOLDOWN_SEC", "6") or 0)
+    if direction == "in" and cooldown > 0:
+        try:
+            await asyncio.sleep(cooldown)
 
-        # If a newer inbound message arrived meanwhile, let that one handle it.
-        with engine.begin() as conn:
-            latest_in_id = conn.execute(text("""
-                SELECT id FROM messages
-                WHERE phone=:phone AND direction='in'
-                ORDER BY created_at DESC
-                LIMIT 1
-            """), {"phone": phone}).scalar()
-
-        if int(latest_in_id or 0) != int(local_id):
-            _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
-            return {"ok": True, "queued": True}
-
-        # Build one combined user_text from all inbound messages since last outbound.
-        with engine.begin() as conn:
-            last_out_id = conn.execute(text("""
-                SELECT id FROM messages
-                WHERE phone=:phone AND direction='out'
-                ORDER BY created_at DESC
-                LIMIT 1
-            """), {"phone": phone}).scalar()
-
-            params = {"phone": phone}
-            if last_out_id:
-                params["last_out_id"] = int(last_out_id)
-                rows = conn.execute(text("""
-                    SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
-                    FROM messages
-                    WHERE phone=:phone AND direction='in' AND id > :last_out_id
-                    ORDER BY created_at ASC
-                    LIMIT 25
-                """), params).mappings().all()
-            else:
-                rows = conn.execute(text("""
-                    SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
-                    FROM messages
+            # If a newer inbound message arrived meanwhile, let that one handle it.
+            with engine.begin() as conn:
+                latest_in_id = conn.execute(text("""
+                    SELECT id FROM messages
                     WHERE phone=:phone AND direction='in'
                     ORDER BY created_at DESC
-                    LIMIT 25
-                """), params).mappings().all()
-                rows = list(reversed(rows))
+                    LIMIT 1
+                """), {"phone": phone}).scalar()
 
-        if rows:
-            parts = []
-            last = rows[-1]
-            for r in rows:
-                t = (r.get("text") or "").strip()
-                xt = (r.get("extracted_text") or "").strip()
-                if xt and (r.get("msg_type") in ("image", "audio", "video", "document")):
-                    parts.append(xt)
-                elif t:
-                    parts.append(t)
+            if int(latest_in_id or 0) != int(local_id):
+                _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
+                return {"ok": True, "queued": True}
 
-            combined = "\n".join([p for p in parts if p]).strip()
-            if combined:
-                msg.text = combined
-            # ensure we keep latest media context
-            msg.msg_type = last.get("msg_type") or msg.msg_type
-            msg.media_id = last.get("media_id") or msg.media_id
-            msg.mime_type = last.get("mime_type") or msg.mime_type
+            # Build one combined user_text from all inbound messages since last outbound.
+            with engine.begin() as conn:
+                last_out_id = conn.execute(text("""
+                    SELECT id FROM messages
+                    WHERE phone=:phone AND direction='out'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """), {"phone": phone}).scalar()
 
-            _log(trace_id, "BATCH_READY", combined_len=len(msg.text or ""), batch_count=len(rows))
-    except Exception as e:
-        _log(trace_id, "BATCH_ERROR", error=str(e)[:500])
+                params = {"phone": phone}
+                if last_out_id:
+                    params["last_out_id"] = int(last_out_id)
+                    rows = conn.execute(text("""
+                        SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
+                        FROM messages
+                        WHERE phone=:phone AND direction='in' AND id > :last_out_id
+                        ORDER BY created_at ASC
+                        LIMIT 25
+                    """), params).mappings().all()
+                else:
+                    rows = conn.execute(text("""
+                        SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
+                        FROM messages
+                        WHERE phone=:phone AND direction='in'
+                        ORDER BY created_at DESC
+                        LIMIT 25
+                    """), params).mappings().all()
+                    rows = list(reversed(rows))
+
+            if rows:
+                parts = []
+                last = rows[-1]
+                for r in rows:
+                    t = (r.get("text") or "").strip()
+                    xt = (r.get("extracted_text") or "").strip()
+                    if xt and (r.get("msg_type") in ("image", "audio", "video", "document")):
+                        parts.append(xt)
+                    elif t:
+                        parts.append(t)
+
+                combined = "\n".join([p for p in parts if p]).strip()
+                if combined:
+                    msg.text = combined
+                # ensure we keep latest media context
+                msg.msg_type = last.get("msg_type") or msg.msg_type
+                msg.media_id = last.get("media_id") or msg.media_id
+                msg.mime_type = last.get("mime_type") or msg.mime_type
+
+                _log(trace_id, "BATCH_READY", combined_len=len(msg.text or ""), batch_count=len(rows))
+        except Exception as e:
+            _log(trace_id, "BATCH_ERROR", error=str(e)[:500])
 
     # ✅ 3) Si es OUT: enviamos y marcamos estado
     if direction == "out":

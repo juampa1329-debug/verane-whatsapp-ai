@@ -362,7 +362,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
     # ✅ Asegura fila CRM desde el inicio
     ensure_conversation_row(msg.phone)
 
-    # ✅ 1) Idempotencia (evita duplicados por retry webhook)
+    # ✅ 1) Idempotencia CORREGIDA (evita duplicados agresivos de imágenes por retry)
     if direction == "in":
         try:
             with engine.begin() as conn:
@@ -372,8 +372,11 @@ async def run_ingest(msg: IngestMessage) -> dict:
                       AND direction = 'in'
                       AND msg_type = :msg_type
                       AND text = :text
-                      AND COALESCE(media_id, '') = COALESCE(:media_id, '')
-                      AND created_at > NOW() - INTERVAL '20 seconds'
+                      AND (
+                          (COALESCE(:media_id, '') != '' AND media_id = :media_id AND created_at > NOW() - INTERVAL '15 minutes')
+                          OR
+                          (COALESCE(:media_id, '') = '' AND created_at > NOW() - INTERVAL '30 seconds')
+                      )
                 """), {
                     "phone": msg.phone,
                     "msg_type": msg_type,
@@ -419,16 +422,13 @@ async def run_ingest(msg: IngestMessage) -> dict:
         return {"saved": False, "sent": False, "stage": "db", "error": str(e)}
 
     # ---------------------------------------------------------
-    # Debounce: wait a bit to collect short follow-ups, then
-    # process the conversation as a whole (not message-by-message).
-    # Example: "El Yum Yum" + "Que vale?" => 1 search.
+    # Debounce
     # ---------------------------------------------------------
     cooldown = int(os.getenv("CONV_COOLDOWN_SEC", "6") or 0)
     if direction == "in" and cooldown > 0:
         try:
             await asyncio.sleep(cooldown)
 
-            # If a newer inbound message arrived meanwhile, let that one handle it.
             with engine.begin() as conn:
                 latest_in_id = conn.execute(text("""
                     SELECT id FROM messages
@@ -441,7 +441,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
                 return {"ok": True, "queued": True}
 
-            # Build one combined user_text from all inbound messages since last outbound.
             with engine.begin() as conn:
                 last_out_id = conn.execute(text("""
                     SELECT id FROM messages
@@ -484,7 +483,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 combined = "\n".join([p for p in parts if p]).strip()
                 if combined:
                     msg.text = combined
-                # ensure we keep latest media context
                 msg.msg_type = last.get("msg_type") or msg.msg_type
                 msg.media_id = last.get("media_id") or msg.media_id
                 msg.mime_type = last.get("mime_type") or msg.mime_type
@@ -565,6 +563,9 @@ async def run_ingest(msg: IngestMessage) -> dict:
             if is_effectively_empty_text(user_text):
                 user_text = ""
 
+            # Variable clave para forzar que WooCommerce atienda este mensaje
+            force_woo_search = False
+
             # ✅ Multimodal: si no hay texto y llega audio/imagen/doc
             if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
                 _log(trace_id, "ENTER_MULTIMODAL", media_id=msg.media_id, mime=mime_in)
@@ -580,7 +581,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
                 vision_obj: dict = {}
                 vision_meta: dict = {}
-
                 extracted = ""
                 mm_meta: dict = {}
 
@@ -605,9 +605,8 @@ async def run_ingest(msg: IngestMessage) -> dict:
                             }
                             extracted = (extracted or "").strip()
 
-                        # 2) Image/Document -> (a) structured extractor (perfume/receipt) (b) fallback OCR text extractor
+                        # 2) Image/Document
                         else:
-                            # 2.a) Structured (sales) extraction first
                             try:
                                 vision_obj, vision_meta = await extract_structured_from_media_for_sales(
                                     msg_type=msg_type,
@@ -655,8 +654,9 @@ async def run_ingest(msg: IngestMessage) -> dict:
                                 except Exception:
                                     pass
 
-                            # Si es perfume -> extracted = search_text para Woo
+                            # Si es perfume -> extracted = search_text y OBLIGAMOS a buscar en WOO
                             elif isinstance(vision_obj, dict) and (vision_obj.get("type") == "perfume"):
+                                force_woo_search = True # ✅ OBLIGA AL MOTOR A SALTAR LA IA GENERAL
                                 search_text = (vision_obj.get("search_text") or "").strip()
                                 if not search_text:
                                     cands = vision_obj.get("product_candidates") or []
@@ -667,7 +667,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                                         search_text = " ".join([br, nm]).strip()
                                 extracted = search_text.strip()
 
-                            # 2.b) Si no sacamos nada útil con structured, hacemos OCR/text extractor clásico
+                            # 2.b) Fallback text
                             if not extracted:
                                 mm_cfg = _get_multimodal_settings()
                                 if not mm_cfg.get("mm_enabled", True):
@@ -703,14 +703,12 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
                 except Exception as e:
                     stage_meta["stages"]["exception"] = {"ok": False, "error": str(e)[:900]}
-
                     ai_meta_payload = {"multimodal": stage_meta}
                     if isinstance(vision_obj, dict) and vision_obj:
                         ai_meta_payload["vision"] = vision_obj
 
                     with engine.begin() as conn:
                         set_extracted_text(conn, local_id, "", ai_meta=ai_meta_payload)
-
                     user_text = ""
 
             if is_effectively_empty_text(user_text):
@@ -739,7 +737,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     _clear_ai_state(msg.phone)
 
             # =========================================================
-            # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta del último producto
+            # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta
             # =========================================================
             if msg_type == "text" and _is_photo_request(user_text):
                 last = get_last_product_sent(msg.phone)
@@ -793,10 +791,15 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 }
 
             # =========================================================
-            # WooCommerce assistant (SOLO si aplica)
+            # WooCommerce assistant (OBLIGATORIO para imágenes de perfume)
             # =========================================================
-            if wc_enabled() and user_text:
-                should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
+            if wc_enabled() and (user_text or force_woo_search):
+                if force_woo_search:
+                    should_wc = True
+                    reason_wc = "vision_detected_perfume"
+                else:
+                    should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
+
                 _log(trace_id, "ROUTER_WC_DECISION", should_wc=should_wc, reason=reason_wc)
 
                 if should_wc:

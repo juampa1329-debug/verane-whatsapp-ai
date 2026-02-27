@@ -671,15 +671,12 @@ async def handle_wc_if_applicable(
 
     # -----------------------------------------
     # ✅ Foto: si hay candidatos => enviar la tarjeta del primero
-    # (pero ojo: confirmación corta "sí/dale" solo si HAY contexto)
     # -----------------------------------------
     if _is_photo_request(text):
-        # Si es confirmación corta, exigimos candidatos/recientes, si no: pedimos aclaración
         tnorm = _norm(text)
         is_short_confirm = (len(tnorm) <= 12 and tnorm in _CONFIRM_WORDS)
 
         if not candidates:
-            # Intentar recuperar opciones de DB como contexto
             recovered = []
             try:
                 recovered = await load_recent_options_fn(phone) if load_recent_options_fn else []
@@ -694,7 +691,6 @@ async def handle_wc_if_applicable(
                 set_state(phone, _state_v2_pack(wc_state))
 
         if candidates:
-            # si hay varias opciones y el usuario dijo "sí/dale/envíala", pedimos número
             if is_short_confirm and len(candidates) > 1:
                 await send_text_fn(phone, "📸 Perfecto. ¿De cuál opción quieres la foto? Responde con el número (1-5).")
                 return {"handled": True, "wc": True, "reason": "photo_confirm_need_choice_v2", "slots": slots}
@@ -720,15 +716,12 @@ async def handle_wc_if_applicable(
         return {"handled": True, "wc": True, "reason": "photo_need_product_v2", "slots": slots}
 
     # -----------------------------------------
-    # 2) Woo aplica SOLO si:
-    # - hay state activo esperando elección
-    # - o el texto parece pregunta de producto real
-    # - o hay refinamiento real
+    # 2) Woo aplica SIEMPRE que sea invocado por el router
+    # Eliminamos el doble filtro (looks_like_product_question)
+    # porque ingest_core ya validó la intención real.
     # -----------------------------------------
-    has_active_wc_flow = (stage == "await_choice" and bool(candidates))
-    wc_applicable = has_active_wc_flow or looks_like_product_question(text) or _looks_like_refinement(text)
-    if not wc_applicable:
-        return {"handled": False}
+    # Esto soluciona que la IA responda "voy a consultar con mi compañero" 
+    # cuando mandan el nombre exacto de un perfume extraído de una foto.
 
     # -----------------------------------------
     # 3) Update slots
@@ -770,7 +763,7 @@ async def handle_wc_if_applicable(
     if not items:
         wc_state["stage"] = "discovery"
         set_state(phone, _state_v2_pack(wc_state))
-        await send_text_fn(phone, f"No encontré resultados con eso 😕\n{_pick_followup_question(slots)}")
+        await send_text_fn(phone, f"No encontré resultados exactos con eso 😕\n{_pick_followup_question(slots)}")
         return {"handled": True, "wc": True, "reason": "no_results_v2", "slots": slots}
 
     # -----------------------------------------

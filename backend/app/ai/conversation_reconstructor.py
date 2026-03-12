@@ -64,6 +64,20 @@ _VARIANT_WORDS = (
 _TINY_ACKS = {
     "ok", "dale", "listo", "perfecto", "gracias", "si", "sí", "vale", "bien", "de una",
 }
+_GREETING_WORDS = (
+    "hola", "buenas", "buenos dias", "buen día", "buen dia", "buenas tardes", "buenas noches",
+    "como vas", "cómo vas", "como estas", "cómo estás", "que tal", "qué tal",
+)
+_ONBOARDING_WORDS = (
+    "con quien tengo el gusto", "con quién tengo el gusto", "quien eres", "quién eres",
+    "como te llamas", "cómo te llamas", "tu nombre", "me regalas tu nombre",
+    "quien me atiende", "quién me atiende", "como va todo", "cómo va todo",
+)
+_COMMERCIAL_FOLLOWUP_WORDS = (
+    "ese", "esa", "ese perfume", "esa fragancia", "el de", "la de", "mandamelo", "mándamelo",
+    "pasame", "pásame", "precio", "stock", "disponible", "link", "comprar",
+    "50ml", "100ml", "200ml", "foto", "imagen", "me interesa",
+)
 _CITY_HINTS = (
     "bogota", "bogotá", "medellin", "medellín", "cali", "barranquilla", "cartagena",
     "bucaramanga", "pereira", "manizales", "ibague", "ibagué", "cucuta", "cúcuta",
@@ -205,6 +219,45 @@ def _is_tiny_ack(text_value: str) -> bool:
     return _norm(text_value) in _TINY_ACKS
 
 
+def _is_greeting_or_onboarding(text_value: str) -> bool:
+    t = _norm(text_value)
+    if not t:
+        return False
+    return _contains_any(t, _GREETING_WORDS) or _contains_any(t, _ONBOARDING_WORDS)
+
+
+def _has_commercial_signal(text_value: str) -> bool:
+    t = _norm(text_value)
+    if not t:
+        return False
+    return any(
+        _contains_any(t, group)
+        for group in (
+            _BRAND_HINTS,
+            _PERFUME_HINTS,
+            _PRODUCT_WORDS,
+            _PRICE_WORDS,
+            _BUY_WORDS,
+            _PAYMENT_WORDS,
+            _SUPPORT_WORDS,
+            _PHOTO_WORDS,
+            _VARIANT_WORDS,
+            _COMMERCIAL_FOLLOWUP_WORDS,
+        )
+    )
+
+
+def _should_reuse_previous_query(current_text: str, messages: List[str]) -> bool:
+    latest = _clean_visible_text(current_text) or (messages[-1] if messages else "")
+    if not latest:
+        return False
+    if _is_greeting_or_onboarding(latest):
+        return False
+    if _is_tiny_ack(latest):
+        return True
+    return _has_commercial_signal(latest)
+
+
 def _extract_budget(text_value: str) -> int | None:
     t = _norm(text_value)
     if not t:
@@ -327,6 +380,10 @@ def _infer_intent(
     latest_text = _clean_visible_text(current_text) or (messages[-1] if messages else "")
     norm_latest = _norm(latest_text)
     joined_recent = " || ".join(_norm(x) for x in messages[-6:])
+    recent_has_commerce = any(_has_commercial_signal(x) for x in messages[-4:])
+
+    if _is_greeting_or_onboarding(latest_text) and not recent_has_commerce:
+        return "ONBOARDING", 0.92, "discovery"
 
     if isinstance(vision_obj, dict) and vision_obj.get("type") == "receipt":
         return "PAYMENT_PROOF", 0.99, "awaiting_payment_validation"
@@ -363,7 +420,7 @@ def _infer_intent(
         or prefs.get("gift")
     )
     if has_preferences:
-        return "PREFERENCE_RECO", 0.72, "recommending"
+        return "PREFERENCE_RECO", 0.72, "discovery"
 
     return "GENERAL", 0.35, "general"
 
@@ -513,7 +570,7 @@ def reconstruct_conversation_state(
     profile = _extract_profile(user_messages)
     perfumes_asked = _extract_perfumes_asked(user_messages, vision_obj)
     product_query = _extract_product_query(user_messages, vision_obj)
-    if not product_query:
+    if (not product_query) and _should_reuse_previous_query(current_clean, user_messages):
         product_query = _clean_visible_text(conv.get("intent_product_query") or "")
     if product_query and product_query not in perfumes_asked:
         perfumes_asked.insert(0, product_query)
@@ -576,7 +633,6 @@ def reconstruct_conversation_state(
             "VARIANT_SELECTION",
             "PRICE_STOCK",
             "PRODUCT_SEARCH",
-            "PREFERENCE_RECO",
         },
         "last_product_id": last_product_id,
     }

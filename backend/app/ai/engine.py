@@ -396,8 +396,31 @@ def _sales_assistant_block(user_text: str) -> str:
     if not wc_enabled():
         return ""
 
-    if not looks_like_product_question(t):
+    low = (t or "").strip().lower()
+    discovery_signals = [
+        "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+        "como vas", "cómo vas", "que tal", "qué tal",
+        "con quien tengo el gusto", "con quién tengo el gusto",
+        "como te llamas", "cómo te llamas", "quien eres", "quién eres",
+        "me llamo", "mi nombre es",
+        "hombre", "mujer", "unisex", "regalo",
+        "dulce", "fresco", "amaderado", "citric", "ambar", "vainilla",
+        "oficina", "noche", "fiesta", "presupuesto",
+    ]
+
+    if not looks_like_product_question(t) and not any(sig in low for sig in discovery_signals):
         return ""
+
+    if any(sig in low for sig in discovery_signals):
+        return (
+            "MODO ASESOR PERFUMES (descubrimiento):\n"
+            "- Responde como asesor humano y cercano de Perfumes Verané.\n"
+            "- Si el cliente saluda o pregunta quién eres, preséntate brevemente.\n"
+            "- Conversa con naturalidad y descubre la intención antes de recomendar productos.\n"
+            "- Haz solo una pregunta útil a la vez.\n"
+            "- Antes de recomendar, intenta entender para quién es, qué estilo busca, ocasión o presupuesto.\n"
+            "- No hables de catálogo, precio o stock si el cliente todavía no está buscando un perfume concreto.\n"
+        ).strip()
 
     return (
         "MODO ASESOR PERFUMES (reglas):\n"

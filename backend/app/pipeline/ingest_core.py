@@ -298,7 +298,6 @@ _WC_KEYWORDS = {
     "stock", "disponible", "disponibilidad", "promoción", "promocion",
     "catálogo", "catalogo", "recomienda", "recomendación", "recomendacion",
     "para hombre", "para mujer", "unisex", "dulce", "amaderado", "cítrico", "citrico",
-    "regalo", "novio", "novia", "esposo", "esposa", "pareja",
     "dior", "versace", "armani", "azzaro", "rabanne", "carolina herrera",
     "sauvage", "eros", "invictus", "one million", "212", "bleu de chanel",
     "50ml", "100ml", "200ml", "foto real", "mándame", "mandame",
@@ -339,6 +338,9 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
 
 
 def _conversation_state_requires_woo(conv_state: dict) -> tuple[bool, str]:
+    if bool((conv_state or {}).get("force_woo")):
+        return True, f"conversation_state:{str((conv_state or {}).get('intent_current') or '').strip().lower()}"
+
     intent = str((conv_state or {}).get("intent_current") or "").strip().upper()
     if intent in {
         "PHOTO_REQUEST",
@@ -346,7 +348,6 @@ def _conversation_state_requires_woo(conv_state: dict) -> tuple[bool, str]:
         "VARIANT_SELECTION",
         "PRICE_STOCK",
         "PRODUCT_SEARCH",
-        "PREFERENCE_RECO",
     }:
         return True, f"conversation_state:{intent.lower()}"
     return False, "conversation_state:general"

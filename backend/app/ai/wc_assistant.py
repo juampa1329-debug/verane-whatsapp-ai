@@ -270,6 +270,66 @@ def _get_list_names(obj_list: Any) -> list[str]:
     return out
 
 
+def _matches_gender(p: dict, gender: str) -> bool:
+    wanted = _norm(gender or "")
+    if not wanted:
+        return True
+
+    pg = _norm((p.get("gender") or "").strip())
+    if not pg:
+        blob = _product_text_blob(p)
+        if "unisex" in blob:
+            pg = "unisex"
+        elif any(x in blob for x in ["mujer", "women", "femen"]):
+            pg = "mujer"
+        elif any(x in blob for x in ["hombre", "men", "mascul"]):
+            pg = "hombre"
+
+    if not pg:
+        return True
+    if pg == "unisex":
+        return True
+    return pg == wanted
+
+
+def _has_enough_profile_for_recommendation(slots: dict) -> bool:
+    if slots.get("brand"):
+        return True
+    if slots.get("budget"):
+        return True
+    if slots.get("sweetness"):
+        return True
+    if slots.get("intensity"):
+        return True
+    if slots.get("family"):
+        return True
+    if slots.get("occasion"):
+        return True
+    if slots.get("vibe"):
+        return True
+    return False
+
+
+def _looks_like_specific_product_search(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    if looks_like_product_question(text):
+        return True
+    if re.search(r"\b\d{2,3}\s*ml\b", t):
+        return True
+
+    generic_only = [
+        "hombre", "mujer", "unisex", "dulce", "fresco", "amaderado", "ambar",
+        "oficina", "noche", "fiesta", "regalo", "presupuesto", "barato",
+    ]
+    words = [w for w in t.split() if w]
+    if len(words) >= 2 and not all(w in generic_only for w in words):
+        if not any(x in t for x in ["quiero algo", "uno para", "algo para", "para ", "tipo "]):
+            return True
+    return False
+
+
 # -------------------------
 # State V2
 # -------------------------
@@ -457,6 +517,10 @@ def _score_with_slots(p: dict, slots: dict, user_text: str) -> int:
             slot_score += 8
         if gender == "unisex" and "unisex" in blob:
             slot_score += 8
+        if gender == "hombre" and any(x in blob for x in ["mujer", "women", "femen"]):
+            slot_score -= 20
+        if gender == "mujer" and any(x in blob for x in ["hombre", "men", "mascul"]):
+            slot_score -= 20
 
     for v in (slots.get("vibe") or []):
         if _norm(v) in blob:
@@ -730,6 +794,16 @@ async def handle_wc_if_applicable(
     wc_state["slots"] = slots
     wc_state["ts"] = _now_ts()
 
+    if (not _looks_like_specific_product_search(text)) and not _has_enough_profile_for_recommendation(slots):
+        wc_state["stage"] = "discovery"
+        set_state(phone, _state_v2_pack(wc_state))
+        await send_text_fn(
+            phone,
+            "Te ayudo a encontrar uno bueno 😊\n\n"
+            f"{_pick_followup_question(slots)}"
+        )
+        return {"handled": True, "wc": True, "reason": "need_more_profile_v2", "slots": slots}
+
     # -----------------------------------------
     # 4) Si espera elección y llega número -> enviar
     # -----------------------------------------
@@ -779,6 +853,11 @@ async def handle_wc_if_applicable(
     scored.sort(key=lambda x: x[0], reverse=True)
 
     ranked = [p for _, p in scored]
+    wanted_gender = (slots.get("gender") or "").strip()
+    if wanted_gender:
+        gender_ranked = [p for p in ranked if _matches_gender(p, wanted_gender)]
+        if gender_ranked:
+            ranked = gender_ranked
     top = ranked[:5]
 
     wc_state["candidates"] = [{"id": _safe_int(p.get("id")), "name": (p.get("name") or "").strip()} for p in top]

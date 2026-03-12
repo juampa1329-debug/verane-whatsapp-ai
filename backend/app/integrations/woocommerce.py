@@ -3,6 +3,7 @@
 import os
 import re
 import io
+from difflib import SequenceMatcher
 from typing import Optional, List, Tuple
 
 import httpx
@@ -384,6 +385,15 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
             cached3.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
             return cached3[:max(1, effective_per_page)]
 
+    # Fuzzy ligero por prefijos de token para typos ("starwaker" -> "star")
+    stems = [t[:4] for t in toks if len(t) >= 5]
+    if stems:
+        q4 = " ".join(stems[:3])
+        cached4 = search_cached_products(q4, limit=max(12, effective_per_page))
+        if cached4:
+            cached4.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
+            return cached4[:max(1, effective_per_page)]
+
     return []
 
 
@@ -443,8 +453,22 @@ def score_product_match(query: str, product_name: str) -> int:
     qwords = [w for w in q.split() if len(w) >= 3]
     if not qwords:
         return 0
+    nwords = [w for w in n.split() if len(w) >= 3]
     hit = sum(1 for w in qwords if w in n)
     if hit == 0:
+        # Fuzzy leve para typos: ej. "starwaker" vs "starwalker".
+        best = 0.0
+        for qw in qwords[:6]:
+            for nw in nwords[:10]:
+                if abs(len(qw) - len(nw)) > 3:
+                    continue
+                ratio = SequenceMatcher(a=qw, b=nw).ratio()
+                if ratio > best:
+                    best = ratio
+        if best >= 0.86:
+            return 42
+        if best >= 0.78:
+            return 28
         return 0
     return 20 + hit * 10
 

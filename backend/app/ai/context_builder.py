@@ -358,9 +358,15 @@ def build_ai_meta(
 
     # CRM block (estructurado, corto)
     crm_lines: List[str] = []
+    crm_meta = crm.get("crm_meta") if isinstance(crm.get("crm_meta"), dict) else {}
+    ai_memory = crm_meta.get("ai_memory") if isinstance(crm_meta, dict) else {}
+    ai_memory_summary = _clean_text((ai_memory or {}).get("summary") or "")
+    tags = _clean_text(crm.get("tags") or "")
+    name_confirmed = bool((ai_memory or {}).get("name_confirmed") or ("perfil:nombre_confirmado" in tags.lower()))
+
     fn = _clean_text(crm.get("first_name") or "")
     ln = _clean_text(crm.get("last_name") or "")
-    if fn or ln:
+    if (fn or ln) and name_confirmed:
         crm_lines.append(f"Nombre: {(fn + ' ' + ln).strip()}")
     city = _clean_text(crm.get("city") or "")
     if city:
@@ -371,7 +377,6 @@ def build_ai_meta(
     interests = _clean_text(crm.get("interests") or "")
     if interests:
         crm_lines.append(f"Intereses: {interests}")
-    tags = _clean_text(crm.get("tags") or "")
     if tags:
         crm_lines.append(f"Tags: {tags}")
     notes = _clean_text(crm.get("notes") or "")
@@ -384,9 +389,6 @@ def build_ai_meta(
     intent_product_query = _clean_text(crm.get("intent_product_query") or "")
     payment_status = _clean_text(crm.get("payment_status") or "")
     payment_reference = _clean_text(crm.get("payment_reference") or "")
-    crm_meta = crm.get("crm_meta") if isinstance(crm.get("crm_meta"), dict) else {}
-    ai_memory = crm_meta.get("ai_memory") if isinstance(crm_meta, dict) else {}
-    ai_memory_summary = _clean_text((ai_memory or {}).get("summary") or "")
 
     # ✅ IMPORTANTE:
     # Evitar que la IA “vea” estados internos tipo wc_await (solo lo marcamos en flags)
@@ -435,6 +437,7 @@ def build_ai_meta(
         "has_kb": bool(kb_ctx),
         "has_history": bool(history_block),
         "wc_awaiting_choice": wc_awaiting_choice,
+        "name_confirmed": bool(name_confirmed),
         "intent_current": intent_current,
         "intent_stage": intent_stage,
         "payment_status": payment_status,

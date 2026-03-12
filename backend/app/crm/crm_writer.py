@@ -335,9 +335,24 @@ def sync_ai_memory(phone: str, memory: Dict[str, Any]) -> None:
             crm_meta = _coerce_json_dict(existing.get("crm_meta"))
             prev_ai_memory = _coerce_json_dict(crm_meta.get("ai_memory"))
             prev_interest_summary = _clean(prev_ai_memory.get("interest_summary") or "")
+            prev_name_confirmed = bool(prev_ai_memory.get("name_confirmed") or False)
+            incoming_name_confirmed = bool(memory.get("name_confirmed") or False)
+            incoming_first_name = _clean(memory.get("first_name") or "")
+            incoming_last_name = _clean(memory.get("last_name") or "")
+            existing_first_name = _clean(existing.get("first_name") or "")
+            existing_last_name = _clean(existing.get("last_name") or "")
 
-            first_name = _clean(memory.get("first_name") or "") or _clean(existing.get("first_name") or "")
-            last_name = _clean(memory.get("last_name") or "") or _clean(existing.get("last_name") or "")
+            first_name = existing_first_name
+            last_name = existing_last_name
+            name_confirmed = prev_name_confirmed
+
+            # Solo pisamos nombre cuando viene confirmado por el cliente.
+            if incoming_name_confirmed and incoming_first_name:
+                first_name = incoming_first_name
+                if incoming_last_name:
+                    last_name = incoming_last_name
+                name_confirmed = True
+
             city = _clean(memory.get("city") or "") or _clean(existing.get("city") or "")
 
             intent_current = _clean(memory.get("intent_current") or "")
@@ -382,6 +397,8 @@ def sync_ai_memory(phone: str, memory: Dict[str, Any]) -> None:
                 tags_add.append(f"soporte:{support_status.lower()}")
             if city:
                 tags_add.append("perfil:ciudad_confirmada")
+            if name_confirmed and first_name:
+                tags_add.append("perfil:nombre_confirmado")
             tags = _merge_tags(existing.get("tags", "") or "", tags_add)
 
             summary_lines: List[str] = []
@@ -441,6 +458,7 @@ def sync_ai_memory(phone: str, memory: Dict[str, Any]) -> None:
                 "summary": summary_text,
                 "first_name": first_name,
                 "last_name": last_name,
+                "name_confirmed": bool(name_confirmed and first_name),
                 "city": city,
                 "updated_at": datetime.utcnow().isoformat(),
             }

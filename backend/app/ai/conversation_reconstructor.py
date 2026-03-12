@@ -85,6 +85,15 @@ _CITY_HINTS = (
 )
 
 
+_NON_NAME_WORDS = {
+    "hola", "buenas", "buenos", "dias", "tardes", "noches", "como", "que", "tal",
+    "soy", "de", "en", "mi", "nombre", "es", "llamo", "llamas", "gusto",
+    "hombre", "mujer", "unisex", "perfume", "fragancia", "colonia",
+    "precio", "stock", "disponible", "comprar", "pago", "reclamo", "soporte",
+    "foto", "imagen", "regalo", "oficina", "noche", "fiesta",
+}
+
+
 def _norm(text_value: str) -> str:
     text_value = (text_value or "").strip().lower()
     replacements = {"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n"}
@@ -131,8 +140,54 @@ def _latest_user_messages(messages: List[Dict[str, Any]]) -> List[str]:
     return out
 
 
-def _extract_profile(messages: List[str]) -> Dict[str, str]:
-    profile = {"first_name": "", "last_name": "", "city": ""}
+def _is_plausible_name_token(raw_token: str) -> bool:
+    token = _clean_visible_text(raw_token)
+    n = _norm(token)
+    if not n or len(n) < 2 or len(n) > 24:
+        return False
+    if re.search(r"\d", n):
+        return False
+    if n in _NON_NAME_WORDS:
+        return False
+    return re.fullmatch(r"[a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+", token) is not None
+
+
+def _extract_name_from_text(raw: str, low: str) -> tuple[str, str, bool]:
+    if not raw or not low:
+        return "", "", False
+
+    m_name = re.search(
+        r"\b(mi nombre es|me llamo)\s+([a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+)(?:\s+([a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+))?\b",
+        raw,
+        re.IGNORECASE,
+    )
+    if m_name:
+        first = _clean_visible_text(m_name.group(2))
+        last = _clean_visible_text(m_name.group(3) or "")
+        if _is_plausible_name_token(first):
+            if last and (not _is_plausible_name_token(last)):
+                last = ""
+            return first, last, True
+
+    # Permitimos "soy juan" como mensaje corto, evitando "soy hombre".
+    m_soy = re.search(
+        r"^\s*soy\s+([a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+)(?:\s+([a-zA-ZÁÉÍÓÚáéíóúÑñÜü]+))?\s*$",
+        raw,
+        re.IGNORECASE,
+    )
+    if m_soy:
+        first = _clean_visible_text(m_soy.group(1))
+        last = _clean_visible_text(m_soy.group(2) or "")
+        if _is_plausible_name_token(first):
+            if last and (not _is_plausible_name_token(last)):
+                last = ""
+            return first, last, True
+
+    return "", "", False
+
+
+def _extract_profile(messages: List[str]) -> Dict[str, Any]:
+    profile: Dict[str, Any] = {"first_name": "", "last_name": "", "city": "", "name_confirmed": False}
 
     for msg in reversed(messages):
         raw = _clean_visible_text(msg)
@@ -141,17 +196,11 @@ def _extract_profile(messages: List[str]) -> Dict[str, str]:
             continue
 
         if not profile["first_name"]:
-            m_name = re.search(r"\b(mi nombre es|me llamo)\s+([a-záéíóúñ]+)(?:\s+([a-záéíóúñ]+))?\b", raw, re.IGNORECASE)
-            if m_name:
-                profile["first_name"] = _clean_visible_text(m_name.group(2))
-                if m_name.group(3):
-                    profile["last_name"] = _clean_visible_text(m_name.group(3))
-            elif not low.startswith("soy de "):
-                m_soy = re.search(r"\bsoy\s+([a-záéíóúñ]+)(?:\s+([a-záéíóúñ]+))?\b", raw, re.IGNORECASE)
-                if m_soy:
-                    profile["first_name"] = _clean_visible_text(m_soy.group(1))
-                    if m_soy.group(2):
-                        profile["last_name"] = _clean_visible_text(m_soy.group(2))
+            first, last, confirmed = _extract_name_from_text(raw, low)
+            if first:
+                profile["first_name"] = first
+                profile["last_name"] = last
+                profile["name_confirmed"] = bool(confirmed)
 
         for city in _CITY_HINTS:
             city_norm = _norm(city)
@@ -638,6 +687,7 @@ def reconstruct_conversation_state(
         "first_name": profile.get("first_name") or "",
         "last_name": profile.get("last_name") or "",
         "city": profile.get("city") or "",
+        "name_confirmed": bool(profile.get("name_confirmed") or False),
         "force_woo": intent_current in {
             "PHOTO_REQUEST",
             "BUY_FLOW",
@@ -655,6 +705,7 @@ def reconstruct_conversation_state(
             "first_name": state.get("first_name") or "",
             "last_name": state.get("last_name") or "",
             "city": state.get("city") or "",
+            "name_confirmed": bool(state.get("name_confirmed") or False),
             "intent_current": state.get("intent_current") or "",
             "intent_stage": state.get("intent_stage") or "",
             "product_query": state.get("intent_product_query") or "",

@@ -221,6 +221,99 @@ def _is_photo_request(text: str) -> bool:
     return False
 
 
+_PHOTO_KEYWORDS = [
+    "foto", "fotos", "imagen", "imagenes", "imÃ¡genes",
+    "foto real", "ver foto", "ver la foto", "ver imagen", "imagen real",
+    "tienes foto", "tiene foto",
+]
+
+
+def _is_photo_request(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+
+    for kw in _PHOTO_KEYWORDS:
+        if _norm(kw) in t:
+            return True
+
+    # confirmaciÃ³n corta SOLO con contexto (lo validamos donde se usa)
+    if len(t) <= 12 and t in _CONFIRM_WORDS:
+        return True
+
+    return False
+
+
+_LIST_REQUEST_HINTS = (
+    "5 opciones", "cinco opciones", "opciones", "lista", "lista de",
+    "ver opciones", "dame opciones", "muestrame opciones", "muÃ©strame opciones",
+)
+
+
+def _is_options_list_request(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    return any(h in t for h in _LIST_REQUEST_HINTS)
+
+
+def _build_saved_candidates_menu(candidates: list[dict]) -> str:
+    top = (candidates or [])[:5]
+    lines = ["AquÃ­ tienes las opciones: ðŸ‘‡"]
+    for i, item in enumerate(top, start=1):
+        name = _clean_text((item or {}).get("name") or "")
+        lines.append(f"{i}) {name or 'OpciÃ³n'}")
+    lines.append("")
+    lines.append("Responde con el nÃºmero (1-5) y te envÃ­o ese de una.")
+    return "\n".join(lines)
+
+
+# ASCII overrides (evita textos mojibake en respuestas)
+_PHOTO_KEYWORDS = [
+    "foto", "fotos", "imagen", "imagenes",
+    "foto real", "ver foto", "ver la foto", "ver imagen", "imagen real",
+    "tienes foto", "tiene foto",
+]
+
+
+def _is_photo_request(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+
+    for kw in _PHOTO_KEYWORDS:
+        if _norm(kw) in t:
+            return True
+
+    if len(t) <= 12 and t in _CONFIRM_WORDS:
+        return True
+    return False
+
+
+_LIST_REQUEST_HINTS = (
+    "5 opciones", "cinco opciones", "opciones", "lista", "lista de",
+    "ver opciones", "dame opciones", "muestrame opciones",
+)
+
+
+def _is_options_list_request(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    return any(h in t for h in _LIST_REQUEST_HINTS)
+
+
+def _build_saved_candidates_menu(candidates: list[dict]) -> str:
+    top = (candidates or [])[:5]
+    lines = ["Aqui tienes las opciones:"]
+    for i, item in enumerate(top, start=1):
+        name = _clean_text((item or {}).get("name") or "")
+        lines.append(f"{i}) {name or 'Opcion'}")
+    lines.append("")
+    lines.append("Responde con el numero (1-5) y te envio ese de una.")
+    return "\n".join(lines)
+
+
 def _is_budget_mention(text: str) -> bool:
     t = _norm(text)
     return bool(re.search(r"(\$|\bpesos?\b|\bmil\b|\bk\b|\bmxn\b|\bcop\b|\bclp\b)", t)) or bool(
@@ -342,6 +435,8 @@ def _looks_like_specific_product_search(text: str) -> bool:
         return False
     if _is_social_opening(text):
         return False
+    if _is_options_list_request(text) and not looks_like_product_question(text):
+        return False
     if looks_like_product_question(text):
         return True
     if re.search(r"\b\d{2,3}\s*ml\b", t):
@@ -352,6 +447,11 @@ def _looks_like_specific_product_search(text: str) -> bool:
         "oficina", "noche", "fiesta", "regalo", "presupuesto", "barato",
     ]
     words = [w for w in t.split() if w]
+    if len(words) == 1:
+        w = words[0]
+        # Permite consultas tipo "starwalker" aunque no tengan marca.
+        if len(w) >= 5 and w not in generic_only and not _looks_like_refinement(w):
+            return True
     if len(words) >= 2 and not all(w in generic_only for w in words):
         if not any(x in t for x in ["quiero algo", "uno para", "algo para", "para ", "tipo "]):
             return True
@@ -708,8 +808,14 @@ async def handle_wc_if_applicable(
             clear_state(phone)
             return {"handled": False}
 
+        list_request = _is_options_list_request(text)
+
+        if list_request and options:
+            await send_text_fn(phone, _build_saved_candidates_menu(options))
+            return {"handled": True, "wc": True, "reason": "menu_repeat_v1", "slots": {}}
+
         # Foto: SOLO si hay opciones/contexto
-        if _is_photo_request(text) and options:
+        if _is_photo_request(text) and (not list_request) and options:
             if len(options) == 1:
                 picked = options[0]
                 clear_state(phone)
@@ -762,11 +868,20 @@ async def handle_wc_if_applicable(
     stage = (wc_state.get("stage") or "discovery").strip()
     slots = wc_state.get("slots") or _default_wc_state()["slots"]
     candidates = wc_state.get("candidates") or []
+    list_request = _is_options_list_request(text)
+
+    # Si pide lista y ya hay candidatos guardados, reenviar menu 1-5.
+    if list_request and candidates:
+        wc_state["stage"] = "await_choice"
+        wc_state["ts"] = _now_ts()
+        set_state(phone, _state_v2_pack(wc_state))
+        await send_text_fn(phone, _build_saved_candidates_menu(candidates))
+        return {"handled": True, "wc": True, "reason": "menu_repeat_v2", "slots": slots}
 
     # -----------------------------------------
     # ✅ Foto: si hay candidatos => enviar la tarjeta del primero
     # -----------------------------------------
-    if _is_photo_request(text):
+    if _is_photo_request(text) and (not list_request):
         tnorm = _norm(text)
         is_short_confirm = (len(tnorm) <= 12 and tnorm in _CONFIRM_WORDS)
 
@@ -805,7 +920,7 @@ async def handle_wc_if_applicable(
         await send_text_fn(
             phone,
             "📸 ¡Claro! ¿De cuál perfume quieres la foto?\n\n"
-            "Dime el *nombre exacto* o dime si quieres que te muestre opciones para elegir."
+            "Dime el nombre (aunque sea aproximado) o dime si quieres que te muestre opciones para elegir."
         )
         return {"handled": True, "wc": True, "reason": "photo_need_product_v2", "slots": slots}
 
@@ -857,6 +972,8 @@ async def handle_wc_if_applicable(
     # 5) Retrieval
     # -----------------------------------------
     query = text
+    if list_request and wc_state.get("last_query"):
+        query = _clean_text(str(wc_state.get("last_query") or "")) or text
     wc_state["last_query"] = query
 
     try:
@@ -906,7 +1023,7 @@ async def handle_wc_if_applicable(
     ambiguous_top_match = len(scored) > 1 and abs(top_rank_score - second_rank_score) < 12
 
     # Si el usuario pidió lista -> menú 1-5 + guardar en DB
-    if wants_list and len(top) >= 2:
+    if (wants_list or _is_options_list_request(text)) and len(top) >= 2:
         menu_text, opts = _build_menu_lines(top)
         wc_state["stage"] = "await_choice"
         wc_state["candidates"] = opts

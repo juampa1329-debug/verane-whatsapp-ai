@@ -792,6 +792,9 @@ async def handle_wc_if_applicable(
     top1 = top[0]
     top_name = (top1.get("name") or "").strip()
     strong_name_score = score_product_match(text, top_name)
+    top_rank_score = int(scored[0][0] if scored else 0)
+    second_rank_score = int(scored[1][0] if len(scored) > 1 else 0)
+    ambiguous_top_match = len(scored) > 1 and abs(top_rank_score - second_rank_score) < 12
 
     # Si el usuario pidió lista -> menú 1-5 + guardar en DB
     if wants_list and len(top) >= 2:
@@ -810,7 +813,7 @@ async def handle_wc_if_applicable(
         return {"handled": True, "wc": True, "reason": "menu_options_v2", "slots": slots}
 
     # Match fuerte -> enviar directo
-    if strong_name_score >= 80:
+    if strong_name_score >= 80 and not ambiguous_top_match:
         clear_state(phone)
         return {
             "handled": True,

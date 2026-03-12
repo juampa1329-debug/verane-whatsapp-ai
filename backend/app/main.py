@@ -124,8 +124,21 @@ def ensure_schema():
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_featured_image TEXT"""))
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_real_image TEXT"""))
         conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_product_permalink TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_current TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_confidence DOUBLE PRECISION"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_stage TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_product_query TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_product_candidates JSONB"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent_preferences JSONB"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS payment_status TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS payment_reference TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS payment_amount TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS payment_currency TEXT"""))
+        conn.execute(text("""ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_reconstructed_at TIMESTAMP"""))
 
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_intent_current ON conversations (intent_current)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_conversations_payment_status ON conversations (payment_status)"""))
 
         # -------------------------
         # messages
@@ -692,7 +705,12 @@ def get_crm(phone: str):
                     customer_type,
                     interests,
                     tags,
-                    notes
+                    notes,
+                    COALESCE(intent_current, '') AS intent_current,
+                    COALESCE(intent_stage, '') AS intent_stage,
+                    COALESCE(payment_status, '') AS payment_status,
+                    COALESCE(payment_reference, '') AS payment_reference,
+                    COALESCE(crm_meta, '{}'::jsonb) AS crm_meta
                 FROM conversations
                 WHERE phone = :phone
             """), {"phone": phone}).mappings().first()
@@ -708,9 +726,19 @@ def get_crm(phone: str):
                 "interests": "",
                 "tags": "",
                 "notes": "",
+                "intent_current": "",
+                "intent_stage": "",
+                "payment_status": "",
+                "payment_reference": "",
+                "crm_meta": {},
+                "memory_summary": "",
             }
 
-        return dict(r)
+        data = dict(r)
+        crm_meta = data.get("crm_meta") if isinstance(data.get("crm_meta"), dict) else {}
+        ai_memory = crm_meta.get("ai_memory") if isinstance(crm_meta, dict) else {}
+        data["memory_summary"] = str((ai_memory or {}).get("summary") or "").strip()
+        return data
 
     except Exception as e:
         return {"ok": False, "error": str(e), "phone": phone}

@@ -248,6 +248,236 @@ def apply_wc_slots_to_crm(phone: str, slots: Dict[str, Any]) -> None:
 
 
 # =========================================================
+# ✅ AI memory sync (CRM legible + memoria estructurada)
+# =========================================================
+
+def _coerce_json_dict(val: Any) -> dict:
+    if val is None:
+        return {}
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str) and val.strip():
+        try:
+            j = json.loads(val)
+            return j if isinstance(j, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _dedup_texts(items: List[str], limit: int = 6) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for item in items:
+        txt = _clean(item)
+        if not txt:
+            continue
+        key = txt.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(txt)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _merge_meta_dict(existing: dict, patch: dict) -> dict:
+    merged = dict(existing or {})
+    for key, value in (patch or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            child = dict(merged.get(key) or {})
+            child.update(value)
+            merged[key] = child
+        else:
+            merged[key] = value
+    return merged
+
+
+def sync_ai_memory(phone: str, memory: Dict[str, Any]) -> None:
+    """
+    Guarda memoria estructurada en crm_meta.ai_memory y actualiza
+    campos visibles del CRM sin romper notas/manual.
+    """
+    phone = (phone or "").strip()
+    if not phone or not isinstance(memory, dict):
+        return
+
+    ensure_conversation_row(phone)
+
+    try:
+        with engine.begin() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        """
+                SELECT
+                    COALESCE(first_name,'') AS first_name,
+                    COALESCE(last_name,'') AS last_name,
+                    COALESCE(city,'') AS city,
+                    COALESCE(customer_type,'') AS customer_type,
+                    COALESCE(interests,'') AS interests,
+                    COALESCE(tags,'') AS tags,
+                    COALESCE(notes,'') AS notes,
+                    COALESCE(crm_meta, '{}'::jsonb) AS crm_meta
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+            """
+                    ),
+                    {"phone": phone},
+                )
+                .mappings()
+                .first()
+            )
+
+            existing = dict(row or {})
+            crm_meta = _coerce_json_dict(existing.get("crm_meta"))
+            prev_ai_memory = _coerce_json_dict(crm_meta.get("ai_memory"))
+            prev_interest_summary = _clean(prev_ai_memory.get("interest_summary") or "")
+
+            first_name = _clean(memory.get("first_name") or "") or _clean(existing.get("first_name") or "")
+            last_name = _clean(memory.get("last_name") or "") or _clean(existing.get("last_name") or "")
+            city = _clean(memory.get("city") or "") or _clean(existing.get("city") or "")
+
+            intent_current = _clean(memory.get("intent_current") or "")
+            intent_stage = _clean(memory.get("intent_stage") or "")
+            product_query = _clean(memory.get("product_query") or "")
+            perfumes_asked = _dedup_texts([str(x) for x in (memory.get("perfumes_asked") or [])], limit=6)
+            preferences = memory.get("preferences") if isinstance(memory.get("preferences"), dict) else {}
+            payment_status = _clean(memory.get("payment_status") or "")
+            payment_reference = _clean(memory.get("payment_reference") or "")
+            payment_amount = _clean(memory.get("payment_amount") or "")
+            payment_currency = _clean(memory.get("payment_currency") or "")
+            support_status = _clean(memory.get("support_status") or "")
+
+            generated_interest_parts: List[str] = []
+            if perfumes_asked:
+                generated_interest_parts.append("Perfumes: " + " | ".join(perfumes_asked[:3]))
+            if preferences.get("gender"):
+                generated_interest_parts.append(f"Perfil: {preferences.get('gender')}")
+            fam = [str(x) for x in (preferences.get("family") or []) if _clean(str(x))]
+            if fam:
+                generated_interest_parts.append("Notas: " + ", ".join(fam[:4]))
+            if preferences.get("budget"):
+                generated_interest_parts.append(f"Presupuesto: {preferences.get('budget')}")
+            if preferences.get("gift"):
+                generated_interest_parts.append("Contexto: regalo")
+            generated_interest = " | ".join(generated_interest_parts).strip()
+
+            current_interests = _clean(existing.get("interests") or "")
+            if (not current_interests) or (current_interests == prev_interest_summary):
+                interests = generated_interest or current_interests
+            else:
+                interests = current_interests
+
+            tags_add: List[str] = []
+            if intent_current in {"PRODUCT_SEARCH", "PREFERENCE_RECO", "PRICE_STOCK", "VARIANT_SELECTION", "BUY_FLOW"}:
+                tags_add.append("intencion:compra")
+            if perfumes_asked:
+                tags_add.append("catalogo:consultado")
+            if payment_status:
+                tags_add.append(f"pago:{payment_status.lower()}")
+            if support_status:
+                tags_add.append(f"soporte:{support_status.lower()}")
+            if city:
+                tags_add.append("perfil:ciudad_confirmada")
+            tags = _merge_tags(existing.get("tags", "") or "", tags_add)
+
+            summary_lines: List[str] = []
+            if intent_current:
+                line = f"Intento: {intent_current}"
+                if intent_stage:
+                    line += f" ({intent_stage})"
+                summary_lines.append(line)
+            if perfumes_asked:
+                summary_lines.append("Perfumes consultados: " + ", ".join(perfumes_asked[:4]))
+            elif product_query:
+                summary_lines.append(f"Búsqueda comercial: {product_query}")
+
+            pref_bits: List[str] = []
+            if preferences.get("gender"):
+                pref_bits.append(str(preferences.get("gender")))
+            if preferences.get("gift"):
+                pref_bits.append("regalo")
+            if preferences.get("budget"):
+                pref_bits.append(f"presupuesto {preferences.get('budget')}")
+            fam_bits = [str(x) for x in (preferences.get("family") or []) if _clean(str(x))]
+            if fam_bits:
+                pref_bits.append("notas " + ", ".join(fam_bits[:4]))
+            occ_bits = [str(x) for x in (preferences.get("occasion") or []) if _clean(str(x))]
+            if occ_bits:
+                pref_bits.append("ocasión " + ", ".join(occ_bits[:3]))
+            if pref_bits:
+                summary_lines.append("Preferencias: " + " | ".join(pref_bits))
+
+            if payment_status:
+                pay_line = f"Pago: {payment_status}"
+                if payment_amount:
+                    pay_line += f" | monto {payment_amount} {payment_currency}".strip()
+                if payment_reference:
+                    pay_line += f" | ref {payment_reference}"
+                summary_lines.append(pay_line)
+
+            if support_status:
+                summary_lines.append(f"Soporte: {support_status}")
+
+            if city:
+                summary_lines.append(f"Ciudad: {city}")
+
+            summary_text = "\n".join(summary_lines).strip()
+            ai_memory = {
+                "intent_current": intent_current,
+                "intent_stage": intent_stage,
+                "product_query": product_query,
+                "perfumes_asked": perfumes_asked,
+                "preferences": preferences,
+                "payment_status": payment_status,
+                "payment_reference": payment_reference,
+                "payment_amount": payment_amount,
+                "payment_currency": payment_currency,
+                "support_status": support_status,
+                "interest_summary": generated_interest,
+                "summary": summary_text,
+                "first_name": first_name,
+                "last_name": last_name,
+                "city": city,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+            merged_meta = _merge_meta_dict(crm_meta, {"ai_memory": ai_memory})
+
+            conn.execute(
+                text(
+                    """
+                UPDATE conversations
+                SET
+                    updated_at = :updated_at,
+                    first_name = :first_name,
+                    last_name = :last_name,
+                    city = :city,
+                    interests = :interests,
+                    tags = :tags,
+                    crm_meta = CAST(:crm_meta AS jsonb)
+                WHERE phone = :phone
+            """
+                ),
+                {
+                    "phone": phone,
+                    "updated_at": datetime.utcnow(),
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "city": city,
+                    "interests": interests,
+                    "tags": tags,
+                    "crm_meta": json.dumps(merged_meta, ensure_ascii=False),
+                },
+            )
+    except Exception:
+        return
+
+
+# =========================================================
 # ✅ Last-product resolver (prefer conversations memory)
 # =========================================================
 

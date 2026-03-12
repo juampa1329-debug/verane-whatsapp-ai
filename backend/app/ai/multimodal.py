@@ -184,16 +184,18 @@ def _build_prompt(kind: str) -> str:
         )
     if kind == "document":
         return (
-            "Extrae o resume el contenido del documento. "
-            "Si tiene texto legible, transcríbelo. "
-            "Si es una imagen o foto dentro del documento, descríbela. "
-            "Devuelve SOLO el texto útil, sin explicaciones."
+            "Extrae SOLO el texto útil y los datos visibles del documento. "
+            "Prioriza nombres de producto, marca, variante, tamaño, precio, referencias y números. "
+            "Si es un comprobante, prioriza monto, banco, referencia, fecha y titular. "
+            "No describas colores, fondos ni composición. "
+            "Si no hay texto legible, devuelve SOLO: SIN_TEXTO_LEGIBLE."
         )
     # image
     return (
-        "Describe la imagen con detalle útil para un asesor comercial. "
-        "Si hay texto visible (nombre del producto, etiqueta, precio, caja), extráelo. "
-        "Devuelve SOLO: (1) descripción corta. (2) texto visible si existe."
+        "Extrae SOLO datos comerciales visibles de la imagen. "
+        "Prioriza nombre del perfume, marca, variante, tamaño, precio, banco, referencia o cualquier texto legible. "
+        "No describas colores, fondo, manos, poses ni escena. "
+        "Si no hay texto legible, devuelve SOLO: SIN_TEXTO_LEGIBLE."
     )
 
 
@@ -432,6 +434,8 @@ async def extract_text_from_media(
     text_out, gen_meta = await gemini_generate_text_inline(kind=kind, media_bytes=use_bytes, mime_type=use_mime)
     meta["stages"]["gemini"] = gen_meta
     text_out = (text_out or "").strip()
+    if text_out.upper() == "SIN_TEXTO_LEGIBLE":
+        text_out = ""
 
     meta["ok"] = bool(text_out)
     meta["extracted_len"] = int(len(text_out))

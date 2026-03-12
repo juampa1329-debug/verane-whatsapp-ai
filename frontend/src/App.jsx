@@ -246,6 +246,13 @@ const CustomerCardCRM = ({ phone, takeover }) => {
     first_name: "", last_name: "", city: "", customer_type: "",
     interests: "", tags: "", notes: ""
   });
+  const [memory, setMemory] = useState({
+    memory_summary: "",
+    intent_current: "",
+    intent_stage: "",
+    payment_status: "",
+    payment_reference: "",
+  });
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
@@ -263,6 +270,13 @@ const CustomerCardCRM = ({ phone, takeover }) => {
         interests: data.interests || "",
         tags: data.tags || "",
         notes: data.notes || "",
+      });
+      setMemory({
+        memory_summary: data.memory_summary || "",
+        intent_current: data.intent_current || "",
+        intent_stage: data.intent_stage || "",
+        payment_status: data.payment_status || "",
+        payment_reference: data.payment_reference || "",
       });
       setDirty(false);
       setStatus("");
@@ -318,6 +332,37 @@ const CustomerCardCRM = ({ phone, takeover }) => {
             </span>
           </div>
         </div>
+
+        {(memory.memory_summary || memory.intent_current || memory.payment_status) && (
+          <>
+            <div className="crm-card-info">
+              <div className="crm-row">
+                <span className="crm-label">Intento IA</span>
+                <span className="crm-value mono">{memory.intent_current || "-"}</span>
+              </div>
+              <div className="crm-row">
+                <span className="crm-label">Etapa</span>
+                <span className="crm-value mono">{memory.intent_stage || "-"}</span>
+              </div>
+              <div className="crm-row">
+                <span className="crm-label">Pago</span>
+                <span className="crm-value mono">{memory.payment_status || memory.payment_reference || "-"}</span>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Resumen IA / Memoria</label>
+              <textarea
+                className="notes-area"
+                value={memory.memory_summary}
+                readOnly
+                placeholder="La IA irá recapitulando aquí intención, perfumes consultados, estado de pago y contexto del cliente."
+              />
+            </div>
+
+            <div className="separator" />
+          </>
+        )}
 
         <div className="form-group-row">
           <div className="form-group">

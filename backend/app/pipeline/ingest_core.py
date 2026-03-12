@@ -14,6 +14,7 @@ from sqlalchemy import text
 from app.db import engine
 
 # IA
+from app.ai.conversation_reconstructor import reconstruct_conversation_state
 from app.ai.engine import process_message
 from app.ai.context_builder import build_ai_meta
 
@@ -297,6 +298,15 @@ _WC_KEYWORDS = {
     "stock", "disponible", "disponibilidad", "promoción", "promocion",
     "catálogo", "catalogo", "recomienda", "recomendación", "recomendacion",
     "para hombre", "para mujer", "unisex", "dulce", "amaderado", "cítrico", "citrico",
+    "regalo", "novio", "novia", "esposo", "esposa", "pareja",
+    "dior", "versace", "armani", "azzaro", "rabanne", "carolina herrera",
+    "sauvage", "eros", "invictus", "one million", "212", "bleu de chanel",
+    "50ml", "100ml", "200ml", "foto real", "mándame", "mandame",
+}
+
+_COMMERCE_ACKS = {
+    "si", "sí", "ok", "dale", "listo", "perfecto", "vale", "bien",
+    "lo quiero", "me interesa", "pasame el link", "pásame el link",
 }
 
 
@@ -326,6 +336,43 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
             return True, f"keyword:{kw}"
 
     return False, "no_intent"
+
+
+def _conversation_state_requires_woo(conv_state: dict) -> tuple[bool, str]:
+    intent = str((conv_state or {}).get("intent_current") or "").strip().upper()
+    if intent in {
+        "PHOTO_REQUEST",
+        "BUY_FLOW",
+        "VARIANT_SELECTION",
+        "PRICE_STOCK",
+        "PRODUCT_SEARCH",
+        "PREFERENCE_RECO",
+    }:
+        return True, f"conversation_state:{intent.lower()}"
+    return False, "conversation_state:general"
+
+
+def _build_wc_router_text(user_text: str, conv_state: dict) -> str:
+    current = (user_text or "").strip()
+    query = str((conv_state or {}).get("intent_product_query") or "").strip()
+    if not query:
+        return current
+
+    current_norm = _norm_text(current)
+    if (not current) or current_norm in _COMMERCE_ACKS:
+        return query
+
+    generic_followup = any(x in current_norm for x in (
+        "precio", "cuanto", "cuánto", "stock", "disponible", "vale",
+        "quiero", "comprar", "link", "carrito", "pedido",
+        "50ml", "100ml", "200ml", "grande", "pequeño", "pequeno", "tamaño", "tamano",
+        "presentacion", "presentación",
+    ))
+    query_already_present = _norm_text(query) in current_norm
+    if generic_followup and not query_already_present:
+        return f"{query} {current}".strip()
+
+    return current
 
 
 # =========================================================
@@ -565,6 +612,8 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
             # Variable clave para forzar que WooCommerce atienda este mensaje
             force_woo_search = False
+            vision_obj: dict = {}
+            receipt_detected = False
 
             # ✅ Multimodal: si no hay texto y llega audio/imagen/doc
             if (not user_text) and msg_type in ("audio", "image", "document") and msg.media_id:
@@ -579,7 +628,6 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     "stages": {}
                 }
 
-                vision_obj: dict = {}
                 vision_meta: dict = {}
                 extracted = ""
                 mm_meta: dict = {}
@@ -623,6 +671,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
 
                             # Si es receipt -> CRM inmediato + extracted resumen
                             if isinstance(vision_obj, dict) and (vision_obj.get("type") == "receipt"):
+                                receipt_detected = True
                                 rcp = vision_obj.get("receipt") or {}
                                 amount = rcp.get("amount")
                                 currency = rcp.get("currency")
@@ -648,7 +697,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                                 try:
                                     update_crm_fields(
                                         msg.phone,
-                                        tags_add=["pago:comprobante_recibido"],
+                                        tags_add=["pago:comprobante_recibido", "pago:pendiente_validacion"],
                                         notes_append=extracted,
                                     )
                                 except Exception:
@@ -736,6 +785,77 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 if st_now.startswith("wc_") or st_now.startswith("wc_state") or st_now.startswith("wc_await"):
                     _clear_ai_state(msg.phone)
 
+            conversation_state = reconstruct_conversation_state(
+                phone=msg.phone,
+                current_text=user_text,
+                msg_type=msg_type,
+                vision_obj=vision_obj if isinstance(vision_obj, dict) else None,
+                limit=30,
+            )
+            _log(
+                trace_id,
+                "CONVERSATION_STATE",
+                intent=conversation_state.get("intent_current"),
+                stage=conversation_state.get("intent_stage"),
+                query=(conversation_state.get("intent_product_query") or "")[:120],
+                force_woo=bool(conversation_state.get("force_woo")),
+            )
+
+            if str(conversation_state.get("intent_current") or "").upper() == "PAYMENT_PROOF":
+                if receipt_detected:
+                    amount = (conversation_state.get("payment_amount") or "").strip()
+                    currency = (conversation_state.get("payment_currency") or "").strip()
+                    reference = (conversation_state.get("payment_reference") or "").strip()
+                    reply_lines = ["Recibí tu comprobante y ya quedó registrado para validación."]
+                    if amount:
+                        reply_lines.append(f"Monto detectado: {amount} {currency}".strip())
+                    if reference:
+                        reply_lines.append(f"Referencia detectada: {reference}")
+                    reply_lines.append("En cuanto se valide el pago te confirmamos por este mismo chat.")
+                    payment_reply = "\n".join(reply_lines)
+                else:
+                    update_crm_fields(
+                        msg.phone,
+                        tags_add=["pago:pendiente_comprobante"],
+                        notes_append="Cliente indicó intención de pago; falta recibir comprobante.",
+                    )
+                    payment_reply = (
+                        "Perfecto. Envíame por favor la foto o PDF del comprobante para registrarlo y validar el pago."
+                    )
+
+                send_result = await send_ai_reply_in_chunks(msg.phone, payment_reply)
+                return {
+                    "saved": True,
+                    "sent": bool(send_result.get("sent")),
+                    "ai": False,
+                    "payment": True,
+                    "reason": "payment_flow_handled",
+                    "wa_last": send_result.get("last_wa") or {},
+                }
+
+            if str(conversation_state.get("intent_current") or "").upper() == "SUPPORT":
+                update_crm_fields(
+                    msg.phone,
+                    tags_add=["soporte:reclamo", "estado:revision"],
+                    notes_append="Cliente reporta novedad/reclamo en pedido o producto.",
+                )
+                support_reply = (
+                    "Lo revisamos de una.\n\n"
+                    "Cuéntame por favor qué pasó exactamente y, si puedes, envíame:\n"
+                    "1) número de pedido o nombre del perfume\n"
+                    "2) foto del producto o del problema\n"
+                    "3) qué solución esperas: cambio, revisión o ayuda con el pedido"
+                )
+                send_result = await send_ai_reply_in_chunks(msg.phone, support_reply)
+                return {
+                    "saved": True,
+                    "sent": bool(send_result.get("sent")),
+                    "ai": False,
+                    "support": True,
+                    "reason": "support_flow_handled",
+                    "wa_last": send_result.get("last_wa") or {},
+                }
+
             # =========================================================
             # ✅ si el usuario pide "envíame la foto" -> reenviar tarjeta
             # =========================================================
@@ -790,25 +910,54 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     "wa_last": send_result.get("last_wa") or {},
                 }
 
+            if str(conversation_state.get("intent_current") or "").upper() == "BUY_FLOW":
+                last_pid = int(conversation_state.get("last_product_id") or 0)
+                if last_pid > 0:
+                    try:
+                        wa = await wc_send_product(phone=msg.phone, product_id=last_pid, custom_caption="")
+                    except Exception as e:
+                        wa = {"sent": False, "reason": "wc_send_exception", "error": str(e)[:900]}
+
+                    buy_reply = (
+                        "Perfecto. Ya te reenvié el producto para cerrar el pedido.\n\n"
+                        "Compárteme por favor nombre completo, dirección, ciudad y método de pago, "
+                        "o si prefieres te envío el link de pago."
+                    )
+                    send_result = await send_ai_reply_in_chunks(msg.phone, buy_reply)
+                    return {
+                        "saved": True,
+                        "sent": bool(send_result.get("sent")) or bool(wa.get("sent")),
+                        "ai": False,
+                        "woo": True,
+                        "reason": "buy_flow_last_product",
+                        "product_id": last_pid,
+                        "wa": wa,
+                        "wa_last": send_result.get("last_wa") or {},
+                    }
+
             # =========================================================
             # WooCommerce assistant (OBLIGATORIO para imágenes de perfume)
             # =========================================================
-            if wc_enabled() and (user_text or force_woo_search):
+            if wc_enabled() and (user_text or force_woo_search or conversation_state.get("force_woo")):
                 if force_woo_search:
                     should_wc = True
                     reason_wc = "vision_detected_perfume"
                 else:
-                    should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
+                    should_wc, reason_wc = _conversation_state_requires_woo(conversation_state)
+                    if not should_wc:
+                        should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
 
                 _log(trace_id, "ROUTER_WC_DECISION", should_wc=should_wc, reason=reason_wc)
 
                 if should_wc:
+                    wc_user_text = _build_wc_router_text(user_text, conversation_state)
+
                     async def _send_product_and_cleanup(phone: str, product_id: int, caption: str = "") -> dict:
                         return await wc_send_product(phone=phone, product_id=product_id, custom_caption=caption)
 
                     wc_result = await handle_wc_if_applicable(
                         phone=msg.phone,
-                        user_text=user_text,
+                        user_text=wc_user_text,
                         msg_type="text",
                         get_state=_get_ai_state,
                         set_state=_set_ai_state,

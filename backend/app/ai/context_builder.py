@@ -115,7 +115,13 @@ def _get_crm(phone: str) -> Dict[str, Any]:
                 COALESCE(tags,'') AS tags,
                 COALESCE(notes,'') AS notes,
                 COALESCE(ai_state,'') AS ai_state,
-                COALESCE(takeover, FALSE) AS takeover
+                COALESCE(takeover, FALSE) AS takeover,
+                COALESCE(intent_current,'') AS intent_current,
+                COALESCE(intent_stage,'') AS intent_stage,
+                COALESCE(intent_product_query,'') AS intent_product_query,
+                COALESCE(payment_status,'') AS payment_status,
+                COALESCE(payment_reference,'') AS payment_reference,
+                COALESCE(crm_meta, '{}'::jsonb) AS crm_meta
             FROM conversations
             WHERE phone = :phone
         """), {"phone": phone}).mappings().first()
@@ -131,11 +137,17 @@ def _get_crm(phone: str) -> Dict[str, Any]:
             "notes": "",
             "ai_state": "",
             "takeover": False,
+            "intent_current": "",
+            "intent_stage": "",
+            "intent_product_query": "",
+            "payment_status": "",
+            "payment_reference": "",
+            "crm_meta": {},
         }
     return dict(r)
 
 
-def _get_recent_messages(phone: str, limit: int = 14) -> List[Dict[str, Any]]:
+def _get_recent_messages(phone: str, limit: int = 30) -> List[Dict[str, Any]]:
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT direction, msg_type, text, created_at
@@ -300,8 +312,8 @@ def build_ai_meta(
     phone: str,
     user_text: str,
     *,
-    history_limit: int = 14,
-    history_max_chars: int = 2200,
+    history_limit: int = 30,
+    history_max_chars: int = 3200,
     kb_max_chars: int = 3500,
     history_msg_max_len: int = 320,
 ) -> Dict[str, Any]:
@@ -367,6 +379,14 @@ def build_ai_meta(
         crm_lines.append(f"Notas: {notes}")
 
     ai_state = _clean_text(crm.get("ai_state") or "")
+    intent_current = _clean_text(crm.get("intent_current") or "")
+    intent_stage = _clean_text(crm.get("intent_stage") or "")
+    intent_product_query = _clean_text(crm.get("intent_product_query") or "")
+    payment_status = _clean_text(crm.get("payment_status") or "")
+    payment_reference = _clean_text(crm.get("payment_reference") or "")
+    crm_meta = crm.get("crm_meta") if isinstance(crm.get("crm_meta"), dict) else {}
+    ai_memory = crm_meta.get("ai_memory") if isinstance(crm_meta, dict) else {}
+    ai_memory_summary = _clean_text((ai_memory or {}).get("summary") or "")
 
     # ✅ IMPORTANTE:
     # Evitar que la IA “vea” estados internos tipo wc_await (solo lo marcamos en flags)
@@ -374,6 +394,18 @@ def build_ai_meta(
 
     if ai_state and (not wc_awaiting_choice):
         crm_lines.append(f"AI_STATE: {ai_state}")
+    if intent_current:
+        crm_lines.append(f"Intento actual: {intent_current}")
+    if intent_stage:
+        crm_lines.append(f"Etapa comercial: {intent_stage}")
+    if intent_product_query:
+        crm_lines.append(f"Busqueda comercial: {intent_product_query}")
+    if payment_status:
+        crm_lines.append(f"Estado pago: {payment_status}")
+    if payment_reference:
+        crm_lines.append(f"Referencia pago: {payment_reference}")
+    if ai_memory_summary:
+        crm_lines.append(f"Resumen IA:\n{ai_memory_summary}")
 
     # KB context (solo si el usuario dijo algo)
     kb_ctx = ""
@@ -403,6 +435,10 @@ def build_ai_meta(
         "has_kb": bool(kb_ctx),
         "has_history": bool(history_block),
         "wc_awaiting_choice": wc_awaiting_choice,
+        "intent_current": intent_current,
+        "intent_stage": intent_stage,
+        "payment_status": payment_status,
+        "has_ai_memory": bool(ai_memory_summary),
     }
 
     if context:

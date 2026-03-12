@@ -309,6 +309,26 @@ _COMMERCE_ACKS = {
 }
 
 
+_SOCIAL_OPENING_WORDS = (
+    "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+    "como vas", "como estas", "que tal", "con quien tengo el gusto",
+    "con quien hablo", "como te llamas", "quien eres", "quien me atiende",
+)
+
+
+def _is_social_opening(user_text: str) -> bool:
+    t = _norm_text(user_text)
+    if not t:
+        return False
+    if not any(x in t for x in _SOCIAL_OPENING_WORDS):
+        return False
+    if any(kw in t for kw in _WC_KEYWORDS):
+        return False
+    if re.search(r"\b\d{2,3}\s*ml\b", t):
+        return False
+    return True
+
+
 def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     """
     Evita el loop: solo llamamos Woo si realmente aplica.
@@ -316,13 +336,15 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     - Si el texto tiene señales de intención de compra/búsqueda -> True
     - Si el usuario manda un número y hay wc_last_options recientes -> True ✅
     """
-    st = (_get_ai_state(phone) or "").strip().lower()
-    if st.startswith("wc_") or st.startswith("wc:") or st.startswith("wc_state") or st.startswith("wc_await"):
-        return True, "state_active"
-
     t = (user_text or "").strip().lower()
     if not t:
         return False, "empty_text"
+    if _is_social_opening(user_text):
+        return False, "social_opening"
+
+    st = (_get_ai_state(phone) or "").strip().lower()
+    if st.startswith("wc_") or st.startswith("wc:") or st.startswith("wc_state") or st.startswith("wc_await"):
+        return True, "state_active"
 
     # ✅ Selección por número si hay “memoria” reciente de opciones
     if t.isdigit():
@@ -337,7 +359,10 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     return False, "no_intent"
 
 
-def _conversation_state_requires_woo(conv_state: dict) -> tuple[bool, str]:
+def _conversation_state_requires_woo(conv_state: dict, user_text: str = "") -> tuple[bool, str]:
+    if _is_social_opening(user_text):
+        return False, "conversation_state:social_opening"
+
     if bool((conv_state or {}).get("force_woo")):
         return True, f"conversation_state:{str((conv_state or {}).get('intent_current') or '').strip().lower()}"
 
@@ -944,7 +969,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     should_wc = True
                     reason_wc = "vision_detected_perfume"
                 else:
-                    should_wc, reason_wc = _conversation_state_requires_woo(conversation_state)
+                    should_wc, reason_wc = _conversation_state_requires_woo(conversation_state, user_text)
                     if not should_wc:
                         should_wc, reason_wc = _should_call_wc_assistant(msg.phone, user_text)
 

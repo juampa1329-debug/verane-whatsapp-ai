@@ -162,6 +162,32 @@ def _is_exit_command(text: str) -> bool:
     ])
 
 
+_SOCIAL_OPENING_WORDS = (
+    "hola", "buenas", "buenos dias", "buenas tardes", "buenas noches",
+    "como vas", "como estas", "que tal", "con quien tengo el gusto",
+    "con quien hablo", "como te llamas", "quien eres", "quien me atiende",
+)
+_SOCIAL_COMMERCE_HINTS = (
+    "perfume", "perfumes", "colonia", "fragancia", "fragancias",
+    "precio", "vale", "cuanto", "stock", "disponible", "disponibilidad",
+    "recomienda", "recomendacion", "comprar", "carrito", "pedido",
+    "hombre", "mujer", "unisex", "marca", "foto", "imagen", "ml",
+)
+
+
+def _is_social_opening(text: str) -> bool:
+    t = _norm(text)
+    if not t:
+        return False
+    if not any(x in t for x in _SOCIAL_OPENING_WORDS):
+        return False
+    if looks_like_product_question(text):
+        return False
+    if re.search(r"\b\d{2,3}\s*ml\b", t):
+        return False
+    return not any(x in t for x in _SOCIAL_COMMERCE_HINTS)
+
+
 # -------------------------
 # Intent: request photo/image (hard rules)
 # -------------------------
@@ -313,6 +339,8 @@ def _has_enough_profile_for_recommendation(slots: dict) -> bool:
 def _looks_like_specific_product_search(text: str) -> bool:
     t = _norm(text)
     if not t:
+        return False
+    if _is_social_opening(text):
         return False
     if looks_like_product_question(text):
         return True
@@ -639,6 +667,8 @@ async def handle_wc_if_applicable(
     text = _clean_text(user_text)
     if not text:
         return {"handled": False}
+    if _is_social_opening(text):
+        return {"handled": False, "reason": "social_opening"}
 
     if _is_exit_command(text):
         clear_state(phone)

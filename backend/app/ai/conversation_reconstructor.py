@@ -319,7 +319,11 @@ def _extract_preferences(messages: List[str]) -> Dict[str, Any]:
     return prefs
 
 
-def _extract_product_query(messages: List[str], vision_obj: Dict[str, Any] | None) -> str:
+def _extract_product_query(
+    messages: List[str],
+    vision_obj: Dict[str, Any] | None,
+    current_text: str = "",
+) -> str:
     if isinstance(vision_obj, dict) and (vision_obj.get("type") == "perfume"):
         search_text = _clean_visible_text(vision_obj.get("search_text") or "")
         if search_text:
@@ -338,7 +342,13 @@ def _extract_product_query(messages: List[str], vision_obj: Dict[str, Any] | Non
             if query:
                 return _normalize_product_aliases(query)
 
-    for msg in reversed(messages):
+    latest = _clean_visible_text(current_text) or (messages[-1] if messages else "")
+    allow_history = _should_reuse_previous_query(latest, messages)
+
+    for idx, msg in enumerate(reversed(messages)):
+        if idx > 0 and not allow_history:
+            break
+
         raw = _clean_visible_text(msg)
         low = _norm(raw)
         if not raw or _is_tiny_ack(raw):
@@ -378,11 +388,12 @@ def _infer_intent(
     vision_obj: Dict[str, Any] | None,
 ) -> tuple[str, float, str]:
     latest_text = _clean_visible_text(current_text) or (messages[-1] if messages else "")
-    norm_latest = _norm(latest_text)
     joined_recent = " || ".join(_norm(x) for x in messages[-6:])
-    recent_has_commerce = any(_has_commercial_signal(x) for x in messages[-4:])
+    current_has_commerce = _has_commercial_signal(latest_text) or _contains_any(latest_text, _COMMERCIAL_FOLLOWUP_WORDS)
 
-    if _is_greeting_or_onboarding(latest_text) and not recent_has_commerce:
+    # Si el mensaje actual es saludo/social, priorizamos modo asesor conversacional
+    # para no arrastrar intencion comercial vieja de mensajes anteriores.
+    if _is_greeting_or_onboarding(latest_text) and not current_has_commerce:
         return "ONBOARDING", 0.92, "discovery"
 
     if isinstance(vision_obj, dict) and vision_obj.get("type") == "receipt":
@@ -569,7 +580,7 @@ def reconstruct_conversation_state(
     prefs = _extract_preferences(user_messages)
     profile = _extract_profile(user_messages)
     perfumes_asked = _extract_perfumes_asked(user_messages, vision_obj)
-    product_query = _extract_product_query(user_messages, vision_obj)
+    product_query = _extract_product_query(user_messages, vision_obj, current_clean)
     if (not product_query) and _should_reuse_previous_query(current_clean, user_messages):
         product_query = _clean_visible_text(conv.get("intent_product_query") or "")
     if product_query and product_query not in perfumes_asked:

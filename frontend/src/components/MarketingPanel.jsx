@@ -1,0 +1,588 @@
+﻿import React, { useEffect, useMemo, useState } from "react";
+
+const box = {
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 12,
+  background: "rgba(255,255,255,0.02)",
+  padding: 12,
+};
+
+const input = {
+  width: "100%",
+  padding: "8px 10px",
+  borderRadius: 8,
+  border: "1px solid rgba(255,255,255,0.18)",
+  background: "transparent",
+  color: "inherit",
+};
+
+const smallBtn = {
+  padding: "7px 10px",
+  borderRadius: 8,
+  border: "1px solid rgba(255,255,255,0.16)",
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+};
+
+function parseJsonSafe(raw, fallback = {}) {
+  const txt = String(raw || "").trim();
+  if (!txt) return fallback;
+  try {
+    const j = JSON.parse(txt);
+    return j && typeof j === "object" ? j : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function fmtDt(v) {
+  if (!v) return "-";
+  try {
+    return new Date(v).toLocaleString();
+  } catch {
+    return String(v);
+  }
+}
+
+export default function MarketingPanel({ apiBase }) {
+  const API = (apiBase || "").replace(/\/$/, "");
+
+  const [tab, setTab] = useState("templates");
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+
+  const [templates, setTemplates] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [triggers, setTriggers] = useState([]);
+  const [flows, setFlows] = useState([]);
+  const [segments, setSegments] = useState([]);
+  const [steps, setSteps] = useState([]);
+  const [engineInfo, setEngineInfo] = useState(null);
+
+  const [selectedFlowId, setSelectedFlowId] = useState(null);
+
+  const [templateForm, setTemplateForm] = useState({
+    name: "",
+    category: "general",
+    body: "",
+    variables: "nombre,producto",
+    status: "draft",
+  });
+
+  const [campaignForm, setCampaignForm] = useState({
+    name: "",
+    objective: "",
+    segment_id: "",
+    template_id: "",
+    scheduled_at: "",
+  });
+
+  const [triggerForm, setTriggerForm] = useState({
+    name: "",
+    event_type: "message_in",
+    cooldown_minutes: 60,
+    is_active: true,
+    conditions_json: '{"contains": "hola"}',
+    action_json: '{"type": "template", "template_id": 1}',
+  });
+
+  const [flowForm, setFlowForm] = useState({
+    name: "",
+    is_active: false,
+    entry_rules_json: '{"intent": "BUY_FLOW"}',
+    exit_rules_json: '{"payment_status": "paid"}',
+  });
+
+  const [stepForm, setStepForm] = useState({
+    step_order: 1,
+    wait_minutes: 60,
+    template_id: "",
+  });
+
+  const selectedFlow = useMemo(
+    () => flows.find((f) => f.id === selectedFlowId) || null,
+    [flows, selectedFlowId]
+  );
+
+  const setTempStatus = (txt) => {
+    setStatus(txt);
+    setTimeout(() => setStatus(""), 2200);
+  };
+
+  const loadTemplates = async () => {
+    const r = await fetch(`${API}/api/templates`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error templates");
+    setTemplates(Array.isArray(d?.templates) ? d.templates : []);
+  };
+
+  const loadCampaigns = async () => {
+    const r = await fetch(`${API}/api/campaigns`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error campaigns");
+    setCampaigns(Array.isArray(d?.campaigns) ? d.campaigns : []);
+  };
+
+  const loadTriggers = async () => {
+    const r = await fetch(`${API}/api/triggers`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error triggers");
+    setTriggers(Array.isArray(d?.triggers) ? d.triggers : []);
+  };
+
+  const loadFlows = async () => {
+    const r = await fetch(`${API}/api/remarketing/flows`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error flows");
+    const rows = Array.isArray(d?.flows) ? d.flows : [];
+    setFlows(rows);
+    if (!selectedFlowId && rows[0]?.id) {
+      setSelectedFlowId(rows[0].id);
+    } else if (selectedFlowId && !rows.some((x) => x.id === selectedFlowId)) {
+      setSelectedFlowId(rows[0]?.id || null);
+    }
+  };
+
+  const loadSegments = async () => {
+    const r = await fetch(`${API}/api/customers/segments?active=all`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error segments");
+    setSegments(Array.isArray(d?.segments) ? d.segments : []);
+  };
+
+  const loadEngineStatus = async () => {
+    const r = await fetch(`${API}/api/campaigns/engine/status`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error engine status");
+    setEngineInfo(d || null);
+  };
+
+  const loadSteps = async (flowId) => {
+    if (!flowId) {
+      setSteps([]);
+      return;
+    }
+    const r = await fetch(`${API}/api/remarketing/flows/${encodeURIComponent(flowId)}/steps`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error steps");
+    setSteps(Array.isArray(d?.steps) ? d.steps : []);
+  };
+
+  const loadAll = async () => {
+    setError("");
+    try {
+      await Promise.all([loadTemplates(), loadCampaigns(), loadTriggers(), loadFlows(), loadSegments(), loadEngineStatus()]);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    loadSteps(selectedFlowId).catch((e) => setError(String(e.message || e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFlowId]);
+
+  const createTemplate = async () => {
+    setError("");
+    try {
+      const payload = {
+        name: templateForm.name.trim(),
+        category: templateForm.category.trim() || "general",
+        body: templateForm.body,
+        variables_json: (templateForm.variables || "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+        status: templateForm.status || "draft",
+      };
+
+      const r = await fetch(`${API}/api/templates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo crear plantilla");
+      setTemplateForm((p) => ({ ...p, name: "", body: "" }));
+      await loadTemplates();
+      setTempStatus("Plantilla creada");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const createCampaign = async () => {
+    setError("");
+    try {
+      const payload = {
+        name: campaignForm.name.trim(),
+        objective: campaignForm.objective || "",
+        segment_id: campaignForm.segment_id ? Number(campaignForm.segment_id) : null,
+        template_id: campaignForm.template_id ? Number(campaignForm.template_id) : null,
+        scheduled_at: campaignForm.scheduled_at ? new Date(campaignForm.scheduled_at).toISOString() : null,
+        status: "draft",
+      };
+
+      const r = await fetch(`${API}/api/campaigns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo crear campaña");
+      setCampaignForm({ name: "", objective: "", segment_id: "", template_id: "", scheduled_at: "" });
+      await loadCampaigns();
+      setTempStatus("Campaña creada");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const launchCampaign = async (id) => {
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/campaigns/${encodeURIComponent(id)}/launch?max_recipients=300`, { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo lanzar campaña");
+      await loadCampaigns();
+      setTempStatus(`Campaña ${id} lanzada`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const tickEngineNow = async () => {
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/campaigns/engine/tick?batch_size=20&send_delay_ms=0`, { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo ejecutar motor");
+      await Promise.all([loadCampaigns(), loadEngineStatus()]);
+      setTempStatus(`Motor ejecutado: sent=${d?.sent ?? 0} failed=${d?.failed ?? 0}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const createTrigger = async () => {
+    setError("");
+    try {
+      const payload = {
+        name: triggerForm.name.trim(),
+        event_type: triggerForm.event_type,
+        cooldown_minutes: Number(triggerForm.cooldown_minutes || 0),
+        is_active: !!triggerForm.is_active,
+        conditions_json: parseJsonSafe(triggerForm.conditions_json, {}),
+        action_json: parseJsonSafe(triggerForm.action_json, {}),
+      };
+
+      const r = await fetch(`${API}/api/triggers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo crear trigger");
+      setTriggerForm((p) => ({ ...p, name: "" }));
+      await loadTriggers();
+      setTempStatus("Trigger creado");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const toggleTrigger = async (t) => {
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/triggers/${encodeURIComponent(t.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: !t.is_active }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo actualizar trigger");
+      await loadTriggers();
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const createFlow = async () => {
+    setError("");
+    try {
+      const payload = {
+        name: flowForm.name.trim(),
+        is_active: !!flowForm.is_active,
+        entry_rules_json: parseJsonSafe(flowForm.entry_rules_json, {}),
+        exit_rules_json: parseJsonSafe(flowForm.exit_rules_json, {}),
+      };
+
+      const r = await fetch(`${API}/api/remarketing/flows`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo crear flow");
+      setFlowForm((p) => ({ ...p, name: "" }));
+      await loadFlows();
+      setTempStatus("Flow creado");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const addStep = async () => {
+    if (!selectedFlowId) return;
+    setError("");
+    try {
+      const payload = {
+        step_order: Number(stepForm.step_order || 1),
+        wait_minutes: Number(stepForm.wait_minutes || 0),
+        template_id: stepForm.template_id ? Number(stepForm.template_id) : null,
+      };
+      const r = await fetch(`${API}/api/remarketing/flows/${encodeURIComponent(selectedFlowId)}/steps`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo crear paso");
+      await loadSteps(selectedFlowId);
+      setTempStatus("Paso agregado");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  return (
+    <div className="placeholder-view" style={{ alignItems: "stretch" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h2 style={{ margin: 0 }}>Marketing</h2>
+        <button onClick={loadAll} style={smallBtn}>Recargar</button>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {["templates", "campaigns", "triggers", "remarketing"].map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            style={{
+              ...smallBtn,
+              background: tab === k ? "rgba(255,255,255,0.16)" : "transparent",
+            }}
+          >
+            {k === "templates" ? "Plantillas" : k === "campaigns" ? "Campañas" : k === "triggers" ? "Triggers" : "Remarketing"}
+          </button>
+        ))}
+      </div>
+
+      {error ? <div style={{ color: "#ff7b7b", marginBottom: 8 }}>Error: {error}</div> : null}
+      {status ? <div style={{ color: "#9be15d", marginBottom: 8 }}>{status}</div> : null}
+
+      {tab === "templates" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Nueva plantilla</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              <input style={input} placeholder="Nombre" value={templateForm.name} onChange={(e) => setTemplateForm((p) => ({ ...p, name: e.target.value }))} />
+              <input style={input} placeholder="Categoría" value={templateForm.category} onChange={(e) => setTemplateForm((p) => ({ ...p, category: e.target.value }))} />
+              <input style={input} placeholder="Variables (coma)" value={templateForm.variables} onChange={(e) => setTemplateForm((p) => ({ ...p, variables: e.target.value }))} />
+              <select style={input} value={templateForm.status} onChange={(e) => setTemplateForm((p) => ({ ...p, status: e.target.value }))}>
+                <option value="draft">draft</option>
+                <option value="approved">approved</option>
+                <option value="archived">archived</option>
+              </select>
+              <textarea style={{ ...input, minHeight: 140 }} placeholder="Cuerpo con variables {{nombre}}" value={templateForm.body} onChange={(e) => setTemplateForm((p) => ({ ...p, body: e.target.value }))} />
+              <button onClick={createTemplate} style={smallBtn}>Crear plantilla</button>
+            </div>
+          </div>
+
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Plantillas</h3>
+            <div style={{ overflow: "auto", maxHeight: 520 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left" }}>
+                    <th>Nombre</th>
+                    <th>Categoría</th>
+                    <th>Status</th>
+                    <th>Variables</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map((t) => (
+                    <tr key={t.id}>
+                      <td>{t.name}</td>
+                      <td>{t.category}</td>
+                      <td>{t.status}</td>
+                      <td>{Array.isArray(t.variables_json) ? t.variables_json.join(", ") : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "campaigns" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Nueva campaña</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              <input style={input} placeholder="Nombre" value={campaignForm.name} onChange={(e) => setCampaignForm((p) => ({ ...p, name: e.target.value }))} />
+              <input style={input} placeholder="Objetivo" value={campaignForm.objective} onChange={(e) => setCampaignForm((p) => ({ ...p, objective: e.target.value }))} />
+              <select style={input} value={campaignForm.segment_id} onChange={(e) => setCampaignForm((p) => ({ ...p, segment_id: e.target.value }))}>
+                <option value="">Segmento (todos)</option>
+                {segments.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <select style={input} value={campaignForm.template_id} onChange={(e) => setCampaignForm((p) => ({ ...p, template_id: e.target.value }))}>
+                <option value="">Plantilla</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <input style={input} type="datetime-local" value={campaignForm.scheduled_at} onChange={(e) => setCampaignForm((p) => ({ ...p, scheduled_at: e.target.value }))} />
+              <button onClick={createCampaign} style={smallBtn}>Crear campaña</button>
+            </div>
+
+            <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10 }}>
+              <h4 style={{ margin: "0 0 8px" }}>Motor de campañas</h4>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+                Estado: {engineInfo?.running ? "running" : "stopped"} | Enabled: {String(engineInfo?.enabled ?? false)}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+                Intervalo: {engineInfo?.interval_sec ?? "-"}s | Batch: {engineInfo?.batch_size ?? "-"} | Delay: {engineInfo?.send_delay_ms ?? "-"}ms
+              </div>
+              <button onClick={tickEngineNow} style={smallBtn}>Procesar lote ahora</button>
+            </div>
+          </div>
+
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Campañas</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              {campaigns.map((c) => (
+                <div key={c.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{c.name}</div>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>
+                        {c.objective || "-"} | {c.status} | template: {c.template_name || "-"}
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.65 }}>Programada: {fmtDt(c.scheduled_at)}</div>
+                    </div>
+                    <button style={smallBtn} onClick={() => launchCampaign(c.id)}>Lanzar</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "triggers" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Nuevo trigger</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              <input style={input} placeholder="Nombre" value={triggerForm.name} onChange={(e) => setTriggerForm((p) => ({ ...p, name: e.target.value }))} />
+              <input style={input} placeholder="Evento (message_in, no_reply_24h...)" value={triggerForm.event_type} onChange={(e) => setTriggerForm((p) => ({ ...p, event_type: e.target.value }))} />
+              <input style={input} type="number" placeholder="Cooldown minutos" value={triggerForm.cooldown_minutes} onChange={(e) => setTriggerForm((p) => ({ ...p, cooldown_minutes: e.target.value }))} />
+              <textarea style={{ ...input, minHeight: 80 }} value={triggerForm.conditions_json} onChange={(e) => setTriggerForm((p) => ({ ...p, conditions_json: e.target.value }))} />
+              <textarea style={{ ...input, minHeight: 80 }} value={triggerForm.action_json} onChange={(e) => setTriggerForm((p) => ({ ...p, action_json: e.target.value }))} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={!!triggerForm.is_active} onChange={(e) => setTriggerForm((p) => ({ ...p, is_active: e.target.checked }))} />
+                Activo
+              </label>
+              <button onClick={createTrigger} style={smallBtn}>Crear trigger</button>
+            </div>
+          </div>
+
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Triggers</h3>
+            <div style={{ display: "grid", gap: 8 }}>
+              {triggers.map((t) => (
+                <div key={t.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{t.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.75 }}>{t.event_type} | cooldown {t.cooldown_minutes}m</div>
+                    <div style={{ fontSize: 11, opacity: 0.65 }}>Actualizado: {fmtDt(t.updated_at)}</div>
+                  </div>
+                  <button onClick={() => toggleTrigger(t)} style={smallBtn}>{t.is_active ? "Desactivar" : "Activar"}</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "remarketing" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={box}>
+              <h3 style={{ marginTop: 0 }}>Nuevo flow</h3>
+              <div style={{ display: "grid", gap: 8 }}>
+                <input style={input} placeholder="Nombre" value={flowForm.name} onChange={(e) => setFlowForm((p) => ({ ...p, name: e.target.value }))} />
+                <textarea style={{ ...input, minHeight: 70 }} value={flowForm.entry_rules_json} onChange={(e) => setFlowForm((p) => ({ ...p, entry_rules_json: e.target.value }))} />
+                <textarea style={{ ...input, minHeight: 70 }} value={flowForm.exit_rules_json} onChange={(e) => setFlowForm((p) => ({ ...p, exit_rules_json: e.target.value }))} />
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={!!flowForm.is_active} onChange={(e) => setFlowForm((p) => ({ ...p, is_active: e.target.checked }))} />
+                  Activo
+                </label>
+                <button onClick={createFlow} style={smallBtn}>Crear flow</button>
+              </div>
+            </div>
+
+            <div style={box}>
+              <h3 style={{ marginTop: 0 }}>Flows</h3>
+              <div style={{ display: "grid", gap: 6 }}>
+                {flows.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setSelectedFlowId(f.id)}
+                    style={{
+                      ...smallBtn,
+                      textAlign: "left",
+                      background: selectedFlowId === f.id ? "rgba(255,255,255,0.16)" : "transparent",
+                    }}
+                  >
+                    {f.name} ({f.steps_count || 0} pasos) {f.is_active ? "[activo]" : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={box}>
+            <h3 style={{ marginTop: 0 }}>Pasos del flow {selectedFlow ? `: ${selectedFlow.name}` : ""}</h3>
+
+            <div style={{ display: "grid", gridTemplateColumns: "120px 120px 1fr auto", gap: 8, marginBottom: 12 }}>
+              <input style={input} type="number" value={stepForm.step_order} onChange={(e) => setStepForm((p) => ({ ...p, step_order: e.target.value }))} placeholder="Orden" />
+              <input style={input} type="number" value={stepForm.wait_minutes} onChange={(e) => setStepForm((p) => ({ ...p, wait_minutes: e.target.value }))} placeholder="Wait min" />
+              <select style={input} value={stepForm.template_id} onChange={(e) => setStepForm((p) => ({ ...p, template_id: e.target.value }))}>
+                <option value="">Plantilla</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <button style={smallBtn} onClick={addStep} disabled={!selectedFlowId}>Agregar</button>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {steps.map((s) => (
+                <div key={s.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
+                  Paso {s.step_order} | Espera {s.wait_minutes} min | Plantilla: {s.template_name || s.template_id || "-"}
+                </div>
+              ))}
+              {selectedFlowId && steps.length === 0 ? <div style={{ opacity: 0.75 }}>Sin pasos todavía.</div> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+

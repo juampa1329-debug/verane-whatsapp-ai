@@ -476,12 +476,30 @@ def _update_status_in_db(status_obj: dict):
                     wa_ts_delivered = COALESCE(wa_ts_delivered, :dt)
                 WHERE wa_message_id = :wa_id
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+            conn.execute(text("""
+                UPDATE campaign_recipients
+                SET status = CASE
+                                WHEN LOWER(status) IN ('read', 'replied') THEN status
+                                ELSE 'delivered'
+                             END,
+                    delivered_at = COALESCE(delivered_at, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
         elif st == "read":
             conn.execute(text("""
                 UPDATE messages
                 SET wa_status='read',
                     wa_ts_read = COALESCE(wa_ts_read, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+            conn.execute(text("""
+                UPDATE campaign_recipients
+                SET status = CASE
+                                WHEN LOWER(status) = 'replied' THEN status
+                                ELSE 'read'
+                             END,
+                    read_at = COALESCE(read_at, :dt)
                 WHERE wa_message_id = :wa_id
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
 
@@ -492,6 +510,12 @@ def _update_status_in_db(status_obj: dict):
                     wa_error = :wa_error
                 WHERE wa_message_id = :wa_id
             """), {"wa_id": wa_id, "wa_error": wa_error or "failed"})
+            conn.execute(text("""
+                UPDATE campaign_recipients
+                SET status = 'failed',
+                    error = COALESCE(:wa_error, error)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "wa_error": wa_error or "failed"})
 
         elif st == "sent":
             conn.execute(text("""
@@ -500,6 +524,37 @@ def _update_status_in_db(status_obj: dict):
                     wa_ts_sent = COALESCE(wa_ts_sent, :dt)
                 WHERE wa_message_id = :wa_id
             """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+            conn.execute(text("""
+                UPDATE campaign_recipients
+                SET status = CASE
+                                WHEN LOWER(status) IN ('delivered', 'read', 'replied') THEN status
+                                ELSE 'sent'
+                             END,
+                    sent_at = COALESCE(sent_at, :dt)
+                WHERE wa_message_id = :wa_id
+            """), {"wa_id": wa_id, "dt": dt or datetime.utcnow()})
+
+
+def _mark_campaign_reply(phone: str) -> None:
+    phone = (phone or "").strip()
+    if not phone:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE campaign_recipients cr
+            SET status = 'replied',
+                replied_at = COALESCE(cr.replied_at, NOW())
+            WHERE cr.id = (
+                SELECT id
+                FROM campaign_recipients
+                WHERE phone = :phone
+                  AND LOWER(status) IN ('sent', 'delivered', 'read')
+                  AND COALESCE(sent_at, delivered_at, read_at, created_at) >= NOW() - INTERVAL '14 days'
+                ORDER BY COALESCE(read_at, delivered_at, sent_at, created_at) DESC
+                LIMIT 1
+            )
+        """), {"phone": phone})
 
 
 def _extract_incoming(m: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
@@ -648,6 +703,11 @@ async def whatsapp_receive(request: Request):
             phone = (m.get("from") or "").strip()
             if not phone:
                 continue
+
+            try:
+                _mark_campaign_reply(phone)
+            except Exception:
+                pass
 
             msg_type, text_msg, media_id, mime_type = _extract_incoming(m)
 

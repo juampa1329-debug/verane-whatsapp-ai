@@ -312,7 +312,7 @@ export default function MarketingPanel({ apiBase }) {
   };
 
   return (
-    <div className="placeholder-view" style={{ alignItems: "stretch" }}>
+    <div className="placeholder-view" style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>Marketing</h2>
         <button onClick={loadAll} style={smallBtn}>Recargar</button>

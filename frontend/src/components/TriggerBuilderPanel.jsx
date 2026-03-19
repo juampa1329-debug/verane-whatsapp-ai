@@ -1,11 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-
-const panel = {
-  border: "1px solid rgba(255,255,255,0.12)",
-  borderRadius: 12,
-  background: "rgba(255,255,255,0.02)",
-  padding: 12,
-};
+﻿import React, { useEffect, useMemo, useState } from "react";
+import "./TriggerBuilderPanel.css";
 
 const input = {
   width: "100%",
@@ -27,9 +21,63 @@ const smallBtn = {
 
 const dangerBtn = {
   ...smallBtn,
-  border: "1px solid rgba(255,120,120,0.5)",
-  color: "#ffb0b0",
+  border: "1px solid rgba(255,120,120,0.55)",
+  color: "#ffb7b7",
 };
+
+const fallbackTriggerTypes = [
+  { key: "none", label: "Ninguna" },
+  { key: "tag_changed", label: "Etiqueta cambiada" },
+  { key: "logic", label: "Logica" },
+  { key: "message_flow", label: "Flujo de mensajes" },
+  { key: "time", label: "Tiempo" },
+];
+
+const fallbackFlowEvents = [
+  { key: "received", label: "Recibido" },
+  { key: "sent", label: "Enviado" },
+  { key: "both", label: "Envian y reciben" },
+];
+
+const fallbackConditionTypes = [
+  { key: "last_message_sent", label: "Ultimo mensaje enviado" },
+  { key: "sent_count", label: "Cantidad de mensajes enviado" },
+  { key: "check_words", label: "Comprobar palabras" },
+  { key: "template_sent_status", label: "Comprobar plantilla si/no enviada" },
+  { key: "current_tag", label: "Etiqueta actual" },
+  { key: "schedule", label: "Comprobar horario" },
+];
+
+const fallbackActionTypes = [
+  { key: "send_template", label: "Enviar plantilla de mensaje" },
+  { key: "change_tag", label: "Cambiar etiqueta" },
+  { key: "configure_conversation", label: "Configurar conversacion" },
+  { key: "change_contact_status", label: "Cambiar estado contacto" },
+  { key: "notify_admins", label: "Enviar notificacion administradores" },
+  { key: "extract_conversation_info", label: "Extraer informacion conversacion" },
+  { key: "schedule_message", label: "Programar mensaje" },
+];
+
+const fallbackAssistantTypes = [
+  { key: "auto", label: "Auto" },
+  { key: "text", label: "Texto" },
+  { key: "audio", label: "Audio" },
+];
+
+const weekDays = [
+  { key: "mon", label: "Lun" },
+  { key: "tue", label: "Mar" },
+  { key: "wed", label: "Mie" },
+  { key: "thu", label: "Jue" },
+  { key: "fri", label: "Vie" },
+  { key: "sat", label: "Sab" },
+  { key: "sun", label: "Dom" },
+];
+
+const conditionMenuGroups = [
+  ["last_message_sent", "sent_count", "check_words"],
+  ["template_sent_status", "current_tag", "schedule"],
+];
 
 function blankTrigger() {
   return {
@@ -62,7 +110,7 @@ function blankCondition(type = "check_words") {
 
 function blankAction(type = "send_template") {
   if (type === "change_tag") return { type, mode: "add", tag: "" };
-  if (type === "configure_conversation") return { type, takeover: "keep", ai_state: "" };
+  if (type === "configure_conversation") return { type, takeover: "keep", ai_state: "", clear_ai_state: false };
   if (type === "change_contact_status") return { type, field: "customer_type", status: "" };
   if (type === "notify_admins") return { type, phones: "", message: "" };
   if (type === "extract_conversation_info") return { type, last_messages: 10 };
@@ -93,9 +141,7 @@ function cleanConditions(conditions) {
       if (!type) return null;
 
       if (type === "check_words") {
-        const words = Array.isArray(c.words)
-          ? c.words.map((w) => String(w || "").trim()).filter(Boolean)
-          : [];
+        const words = Array.isArray(c.words) ? c.words.map((w) => String(w || "").trim()).filter(Boolean) : [];
         return { type, mode: c.mode === "all" ? "all" : "any", words };
       }
       if (type === "template_sent_status") {
@@ -104,12 +150,8 @@ function cleanConditions(conditions) {
       if (type === "current_tag") {
         return { type, state: c.state === "not_has" ? "not_has" : "has", tag: String(c.tag || "").trim() };
       }
-      if (type === "last_message_sent") {
-        return { type, op: c.op || "gte", minutes: Number(c.minutes || 0) };
-      }
-      if (type === "sent_count") {
-        return { type, op: c.op || "gte", value: Number(c.value || 0), window_hours: Number(c.window_hours || 24) };
-      }
+      if (type === "last_message_sent") return { type, op: c.op || "gte", minutes: Number(c.minutes || 0) };
+      if (type === "sent_count") return { type, op: c.op || "gte", value: Number(c.value || 0), window_hours: Number(c.window_hours || 24) };
       if (type === "schedule") {
         const days = Array.isArray(c.days) ? c.days.map((d) => String(d || "").slice(0, 3).toLowerCase()) : [];
         return {
@@ -131,12 +173,8 @@ function cleanActions(actions) {
       const type = String(a?.type || "").trim().toLowerCase();
       if (!type) return null;
 
-      if (type === "send_template") {
-        return { type, template_id: a.template_id ? Number(a.template_id) : null };
-      }
-      if (type === "change_tag") {
-        return { type, mode: a.mode || "add", tag: String(a.tag || "").trim() };
-      }
+      if (type === "send_template") return { type, template_id: a.template_id ? Number(a.template_id) : null };
+      if (type === "change_tag") return { type, mode: a.mode || "add", tag: String(a.tag || "").trim() };
       if (type === "configure_conversation") {
         return {
           type,
@@ -145,32 +183,20 @@ function cleanActions(actions) {
           clear_ai_state: !!a.clear_ai_state,
         };
       }
-      if (type === "change_contact_status") {
-        return { type, field: a.field || "customer_type", status: String(a.status || "").trim() };
-      }
-      if (type === "notify_admins") {
-        return { type, phones: String(a.phones || "").trim(), message: String(a.message || "").trim() };
-      }
-      if (type === "extract_conversation_info") {
-        return { type, last_messages: Number(a.last_messages || 10) };
-      }
-      if (type === "schedule_message") {
-        return { type, template_id: a.template_id ? Number(a.template_id) : null, delay_minutes: Number(a.delay_minutes || 0) };
-      }
+      if (type === "change_contact_status") return { type, field: a.field || "customer_type", status: String(a.status || "").trim() };
+      if (type === "notify_admins") return { type, phones: String(a.phones || "").trim(), message: String(a.message || "").trim() };
+      if (type === "extract_conversation_info") return { type, last_messages: Number(a.last_messages || 10) };
+      if (type === "schedule_message") return { type, template_id: a.template_id ? Number(a.template_id) : null, delay_minutes: Number(a.delay_minutes || 0) };
       return a;
     })
     .filter(Boolean);
 }
 
-const weekDays = [
-  { key: "mon", label: "Lun" },
-  { key: "tue", label: "Mar" },
-  { key: "wed", label: "Mie" },
-  { key: "thu", label: "Jue" },
-  { key: "fri", label: "Vie" },
-  { key: "sat", label: "Sab" },
-  { key: "sun", label: "Dom" },
-];
+function findLabel(items, key, fallback = "") {
+  const row = (items || []).find((x) => String(x?.key || "") === String(key || ""));
+  if (row?.label) return row.label;
+  return fallback || String(key || "");
+}
 
 export default function TriggerBuilderPanel({
   apiBase,
@@ -187,10 +213,10 @@ export default function TriggerBuilderPanel({
   const [conditionMode, setConditionMode] = useState("all");
   const [conditions, setConditions] = useState([]);
   const [actions, setActions] = useState([]);
-  const [conditionDraft, setConditionDraft] = useState("check_words");
-  const [actionDraft, setActionDraft] = useState("send_template");
   const [tab, setTab] = useState("conditions");
   const [wordDraft, setWordDraft] = useState({});
+  const [showConditionMenu, setShowConditionMenu] = useState(false);
+  const [showActionMenu, setShowActionMenu] = useState(false);
 
   useEffect(() => {
     const run = async () => {
@@ -209,6 +235,11 @@ export default function TriggerBuilderPanel({
   useEffect(() => {
     if (!selectedTriggerId && triggers?.[0]?.id) setSelectedTriggerId(triggers[0].id);
   }, [triggers, selectedTriggerId]);
+
+  useEffect(() => {
+    setShowConditionMenu(false);
+    setShowActionMenu(false);
+  }, [tab]);
 
   useEffect(() => {
     if (!selectedTriggerId) {
@@ -242,11 +273,31 @@ export default function TriggerBuilderPanel({
     setActions(normalizeActions(t.action_json));
   }, [selectedTriggerId, triggers]);
 
-  const triggerTypes = useMemo(() => Array.isArray(catalog?.trigger_types) ? catalog.trigger_types : [], [catalog]);
-  const flowEvents = useMemo(() => Array.isArray(catalog?.flow_events) ? catalog.flow_events : [], [catalog]);
-  const conditionTypes = useMemo(() => Array.isArray(catalog?.condition_types) ? catalog.condition_types : [], [catalog]);
-  const actionTypes = useMemo(() => Array.isArray(catalog?.action_types) ? catalog.action_types : [], [catalog]);
-  const assistantTypes = useMemo(() => Array.isArray(catalog?.assistant_message_types) ? catalog.assistant_message_types : [], [catalog]);
+  const triggerTypes = useMemo(
+    () => (Array.isArray(catalog?.trigger_types) && catalog.trigger_types.length ? catalog.trigger_types : fallbackTriggerTypes),
+    [catalog]
+  );
+  const flowEvents = useMemo(
+    () => (Array.isArray(catalog?.flow_events) && catalog.flow_events.length ? catalog.flow_events : fallbackFlowEvents),
+    [catalog]
+  );
+  const conditionTypes = useMemo(
+    () => (Array.isArray(catalog?.condition_types) && catalog.condition_types.length ? catalog.condition_types : fallbackConditionTypes),
+    [catalog]
+  );
+  const actionTypes = useMemo(
+    () => (Array.isArray(catalog?.action_types) && catalog.action_types.length ? catalog.action_types : fallbackActionTypes),
+    [catalog]
+  );
+  const assistantTypes = useMemo(
+    () => (Array.isArray(catalog?.assistant_message_types) && catalog.assistant_message_types.length ? catalog.assistant_message_types : fallbackAssistantTypes),
+    [catalog]
+  );
+
+  const labelCondition = (type) => findLabel(conditionTypes, type, type);
+  const labelAction = (type) => findLabel(actionTypes, type, type);
+  const labelTriggerType = (type) => findLabel(triggerTypes, type, type);
+  const labelFlow = (flow) => findLabel(flowEvents, flow, flow);
 
   const updateCondition = (idx, patch) => {
     setConditions((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
@@ -256,8 +307,8 @@ export default function TriggerBuilderPanel({
     setActions((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
   };
 
-  const moveItem = (type, idx, dir) => {
-    const fn = type === "condition" ? setConditions : setActions;
+  const moveItem = (kind, idx, dir) => {
+    const fn = kind === "condition" ? setConditions : setActions;
     fn((prev) => {
       const next = [...prev];
       const to = idx + dir;
@@ -267,6 +318,16 @@ export default function TriggerBuilderPanel({
       next[to] = tmp;
       return next;
     });
+  };
+
+  const addCondition = (type) => {
+    setConditions((prev) => [...prev, blankCondition(type)]);
+    setShowConditionMenu(false);
+  };
+
+  const addAction = (type) => {
+    setActions((prev) => [...prev, blankAction(type)]);
+    setShowActionMenu(false);
   };
 
   const saveTrigger = async () => {
@@ -327,41 +388,28 @@ export default function TriggerBuilderPanel({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
-      <div style={{ display: "grid", gap: 12 }}>
-        <div style={panel}>
-          <div style={{ fontSize: 28, color: "#00d9ff", fontWeight: 700, marginBottom: 8 }}>Disparador</div>
-          <div style={{ display: "grid", gap: 8 }}>
+    <div className="trg-layout">
+      <div className="trg-left-col">
+        <div className="trg-card">
+          <div className="trg-title">Disparador</div>
+          <div className="trg-grid">
             <input style={input} placeholder="Nombre" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
             <select style={input} value={form.trigger_type} onChange={(e) => setForm((p) => ({ ...p, trigger_type: e.target.value }))}>
               {triggerTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
             </select>
+
             {form.trigger_type === "message_flow" ? (
               <select style={input} value={form.flow_event} onChange={(e) => setForm((p) => ({ ...p, flow_event: e.target.value }))}>
                 {flowEvents.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
               </select>
             ) : null}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <input
-                style={input}
-                type="number"
-                min="0"
-                placeholder="Cooldown (min)"
-                value={form.cooldown_minutes}
-                onChange={(e) => setForm((p) => ({ ...p, cooldown_minutes: e.target.value }))}
-              />
-              <input
-                style={input}
-                type="number"
-                min="1"
-                placeholder="Prioridad"
-                value={form.priority}
-                onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))}
-              />
+            <div className="trg-two-col">
+              <input style={input} type="number" min="0" placeholder="Cooldown (min)" value={form.cooldown_minutes} onChange={(e) => setForm((p) => ({ ...p, cooldown_minutes: e.target.value }))} />
+              <input style={input} type="number" min="1" placeholder="Prioridad" value={form.priority} onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))} />
             </div>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="trg-check">
               <input type="checkbox" checked={!!form.assistant_enabled} onChange={(e) => setForm((p) => ({ ...p, assistant_enabled: e.target.checked }))} />
               Enviar mensajes generado por el asistente
             </label>
@@ -369,116 +417,117 @@ export default function TriggerBuilderPanel({
               {assistantTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
             </select>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="trg-check">
               <input type="checkbox" checked={!!form.block_ai} onChange={(e) => setForm((p) => ({ ...p, block_ai: e.target.checked }))} />
               Bloquear IA cuando matchee trigger
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="trg-check">
               <input type="checkbox" checked={!!form.stop_on_match} onChange={(e) => setForm((p) => ({ ...p, stop_on_match: e.target.checked }))} />
               Detener al primer match
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="trg-check">
               <input type="checkbox" checked={!!form.only_when_no_takeover} onChange={(e) => setForm((p) => ({ ...p, only_when_no_takeover: e.target.checked }))} />
               Solo si takeover desactivado
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label className="trg-check">
               <input type="checkbox" checked={!!form.is_active} onChange={(e) => setForm((p) => ({ ...p, is_active: e.target.checked }))} />
               Activo
             </label>
+
             <button style={smallBtn} onClick={saveTrigger}>Guardar</button>
           </div>
         </div>
 
-        <div style={panel}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div className="trg-card">
+          <div className="trg-card-header">
             <strong>Triggers</strong>
             <button style={smallBtn} onClick={() => setSelectedTriggerId(null)}>Nuevo</button>
           </div>
-          <div style={{ display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+
+          <div className="trg-list">
             {(triggers || []).map((t) => (
-              <div
-                key={t.id}
-                style={{
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 10,
-                  padding: 8,
-                  background: selectedTriggerId === t.id ? "rgba(255,255,255,0.08)" : "transparent",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <button style={{ ...smallBtn, flex: 1, textAlign: "left" }} onClick={() => setSelectedTriggerId(t.id)}>
-                    <div style={{ fontWeight: 600 }}>{t.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.75 }}>{t.trigger_type} | {t.flow_event} | p{t.priority}</div>
-                  </button>
-                  <button style={t.is_active ? dangerBtn : smallBtn} onClick={() => toggleActive(t)}>{t.is_active ? "OFF" : "ON"}</button>
-                </div>
+              <div key={t.id} className={`trg-item ${selectedTriggerId === t.id ? "active" : ""}`}>
+                <button style={{ ...smallBtn, flex: 1, textAlign: "left" }} onClick={() => setSelectedTriggerId(t.id)}>
+                  <div className="trg-item-name">{t.name}</div>
+                  <div className="trg-item-meta">{labelTriggerType(t.trigger_type)} | {labelFlow(t.flow_event)} | prioridad {t.priority}</div>
+                  <div className="trg-item-meta">cooldown {t.cooldown_minutes} min | ejecuciones {t.executions_count || 0}</div>
+                </button>
+                <button style={t.is_active ? dangerBtn : smallBtn} onClick={() => toggleActive(t)}>{t.is_active ? "OFF" : "ON"}</button>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <div style={panel}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-          <button style={{ ...smallBtn, background: tab === "conditions" ? "rgba(255,255,255,0.16)" : "transparent" }} onClick={() => setTab("conditions")}>Condiciones</button>
-          <button style={{ ...smallBtn, background: tab === "actions" ? "rgba(80,255,130,0.18)" : "transparent" }} onClick={() => setTab("actions")}>Acciones</button>
+      <div className="trg-card trg-right-col">
+        <div className="trg-tabs">
+          <button className={`trg-tab ${tab === "conditions" ? "active" : ""}`} onClick={() => setTab("conditions")}>Condiciones</button>
+          <button className={`trg-tab ${tab === "actions" ? "active action" : ""}`} onClick={() => setTab("actions")}>Acciones</button>
         </div>
 
         {tab === "conditions" ? (
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto", gap: 8 }}>
-              <select style={input} value={conditionMode} onChange={(e) => setConditionMode(e.target.value)}>
-                <option value="all">Cumplir todas</option>
-                <option value="any">Cumplir alguna</option>
-              </select>
-              <select style={input} value={conditionDraft} onChange={(e) => setConditionDraft(e.target.value)}>
-                {conditionTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
-              </select>
-              <button style={smallBtn} onClick={() => setConditions((p) => [...p, blankCondition(conditionDraft)])}>Agregar</button>
+          <div className="trg-stack">
+            <div className="trg-add-wrap">
+              <button className="trg-add-btn-condition" onClick={() => setShowConditionMenu((v) => !v)}>Agregar condicion</button>
+              {showConditionMenu ? (
+                <div className="trg-dropdown">
+                  {conditionMenuGroups.map((group, groupIdx) => (
+                    <div key={groupIdx}>
+                      {group.map((key) => (
+                        <button key={key} className="trg-dropdown-item" onClick={() => addCondition(key)}>{labelCondition(key)}</button>
+                      ))}
+                      {groupIdx < conditionMenuGroups.length - 1 ? <div className="trg-divider" /> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
+            <select style={input} value={conditionMode} onChange={(e) => setConditionMode(e.target.value)}>
+              <option value="all">Cumplir todas</option>
+              <option value="any">Cumplir alguna</option>
+            </select>
+
             {conditions.map((c, idx) => (
-              <div key={`${idx}-${c.type}`} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <strong>{idx + 1}. {c.type}</strong>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button style={smallBtn} onClick={() => moveItem("condition", idx, -1)}>↑</button>
-                    <button style={smallBtn} onClick={() => moveItem("condition", idx, 1)}>↓</button>
+              <div key={`${idx}-${c.type}`} className="trg-rule">
+                <div className="trg-rule-head">
+                  <strong>{idx + 1}. {labelCondition(c.type)}</strong>
+                  <div className="trg-rule-actions">
+                    <button style={smallBtn} onClick={() => moveItem("condition", idx, -1)}>Subir</button>
+                    <button style={smallBtn} onClick={() => moveItem("condition", idx, 1)}>Bajar</button>
                     <button style={dangerBtn} onClick={() => setConditions((p) => p.filter((_, i) => i !== idx))}>Eliminar</button>
                   </div>
                 </div>
 
                 {c.type === "check_words" ? (
-                  <div style={{ display: "grid", gap: 8 }}>
+                  <div className="trg-stack">
                     <select style={input} value={c.mode || "any"} onChange={(e) => updateCondition(idx, { mode: e.target.value })}>
                       <option value="any">Cualquiera</option>
                       <option value="all">Todas</option>
                     </select>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                    <div className="trg-two-col-auto">
                       <input style={input} placeholder="Escribir palabra..." value={wordDraft[idx] || ""} onChange={(e) => setWordDraft((p) => ({ ...p, [idx]: e.target.value }))} />
-                      <button
-                        style={smallBtn}
-                        onClick={() => {
-                          const val = String(wordDraft[idx] || "").trim();
-                          if (!val) return;
-                          const words = Array.isArray(c.words) ? c.words : [];
-                          if (!words.includes(val)) updateCondition(idx, { words: [...words, val] });
-                          setWordDraft((p) => ({ ...p, [idx]: "" }));
-                        }}
-                      >
-                        +
-                      </button>
+                      <button style={smallBtn} onClick={() => {
+                        const val = String(wordDraft[idx] || "").trim();
+                        if (!val) return;
+                        const words = Array.isArray(c.words) ? c.words : [];
+                        if (!words.includes(val)) updateCondition(idx, { words: [...words, val] });
+                        setWordDraft((p) => ({ ...p, [idx]: "" }));
+                      }}>+</button>
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    <div className="trg-chip-wrap">
                       {(Array.isArray(c.words) ? c.words : []).map((w, wi) => (
-                        <button key={`${wi}-${w}`} style={smallBtn} onClick={() => updateCondition(idx, { words: c.words.filter((_, i) => i !== wi) })}>{w} x</button>
+                        <span key={`${wi}-${w}`} className="trg-chip">
+                          {w}
+                          <button className="trg-chip-x" onClick={() => updateCondition(idx, { words: c.words.filter((_, i) => i !== wi) })}>x</button>
+                        </span>
                       ))}
                     </div>
                   </div>
                 ) : null}
 
                 {c.type === "template_sent_status" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8 }}>
+                  <div className="trg-two-col">
                     <select style={input} value={c.state || "not_sent"} onChange={(e) => updateCondition(idx, { state: e.target.value })}>
                       <option value="not_sent">No enviado</option>
                       <option value="sent">Enviado</option>
@@ -491,7 +540,7 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {c.type === "current_tag" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 8 }}>
+                  <div className="trg-two-col">
                     <select style={input} value={c.state || "has"} onChange={(e) => updateCondition(idx, { state: e.target.value })}>
                       <option value="has">Tiene etiqueta</option>
                       <option value="not_has">No tiene etiqueta</option>
@@ -501,46 +550,47 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {c.type === "last_message_sent" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: 8 }}>
+                  <div className="trg-three-col">
                     <select style={input} value={c.op || "gte"} onChange={(e) => updateCondition(idx, { op: e.target.value })}>
-                      <option value="gte">&gt;=</option>
-                      <option value="lte">&lt;=</option>
-                      <option value="gt">&gt;</option>
-                      <option value="lt">&lt;</option>
-                      <option value="eq">=</option>
+                      <option value="gte">Mayor o igual</option>
+                      <option value="lte">Menor o igual</option>
+                      <option value="gt">Mayor</option>
+                      <option value="lt">Menor</option>
+                      <option value="eq">Igual</option>
                     </select>
-                    <input style={input} type="number" value={c.minutes || 0} onChange={(e) => updateCondition(idx, { minutes: e.target.value })} placeholder="Minutos" />
+                    <input style={input} type="number" value={c.minutes || 0} onChange={(e) => updateCondition(idx, { minutes: e.target.value })} />
+                    <input style={input} value="Minutos desde ultimo envio" disabled />
                   </div>
                 ) : null}
 
                 {c.type === "sent_count" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 1fr", gap: 8 }}>
+                  <div className="trg-three-col">
                     <select style={input} value={c.op || "gte"} onChange={(e) => updateCondition(idx, { op: e.target.value })}>
-                      <option value="gte">&gt;=</option>
-                      <option value="lte">&lt;=</option>
-                      <option value="gt">&gt;</option>
-                      <option value="lt">&lt;</option>
-                      <option value="eq">=</option>
+                      <option value="gte">Mayor o igual</option>
+                      <option value="lte">Menor o igual</option>
+                      <option value="gt">Mayor</option>
+                      <option value="lt">Menor</option>
+                      <option value="eq">Igual</option>
                     </select>
                     <input style={input} type="number" value={c.value || 0} onChange={(e) => updateCondition(idx, { value: e.target.value })} placeholder="Cantidad" />
-                    <input style={input} type="number" value={c.window_hours || 24} onChange={(e) => updateCondition(idx, { window_hours: e.target.value })} placeholder="Ventana horas" />
+                    <input style={input} type="number" value={c.window_hours || 24} onChange={(e) => updateCondition(idx, { window_hours: e.target.value })} placeholder="Ultimas horas" />
                   </div>
                 ) : null}
 
                 {c.type === "schedule" ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 120px", gap: 8 }}>
-                      <input style={input} value={c.timezone || "America/Bogota"} onChange={(e) => updateCondition(idx, { timezone: e.target.value })} placeholder="Timezone" />
+                  <div className="trg-stack">
+                    <div className="trg-three-col">
+                      <input style={input} value={c.timezone || "America/Bogota"} onChange={(e) => updateCondition(idx, { timezone: e.target.value })} placeholder="Zona horaria" />
                       <input style={input} value={c.start_time || "08:00"} onChange={(e) => updateCondition(idx, { start_time: e.target.value })} placeholder="Inicio HH:MM" />
                       <input style={input} value={c.end_time || "20:00"} onChange={(e) => updateCondition(idx, { end_time: e.target.value })} placeholder="Fin HH:MM" />
                     </div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <div className="trg-chip-wrap">
                       {weekDays.map((d) => {
                         const has = Array.isArray(c.days) ? c.days.includes(d.key) : false;
                         return (
                           <button
                             key={d.key}
-                            style={{ ...smallBtn, background: has ? "rgba(120,255,120,0.2)" : "transparent" }}
+                            className={`trg-day ${has ? "on" : ""}`}
                             onClick={() => {
                               const days = Array.isArray(c.days) ? c.days : [];
                               if (has) updateCondition(idx, { days: days.filter((x) => x !== d.key) });
@@ -560,21 +610,25 @@ export default function TriggerBuilderPanel({
         ) : null}
 
         {tab === "actions" ? (
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-              <select style={input} value={actionDraft} onChange={(e) => setActionDraft(e.target.value)}>
-                {actionTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
-              </select>
-              <button style={smallBtn} onClick={() => setActions((p) => [...p, blankAction(actionDraft)])}>Agregar</button>
+          <div className="trg-stack">
+            <div className="trg-add-wrap">
+              <button className="trg-add-btn-action" onClick={() => setShowActionMenu((v) => !v)}>Agregar accion</button>
+              {showActionMenu ? (
+                <div className="trg-dropdown">
+                  {actionTypes.map((a) => (
+                    <button key={a.key} className="trg-dropdown-item" onClick={() => addAction(a.key)}>{a.label}</button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {actions.map((a, idx) => (
-              <div key={`${idx}-${a.type}`} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <strong>{idx + 1}. {a.type}</strong>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button style={smallBtn} onClick={() => moveItem("action", idx, -1)}>↑</button>
-                    <button style={smallBtn} onClick={() => moveItem("action", idx, 1)}>↓</button>
+              <div key={`${idx}-${a.type}`} className="trg-rule">
+                <div className="trg-rule-head">
+                  <strong>{idx + 1}. {labelAction(a.type)}</strong>
+                  <div className="trg-rule-actions">
+                    <button style={smallBtn} onClick={() => moveItem("action", idx, -1)}>Subir</button>
+                    <button style={smallBtn} onClick={() => moveItem("action", idx, 1)}>Bajar</button>
                     <button style={dangerBtn} onClick={() => setActions((p) => p.filter((_, i) => i !== idx))}>Eliminar</button>
                   </div>
                 </div>
@@ -587,7 +641,7 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {a.type === "change_tag" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 8 }}>
+                  <div className="trg-two-col">
                     <select style={input} value={a.mode || "add"} onChange={(e) => updateAction(idx, { mode: e.target.value })}>
                       <option value="add">Agregar</option>
                       <option value="remove">Quitar</option>
@@ -598,18 +652,24 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {a.type === "configure_conversation" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 8 }}>
-                    <select style={input} value={a.takeover || "keep"} onChange={(e) => updateAction(idx, { takeover: e.target.value })}>
-                      <option value="keep">Takeover: sin cambio</option>
-                      <option value="on">Takeover: ON</option>
-                      <option value="off">Takeover: OFF</option>
-                    </select>
-                    <input style={input} placeholder="AI state (opcional)" value={a.ai_state || ""} onChange={(e) => updateAction(idx, { ai_state: e.target.value })} />
+                  <div className="trg-stack">
+                    <div className="trg-two-col">
+                      <select style={input} value={a.takeover || "keep"} onChange={(e) => updateAction(idx, { takeover: e.target.value })}>
+                        <option value="keep">Takeover sin cambio</option>
+                        <option value="on">Takeover ON</option>
+                        <option value="off">Takeover OFF</option>
+                      </select>
+                      <input style={input} placeholder="AI state opcional" value={a.ai_state || ""} onChange={(e) => updateAction(idx, { ai_state: e.target.value })} />
+                    </div>
+                    <label className="trg-check">
+                      <input type="checkbox" checked={!!a.clear_ai_state} onChange={(e) => updateAction(idx, { clear_ai_state: e.target.checked })} />
+                      Limpiar AI state
+                    </label>
                   </div>
                 ) : null}
 
                 {a.type === "change_contact_status" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8 }}>
+                  <div className="trg-two-col">
                     <select style={input} value={a.field || "customer_type"} onChange={(e) => updateAction(idx, { field: e.target.value })}>
                       <option value="customer_type">Estado contacto</option>
                       <option value="payment_status">Estado pago</option>
@@ -619,18 +679,18 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {a.type === "notify_admins" ? (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <input style={input} placeholder="Telefonos admin (coma)" value={a.phones || ""} onChange={(e) => updateAction(idx, { phones: e.target.value })} />
-                    <textarea style={{ ...input, minHeight: 70 }} placeholder="Mensaje para admin" value={a.message || ""} onChange={(e) => updateAction(idx, { message: e.target.value })} />
+                  <div className="trg-stack">
+                    <input style={input} placeholder="Telefonos admins (coma)" value={a.phones || ""} onChange={(e) => updateAction(idx, { phones: e.target.value })} />
+                    <textarea style={{ ...input, minHeight: 70 }} placeholder="Mensaje para administradores" value={a.message || ""} onChange={(e) => updateAction(idx, { message: e.target.value })} />
                   </div>
                 ) : null}
 
                 {a.type === "extract_conversation_info" ? (
-                  <input style={input} type="number" value={a.last_messages || 10} onChange={(e) => updateAction(idx, { last_messages: e.target.value })} />
+                  <input style={input} type="number" value={a.last_messages || 10} onChange={(e) => updateAction(idx, { last_messages: e.target.value })} placeholder="Ultimos mensajes a analizar" />
                 ) : null}
 
                 {a.type === "schedule_message" ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 8 }}>
+                  <div className="trg-two-col">
                     <select style={input} value={a.template_id || ""} onChange={(e) => updateAction(idx, { template_id: e.target.value })}>
                       <option value="">Plantilla</option>
                       {(templates || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}

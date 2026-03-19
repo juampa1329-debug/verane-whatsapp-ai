@@ -9,7 +9,8 @@ from typing import Any, Dict, List
 from sqlalchemy import text
 
 from app.db import engine
-from app.routes.whatsapp import send_whatsapp_text
+from app.automation.trigger_engine import process_due_scheduled_trigger_messages
+from app.routes.whatsapp import send_whatsapp_media_id, send_whatsapp_text
 
 
 def _env_int(name: str, default: int, *, min_v: int, max_v: int) -> int:
@@ -41,6 +42,12 @@ def engine_settings() -> Dict[str, Any]:
     }
 
 
+def _safe_json_dict(v: Any) -> Dict[str, Any]:
+    if isinstance(v, dict):
+        return v
+    return {}
+
+
 def _render_template(body: str, variables: Dict[str, Any]) -> str:
     out = body or ""
     for k, v in (variables or {}).items():
@@ -68,16 +75,106 @@ def _recipient_variables(row: Dict[str, Any]) -> Dict[str, Any]:
         "phone": str(row.get("phone") or "").strip(),
         "campaign_name": str(row.get("campaign_name") or "").strip(),
         "objective": str(row.get("objective") or "").strip(),
+        "business_name": str(os.getenv("BUSINESS_NAME", "Verane")).strip(),
+        "business_phone": str(os.getenv("BUSINESS_PHONE", "")).strip(),
+        "business_email": str(os.getenv("BUSINESS_EMAIL", "")).strip(),
+        "assistant_name": str(os.getenv("ASSISTANT_NAME", "Asistente Verane")).strip(),
+        "assistant_phone": str(os.getenv("ASSISTANT_PHONE", "")).strip(),
+        "customer_name": full_name or row.get("phone") or "",
+        "customer_phone": str(row.get("phone") or "").strip(),
+        "customer_tag": str(row.get("tags") or "").strip(),
+        "customer_country": str((row.get("crm_meta_country") or row.get("country") or "CO")).strip(),
+        "first_message_date": str(row.get("first_message_date") or "").strip(),
+        "last_message_date": str(row.get("last_message_date") or "").strip(),
     }
 
 
-def _build_campaign_text(row: Dict[str, Any]) -> str:
+def _normalize_template_blocks(raw_blocks: Any, body_fallback: str = "") -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    items = raw_blocks if isinstance(raw_blocks, list) else []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or item.get("type") or "text").strip().lower()
+        try:
+            delay_ms = int(item.get("delay_ms") or 0)
+        except Exception:
+            delay_ms = 0
+        delay_ms = max(0, min(delay_ms, 60000))
+
+        if kind == "image":
+            media_id = str(item.get("media_id") or "").strip()
+            image_url = str(item.get("image_url") or item.get("url") or "").strip()
+            caption = str(item.get("caption") or item.get("text") or "").strip()
+            if not media_id and not image_url:
+                continue
+            out.append(
+                {
+                    "kind": "image",
+                    "media_id": media_id,
+                    "image_url": image_url,
+                    "caption": caption,
+                    "delay_ms": delay_ms,
+                }
+            )
+            continue
+
+        text_val = str(item.get("text") or item.get("content") or item.get("body") or "").strip()
+        if not text_val:
+            continue
+        out.append({"kind": "text", "text": text_val, "delay_ms": delay_ms})
+
+    if out:
+        return out
+
+    fallback = str(body_fallback or "").strip()
+    if fallback:
+        return [{"kind": "text", "text": fallback, "delay_ms": 0}]
+    return []
+
+
+def _build_campaign_blocks(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     body = str(row.get("template_body") or "").strip()
     if not body:
         body = str(row.get("objective") or "").strip() or "Hola {{nombre}}, tenemos novedades para ti."
 
     variables = _recipient_variables(row)
-    return _render_template(body, variables)
+    defaults = _safe_json_dict(row.get("params_json"))
+    for k, v in defaults.items():
+        kk = str(k or "").strip()
+        if not kk:
+            continue
+        if kk not in variables or str(variables.get(kk) or "").strip() == "":
+            variables[kk] = v
+    blocks = _normalize_template_blocks(row.get("blocks_json"), body_fallback=body)
+    if not blocks:
+        blocks = [{"kind": "text", "text": body, "delay_ms": 0}]
+
+    rendered: List[Dict[str, Any]] = []
+    for b in blocks:
+        kind = str(b.get("kind") or "text").strip().lower()
+        delay_ms = int(b.get("delay_ms") or 0)
+        if kind == "image":
+            rendered.append(
+                {
+                    "kind": "image",
+                    "media_id": str(b.get("media_id") or "").strip(),
+                    "image_url": str(b.get("image_url") or "").strip(),
+                    "caption": _render_template(str(b.get("caption") or ""), variables),
+                    "delay_ms": delay_ms,
+                }
+            )
+            continue
+
+        rendered.append(
+            {
+                "kind": "text",
+                "text": _render_template(str(b.get("text") or ""), variables),
+                "delay_ms": delay_ms,
+            }
+        )
+    return rendered
 
 
 def _mark_due_campaigns_running(now: datetime) -> int:
@@ -109,13 +206,26 @@ def _claim_pending_recipients(now: datetime, batch_size: int) -> List[Dict[str, 
                     c.channel,
                     t.body AS template_body,
                     t.variables_json,
+                    t.blocks_json,
+                    t.params_json,
                     conv.first_name,
                     conv.last_name,
                     conv.city,
                     conv.customer_type,
                     conv.interests,
                     conv.tags,
-                    conv.payment_status
+                    conv.payment_status,
+                    COALESCE(conv.crm_meta->>'country', '') AS crm_meta_country,
+                    (
+                        SELECT MIN(m0.created_at)
+                        FROM messages m0
+                        WHERE m0.phone = cr.phone
+                    ) AS first_message_date,
+                    (
+                        SELECT MAX(m1.created_at)
+                        FROM messages m1
+                        WHERE m1.phone = cr.phone
+                    ) AS last_message_date
                 FROM campaign_recipients cr
                 JOIN campaigns c ON c.id = cr.campaign_id
                 LEFT JOIN message_templates t ON t.id = c.template_id
@@ -141,13 +251,18 @@ def _claim_pending_recipients(now: datetime, batch_size: int) -> List[Dict[str, 
                 due.channel,
                 due.template_body,
                 due.variables_json,
+                due.blocks_json,
+                due.params_json,
                 due.first_name,
                 due.last_name,
                 due.city,
                 due.customer_type,
                 due.interests,
                 due.tags,
-                due.payment_status
+                due.payment_status,
+                due.crm_meta_country,
+                due.first_message_date,
+                due.last_message_date
         """), {"now": now, "limit": int(batch_size)}).mappings().all()
 
     return [dict(r) for r in rows]
@@ -158,7 +273,10 @@ def _save_campaign_message(
     campaign_id: int,
     recipient_id: int,
     phone: str,
+    msg_type: str,
     text_msg: str,
+    media_id: str,
+    media_caption: str,
     sent_ok: bool,
     wa_message_id: str,
     wa_error: str,
@@ -178,6 +296,8 @@ def _save_campaign_message(
                 direction,
                 msg_type,
                 text,
+                media_id,
+                media_caption,
                 wa_status,
                 wa_message_id,
                 wa_error,
@@ -188,8 +308,10 @@ def _save_campaign_message(
             VALUES (
                 :phone,
                 'out',
-                'text',
+                :msg_type,
                 :text,
+                :media_id,
+                :media_caption,
                 :wa_status,
                 :wa_message_id,
                 :wa_error,
@@ -200,7 +322,10 @@ def _save_campaign_message(
             RETURNING id
         """), {
             "phone": phone,
+            "msg_type": (msg_type or "text").strip().lower(),
             "text": text_msg,
+            "media_id": media_id or None,
+            "media_caption": media_caption or None,
             "wa_status": wa_status,
             "wa_message_id": wa_message_id or None,
             "wa_error": wa_error or None,
@@ -301,53 +426,95 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
                 _mark_recipient_failed(recipient_id, "invalid_recipient")
             continue
 
-        txt = _build_campaign_text(row)
-        if not txt:
+        blocks = _build_campaign_blocks(row)
+        if not blocks:
             failed += 1
             _mark_recipient_failed(recipient_id, "empty_message")
             continue
 
-        try:
-            wa = await send_whatsapp_text(phone, txt)
-        except Exception as e:
-            failed += 1
-            msg_id = _save_campaign_message(
+        recipient_ok = True
+        last_message_id = 0
+        last_wa_id = ""
+        last_error = ""
+
+        for idx, block in enumerate(blocks):
+            kind = str(block.get("kind") or "text").strip().lower()
+            block_delay_ms = int(block.get("delay_ms") or 0)
+
+            block_text = ""
+            media_id = ""
+            media_caption = ""
+
+            try:
+                if kind == "image":
+                    media_id = str(block.get("media_id") or "").strip()
+                    media_caption = str(block.get("caption") or "").strip()
+                    if not media_id:
+                        raise RuntimeError("image block without media_id")
+                    wa = await send_whatsapp_media_id(phone, "image", media_id, media_caption)
+                    block_text = media_caption
+                    msg_type = "image"
+                else:
+                    block_text = str(block.get("text") or "").strip()
+                    if not block_text:
+                        raise RuntimeError("text block empty")
+                    wa = await send_whatsapp_text(phone, block_text)
+                    msg_type = "text"
+            except Exception as e:
+                recipient_ok = False
+                last_error = str(e)[:900]
+                last_message_id = _save_campaign_message(
+                    campaign_id=campaign_id,
+                    recipient_id=recipient_id,
+                    phone=phone,
+                    msg_type="image" if kind == "image" else "text",
+                    text_msg=block_text,
+                    media_id=media_id,
+                    media_caption=media_caption,
+                    sent_ok=False,
+                    wa_message_id="",
+                    wa_error=last_error,
+                )
+                break
+
+            ok = bool((wa or {}).get("sent"))
+            wa_id = str((wa or {}).get("wa_message_id") or "").strip()
+            wa_error = str((wa or {}).get("reason") or (wa or {}).get("whatsapp_body") or "")[:900]
+
+            last_message_id = _save_campaign_message(
                 campaign_id=campaign_id,
                 recipient_id=recipient_id,
                 phone=phone,
-                text_msg=txt,
-                sent_ok=False,
-                wa_message_id="",
-                wa_error=str(e),
+                msg_type=msg_type,
+                text_msg=block_text,
+                media_id=media_id,
+                media_caption=media_caption,
+                sent_ok=ok,
+                wa_message_id=wa_id,
+                wa_error=wa_error,
             )
-            _mark_recipient_failed(recipient_id, str(e), message_id=msg_id)
-            continue
+            last_wa_id = wa_id or last_wa_id
 
-        ok = bool((wa or {}).get("sent"))
-        wa_id = str((wa or {}).get("wa_message_id") or "").strip()
-        wa_error = str((wa or {}).get("reason") or (wa or {}).get("whatsapp_body") or "")[:900]
+            if not ok:
+                recipient_ok = False
+                last_error = wa_error or "send_failed"
+                break
 
-        msg_id = _save_campaign_message(
-            campaign_id=campaign_id,
-            recipient_id=recipient_id,
-            phone=phone,
-            text_msg=txt,
-            sent_ok=ok,
-            wa_message_id=wa_id,
-            wa_error=wa_error,
-        )
+            if idx < len(blocks) - 1 and block_delay_ms > 0:
+                await asyncio.sleep(block_delay_ms / 1000.0)
 
-        if ok:
+        if recipient_ok:
             sent += 1
-            _mark_recipient_sent(recipient_id, msg_id, wa_id)
+            _mark_recipient_sent(recipient_id, last_message_id, last_wa_id)
         else:
             failed += 1
-            _mark_recipient_failed(recipient_id, wa_error or "send_failed", message_id=msg_id)
+            _mark_recipient_failed(recipient_id, last_error or "send_failed", message_id=last_message_id)
 
         if delay_ms > 0:
             await asyncio.sleep(delay_ms / 1000.0)
 
     completed_now = _refresh_campaign_completion()
+    scheduled_result = await process_due_scheduled_trigger_messages(limit=max(10, int(batch)))
 
     return {
         "ok": True,
@@ -356,6 +523,9 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
         "failed": failed,
         "scheduled_to_running": running_now,
         "completed_now": completed_now,
+        "trigger_scheduled_claimed": int(scheduled_result.get("claimed") or 0),
+        "trigger_scheduled_sent": int(scheduled_result.get("sent") or 0),
+        "trigger_scheduled_failed": int(scheduled_result.get("failed") or 0),
         "batch_size": batch,
         "send_delay_ms": delay_ms,
         "ts": now.isoformat(),

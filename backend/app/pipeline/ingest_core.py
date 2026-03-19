@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.db import engine
+from app.automation.trigger_engine import execute_incoming_triggers, execute_outgoing_triggers
 
 # IA
 from app.ai.conversation_reconstructor import reconstruct_conversation_state
@@ -599,8 +600,21 @@ async def run_ingest(msg: IngestMessage) -> dict:
                           or "WhatsApp send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
+            out_trigger_result = await execute_outgoing_triggers(
+                phone=msg.phone,
+                user_text=str(msg.text or msg.media_caption or "").strip(),
+                msg_type=msg_type,
+            )
+            if out_trigger_result.get("matched"):
+                _log(trace_id, "TRIGGER_OUT_MATCHED", sent=bool(out_trigger_result.get("sent")))
+
             _log(trace_id, "WHATSAPP_OUT_SENT", ok=bool(isinstance(wa_resp, dict) and wa_resp.get("sent")))
-            return {"saved": True, "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), "wa": wa_resp}
+            return {
+                "saved": True,
+                "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")),
+                "wa": wa_resp,
+                "trigger_out": out_trigger_result,
+            }
 
         except Exception as e:
             with engine.begin() as conn:
@@ -635,6 +649,28 @@ async def run_ingest(msg: IngestMessage) -> dict:
             user_text = (msg.text or "").strip()
             if is_effectively_empty_text(user_text):
                 user_text = ""
+
+            trigger_result = await execute_incoming_triggers(
+                phone=msg.phone,
+                user_text=user_text,
+                msg_type=msg_type,
+            )
+            if trigger_result.get("matched"):
+                _log(
+                    trace_id,
+                    "TRIGGER_MATCHED",
+                    block_ai=bool(trigger_result.get("block_ai")),
+                    sent=bool(trigger_result.get("sent")),
+                )
+            if bool(trigger_result.get("block_ai")):
+                _log(trace_id, "AI_SKIPPED", reason="blocked_by_trigger")
+                return {
+                    "saved": True,
+                    "sent": bool(trigger_result.get("sent")),
+                    "ai": False,
+                    "reason": "blocked_by_trigger",
+                    "trigger": trigger_result,
+                }
 
             # Variable clave para forzar que WooCommerce atienda este mensaje
             force_woo_search = False

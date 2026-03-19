@@ -15,6 +15,7 @@ from starlette.requests import Request as StarletteRequest
 
 from app.db import engine
 from app.campaigns.engine import campaign_engine_tick, engine_settings, run_campaign_engine_forever
+from app.automation.trigger_engine import get_trigger_catalog
 
 # ✅ Pipeline core (nuevo flujo real)
 from app.pipeline.ingest_core import run_ingest, IngestMessage
@@ -351,11 +352,17 @@ def ensure_schema():
                 category TEXT NOT NULL DEFAULT 'general',
                 body TEXT NOT NULL DEFAULT '',
                 variables_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                blocks_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                params_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                render_mode TEXT NOT NULL DEFAULT 'chat',
                 status TEXT NOT NULL DEFAULT 'draft',
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS blocks_json JSONB NOT NULL DEFAULT '[]'::jsonb"""))
+        conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS params_json JSONB NOT NULL DEFAULT '{}'::jsonb"""))
+        conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS render_mode TEXT NOT NULL DEFAULT 'chat'"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_message_templates_status ON message_templates (status)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_message_templates_updated_at ON message_templates (updated_at DESC)"""))
 
@@ -411,17 +418,36 @@ def ensure_schema():
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 event_type TEXT NOT NULL,
+                trigger_type TEXT NOT NULL DEFAULT 'message_flow',
+                flow_event TEXT NOT NULL DEFAULT 'received',
                 conditions_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 action_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 cooldown_minutes INTEGER NOT NULL DEFAULT 60,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                assistant_message_type TEXT NOT NULL DEFAULT 'auto',
+                priority INTEGER NOT NULL DEFAULT 100,
+                block_ai BOOLEAN NOT NULL DEFAULT TRUE,
+                stop_on_match BOOLEAN NOT NULL DEFAULT TRUE,
+                only_when_no_takeover BOOLEAN NOT NULL DEFAULT TRUE,
                 last_run_at TIMESTAMP NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'message_flow'"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS flow_event TEXT NOT NULL DEFAULT 'received'"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS assistant_message_type TEXT NOT NULL DEFAULT 'auto'"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 100"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS block_ai BOOLEAN NOT NULL DEFAULT TRUE"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS stop_on_match BOOLEAN NOT NULL DEFAULT TRUE"""))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS only_when_no_takeover BOOLEAN NOT NULL DEFAULT TRUE"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_active ON automation_triggers (is_active)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_event_type ON automation_triggers (event_type)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_trigger_type ON automation_triggers (trigger_type)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_flow_event ON automation_triggers (flow_event)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_priority ON automation_triggers (priority, id)"""))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trigger_executions (
@@ -430,11 +456,31 @@ def ensure_schema():
                 phone TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'ok',
                 executed_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                error TEXT
+                error TEXT,
+                details JSONB NOT NULL DEFAULT '{}'::jsonb
             )
         """))
+        conn.execute(text("""ALTER TABLE trigger_executions ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_trigger_executions_trigger_id ON trigger_executions (trigger_id)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_trigger_executions_executed_at ON trigger_executions (executed_at DESC)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_trigger_executions_trigger_phone ON trigger_executions (trigger_id, phone, executed_at DESC)"""))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS trigger_scheduled_messages (
+                id SERIAL PRIMARY KEY,
+                trigger_id INTEGER REFERENCES automation_triggers(id) ON DELETE SET NULL,
+                phone TEXT NOT NULL,
+                template_id INTEGER REFERENCES message_templates(id) ON DELETE SET NULL,
+                payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                run_at TIMESTAMP NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                sent_at TIMESTAMP NULL
+            )
+        """))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_trigger_scheduled_status_runat ON trigger_scheduled_messages (status, run_at)"""))
 
         # -------------------------
         # remarketing flows
@@ -563,6 +609,9 @@ class TemplateIn(BaseModel):
     category: str = "general"
     body: str = ""
     variables_json: List[str] = Field(default_factory=list)
+    blocks_json: List[Dict[str, Any]] = Field(default_factory=list)
+    params_json: Dict[str, Any] = Field(default_factory=dict)
+    render_mode: str = "chat"
     status: str = "draft"
 
 
@@ -571,11 +620,20 @@ class TemplatePatch(BaseModel):
     category: Optional[str] = None
     body: Optional[str] = None
     variables_json: Optional[List[str]] = None
+    blocks_json: Optional[List[Dict[str, Any]]] = None
+    params_json: Optional[Dict[str, Any]] = None
+    render_mode: Optional[str] = None
     status: Optional[str] = None
 
 
 class TemplatePreviewIn(BaseModel):
     variables: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TemplateRenderIn(BaseModel):
+    phone: str = ""
+    campaign_id: Optional[int] = None
+    overrides: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CampaignIn(BaseModel):
@@ -600,20 +658,36 @@ class CampaignPatch(BaseModel):
 
 class TriggerIn(BaseModel):
     name: str
-    event_type: str
+    event_type: str = "message_in"
+    trigger_type: str = "message_flow"
+    flow_event: str = "received"
     conditions_json: Dict[str, Any] = Field(default_factory=dict)
     action_json: Dict[str, Any] = Field(default_factory=dict)
     cooldown_minutes: int = 60
     is_active: bool = True
+    assistant_enabled: bool = False
+    assistant_message_type: str = "auto"
+    priority: int = 100
+    block_ai: bool = True
+    stop_on_match: bool = True
+    only_when_no_takeover: bool = True
 
 
 class TriggerPatch(BaseModel):
     name: Optional[str] = None
     event_type: Optional[str] = None
+    trigger_type: Optional[str] = None
+    flow_event: Optional[str] = None
     conditions_json: Optional[Dict[str, Any]] = None
     action_json: Optional[Dict[str, Any]] = None
     cooldown_minutes: Optional[int] = None
     is_active: Optional[bool] = None
+    assistant_enabled: Optional[bool] = None
+    assistant_message_type: Optional[str] = None
+    priority: Optional[int] = None
+    block_ai: Optional[bool] = None
+    stop_on_match: Optional[bool] = None
+    only_when_no_takeover: Optional[bool] = None
 
 
 class RemarketingFlowIn(BaseModel):
@@ -686,6 +760,60 @@ def _normalize_status(raw: str, allowed: set[str], default: str) -> str:
     return default
 
 
+def _normalize_event_type(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    if not v:
+        return "message_in"
+    aliases = {
+        "in": "message_in",
+        "incoming": "message_in",
+        "recibido": "message_in",
+        "received": "message_in",
+        "flow": "message_in",
+    }
+    return aliases.get(v, v)
+
+
+def _normalize_trigger_type(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    aliases = {
+        "ninguna": "none",
+        "etiqueta cambiada": "tag_changed",
+        "logica": "logic",
+        "lógica": "logic",
+        "flujo de mensajes": "message_flow",
+        "tiempo": "time",
+    }
+    v = aliases.get(v, v)
+    allowed = {"none", "tag_changed", "logic", "message_flow", "time"}
+    return v if v in allowed else "message_flow"
+
+
+def _normalize_flow_event(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    aliases = {
+        "recibido": "received",
+        "enviado": "sent",
+        "envian y reciben": "both",
+        "enviados_y_recibidos": "both",
+    }
+    v = aliases.get(v, v)
+    allowed = {"received", "sent", "both"}
+    return v if v in allowed else "received"
+
+
+def _normalize_assistant_message_type(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    aliases = {
+        "texto": "text",
+        "audio": "audio",
+        "auto": "auto",
+    }
+    v = aliases.get(v, v)
+    allowed = {"auto", "text", "audio"}
+    return v if v in allowed else "auto"
+
+
 def _render_template(body: str, variables: Dict[str, Any]) -> str:
     out = body or ""
     if not variables:
@@ -697,6 +825,89 @@ def _render_template(body: str, variables: Dict[str, Any]) -> str:
             continue
         out = out.replace(f"{{{{{key}}}}}", str(v if v is not None else ""))
     return out
+
+
+def _template_params_catalog() -> List[Dict[str, str]]:
+    return [
+        {"key": "business_name", "label": "Nombre del negocio"},
+        {"key": "business_phone", "label": "Telefono del negocio"},
+        {"key": "business_email", "label": "Correo del negocio"},
+        {"key": "assistant_name", "label": "Nombre del Asistente"},
+        {"key": "assistant_phone", "label": "Telefono del Asistente"},
+        {"key": "customer_name", "label": "Nombre del cliente"},
+        {"key": "customer_country", "label": "Pais del cliente"},
+        {"key": "customer_phone", "label": "Telefono del cliente"},
+        {"key": "customer_tag", "label": "Etiqueta del cliente"},
+        {"key": "campaign_name", "label": "Anuncio"},
+        {"key": "first_message_date", "label": "Fecha primer mensaje"},
+        {"key": "last_message_date", "label": "Fecha ultimo mensaje"},
+        {"key": "nombre", "label": "Nombre (alias)"},
+        {"key": "phone", "label": "Telefono (alias)"},
+        {"key": "city", "label": "Ciudad"},
+        {"key": "payment_status", "label": "Estado de pago"},
+    ]
+
+
+def _normalize_template_blocks(raw_blocks: Any, body_fallback: str = "") -> List[Dict[str, Any]]:
+    blocks: List[Dict[str, Any]] = []
+    raw_list = raw_blocks if isinstance(raw_blocks, list) else []
+
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+
+        kind = str(item.get("kind") or item.get("type") or "text").strip().lower()
+        delay_ms = item.get("delay_ms", 0)
+        try:
+            delay_ms = int(delay_ms)
+        except Exception:
+            delay_ms = 0
+        delay_ms = max(0, min(delay_ms, 60000))
+
+        if kind == "image":
+            media_id = str(item.get("media_id") or "").strip()
+            image_url = str(item.get("image_url") or item.get("url") or "").strip()
+            caption = str(item.get("caption") or item.get("text") or "").strip()
+            if not media_id and not image_url:
+                continue
+            blocks.append(
+                {
+                    "kind": "image",
+                    "media_id": media_id,
+                    "image_url": image_url,
+                    "caption": caption,
+                    "delay_ms": delay_ms,
+                }
+            )
+            continue
+
+        text_val = str(item.get("text") or item.get("content") or item.get("body") or "").strip()
+        if not text_val:
+            continue
+        blocks.append({"kind": "text", "text": text_val, "delay_ms": delay_ms})
+
+    if blocks:
+        return blocks
+
+    fallback = str(body_fallback or "").strip()
+    if fallback:
+        return [{"kind": "text", "text": fallback, "delay_ms": 0}]
+    return []
+
+
+def _collect_missing_params(text_val: str, resolved: Dict[str, Any]) -> List[str]:
+    import re
+
+    missing: List[str] = []
+    for token in re.findall(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", text_val or ""):
+        key = (token or "").strip()
+        if not key:
+            continue
+        v = resolved.get(key)
+        if v is None or str(v).strip() == "":
+            if key not in missing:
+                missing.append(key)
+    return missing
 
 
 def _segment_filter_sql(rules: Dict[str, Any], prefix: str = "r") -> tuple[str, Dict[str, Any]]:
@@ -1625,13 +1836,18 @@ def list_templates(
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
             SELECT
-                t.id, t.name, t.category, t.body, t.variables_json, t.status, t.created_at, t.updated_at
+                t.id, t.name, t.category, t.body, t.variables_json, t.blocks_json, t.params_json, t.render_mode, t.status, t.created_at, t.updated_at
             FROM message_templates t
             {where_sql}
             ORDER BY t.updated_at DESC, t.id DESC
         """), params).mappings().all()
 
     return {"templates": [dict(r) for r in rows]}
+
+
+@app.get("/api/templates/params/catalog")
+def templates_params_catalog():
+    return {"params": _template_params_catalog()}
 
 
 @app.post("/api/templates")
@@ -1658,20 +1874,34 @@ def create_template(payload: TemplateIn):
         seen.add(key_low)
         vars_clean.append(key)
 
+    blocks_clean = _normalize_template_blocks(payload.blocks_json, body_fallback=payload.body or "")
+
+    body = str(payload.body or "").strip()
+    if not body and blocks_clean:
+        first_text = next((b.get("text") for b in blocks_clean if b.get("kind") == "text" and b.get("text")), "")
+        body = str(first_text or "").strip()
+
+    render_mode = (payload.render_mode or "chat").strip().lower()
+    if render_mode not in ("chat", "plain"):
+        render_mode = "chat"
+
     with engine.begin() as conn:
         row = conn.execute(text("""
             INSERT INTO message_templates (
-                name, category, body, variables_json, status, created_at, updated_at
+                name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
             )
             VALUES (
-                :name, :category, :body, CAST(:variables_json AS jsonb), :status, NOW(), NOW()
+                :name, :category, :body, CAST(:variables_json AS jsonb), CAST(:blocks_json AS jsonb), CAST(:params_json AS jsonb), :render_mode, :status, NOW(), NOW()
             )
-            RETURNING id, name, category, body, variables_json, status, created_at, updated_at
+            RETURNING id, name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
         """), {
             "name": name,
             "category": (payload.category or "general").strip().lower() or "general",
-            "body": payload.body or "",
+            "body": body,
             "variables_json": json.dumps(vars_clean, ensure_ascii=False),
+            "blocks_json": json.dumps(blocks_clean, ensure_ascii=False),
+            "params_json": json.dumps(_safe_json_dict(payload.params_json), ensure_ascii=False),
+            "render_mode": render_mode,
             "status": status,
         }).mappings().first()
 
@@ -1717,6 +1947,29 @@ def update_template(template_id: int, payload: TemplatePatch):
         sets.append("variables_json = CAST(:variables_json AS jsonb)")
         params["variables_json"] = json.dumps(vars_clean, ensure_ascii=False)
 
+    if "blocks_json" in data:
+        fallback_body = str(data.get("body") or "")
+        blocks_clean = _normalize_template_blocks(data.get("blocks_json"), body_fallback=fallback_body)
+        sets.append("blocks_json = CAST(:blocks_json AS jsonb)")
+        params["blocks_json"] = json.dumps(blocks_clean, ensure_ascii=False)
+
+        if "body" not in data:
+            first_text = next((b.get("text") for b in blocks_clean if b.get("kind") == "text" and b.get("text")), "")
+            if first_text:
+                sets.append("body = :body_from_blocks")
+                params["body_from_blocks"] = str(first_text)
+
+    if "params_json" in data:
+        sets.append("params_json = CAST(:params_json AS jsonb)")
+        params["params_json"] = json.dumps(_safe_json_dict(data.get("params_json")), ensure_ascii=False)
+
+    if "render_mode" in data:
+        mode = (str(data.get("render_mode") or "")).strip().lower()
+        if mode not in ("chat", "plain"):
+            mode = "chat"
+        sets.append("render_mode = :render_mode")
+        params["render_mode"] = mode
+
     if "status" in data:
         sets.append("status = :status")
         params["status"] = _normalize_status(
@@ -1730,7 +1983,7 @@ def update_template(template_id: int, payload: TemplatePatch):
             UPDATE message_templates
             SET {", ".join(sets)}
             WHERE id = :template_id
-            RETURNING id, name, category, body, variables_json, status, created_at, updated_at
+            RETURNING id, name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
         """), params).mappings().first()
 
     if not row:
@@ -1743,7 +1996,7 @@ def update_template(template_id: int, payload: TemplatePatch):
 def preview_template(template_id: int, payload: TemplatePreviewIn):
     with engine.begin() as conn:
         row = conn.execute(text("""
-            SELECT id, name, body, variables_json
+            SELECT id, name, body, variables_json, blocks_json, params_json, render_mode
             FROM message_templates
             WHERE id = :template_id
             LIMIT 1
@@ -1753,8 +2006,182 @@ def preview_template(template_id: int, payload: TemplatePreviewIn):
         raise HTTPException(status_code=404, detail="template not found")
 
     template = dict(row)
-    rendered = _render_template(template.get("body") or "", payload.variables or {})
-    return {"preview": rendered, "template": template}
+    params_json = _safe_json_dict(template.get("params_json"))
+    user_vars = payload.variables or {}
+
+    resolved_vars: Dict[str, Any] = {}
+    for k, v in params_json.items():
+        resolved_vars[str(k)] = v
+    for k, v in user_vars.items():
+        resolved_vars[str(k)] = v
+
+    blocks = _normalize_template_blocks(template.get("blocks_json"), body_fallback=template.get("body") or "")
+    rendered_blocks: List[Dict[str, Any]] = []
+    missing_params: List[str] = []
+
+    for b in blocks:
+        kind = str(b.get("kind") or "text").lower()
+        delay_ms = int(b.get("delay_ms") or 0)
+        if kind == "image":
+            caption = _render_template(str(b.get("caption") or ""), resolved_vars)
+            block_out = {
+                "kind": "image",
+                "media_id": str(b.get("media_id") or ""),
+                "image_url": str(b.get("image_url") or ""),
+                "caption": caption,
+                "delay_ms": delay_ms,
+            }
+            rendered_blocks.append(block_out)
+            missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved_vars))
+            continue
+
+        text_val = _render_template(str(b.get("text") or ""), resolved_vars)
+        rendered_blocks.append({"kind": "text", "text": text_val, "delay_ms": delay_ms})
+        missing_params.extend(_collect_missing_params(str(b.get("text") or ""), resolved_vars))
+
+    missing_unique: List[str] = []
+    for m in missing_params:
+        if m not in missing_unique:
+            missing_unique.append(m)
+
+    preview_text = "\n\n".join(
+        [x.get("text") or x.get("caption") or "" for x in rendered_blocks if (x.get("text") or x.get("caption"))]
+    ).strip()
+
+    return {
+        "preview": preview_text,
+        "messages_rendered": rendered_blocks,
+        "resolved_params": resolved_vars,
+        "missing_params": missing_unique,
+        "template": template,
+    }
+
+
+@app.post("/api/templates/{template_id}/render")
+def render_template_with_context(template_id: int, payload: TemplateRenderIn):
+    with engine.begin() as conn:
+        tpl = conn.execute(text("""
+            SELECT id, name, body, variables_json, blocks_json, params_json, render_mode
+            FROM message_templates
+            WHERE id = :template_id
+            LIMIT 1
+        """), {"template_id": int(template_id)}).mappings().first()
+
+        if not tpl:
+            raise HTTPException(status_code=404, detail="template not found")
+
+        template = dict(tpl)
+        resolved: Dict[str, Any] = {}
+        for k, v in _safe_json_dict(template.get("params_json")).items():
+            resolved[str(k)] = v
+
+        phone = (payload.phone or "").strip()
+        if phone:
+            conv = conn.execute(text("""
+                SELECT
+                    c.phone,
+                    c.first_name,
+                    c.last_name,
+                    c.city,
+                    c.customer_type,
+                    c.tags,
+                    c.payment_status,
+                    COALESCE(c.crm_meta->>'country', 'CO') AS country,
+                    (
+                        SELECT MIN(m0.created_at)
+                        FROM messages m0
+                        WHERE m0.phone = c.phone
+                    ) AS first_message_date,
+                    (
+                        SELECT MAX(m1.created_at)
+                        FROM messages m1
+                        WHERE m1.phone = c.phone
+                    ) AS last_message_date
+                FROM conversations c
+                WHERE c.phone = :phone
+                LIMIT 1
+            """), {"phone": phone}).mappings().first()
+
+            c = dict(conv or {})
+            first_name = str(c.get("first_name") or "").strip()
+            last_name = str(c.get("last_name") or "").strip()
+            full_name = f"{first_name} {last_name}".strip()
+            resolved.update(
+                {
+                    "nombre": full_name or phone,
+                    "customer_name": full_name or phone,
+                    "customer_phone": phone,
+                    "phone": phone,
+                    "city": str(c.get("city") or "").strip(),
+                    "customer_type": str(c.get("customer_type") or "").strip(),
+                    "customer_tag": str(c.get("tags") or "").strip(),
+                    "payment_status": str(c.get("payment_status") or "").strip(),
+                    "customer_country": str(c.get("country") or "CO").strip(),
+                    "first_message_date": str(c.get("first_message_date") or "").strip(),
+                    "last_message_date": str(c.get("last_message_date") or "").strip(),
+                }
+            )
+
+        if payload.campaign_id:
+            camp = conn.execute(text("""
+                SELECT id, name, objective
+                FROM campaigns
+                WHERE id = :campaign_id
+                LIMIT 1
+            """), {"campaign_id": int(payload.campaign_id)}).mappings().first()
+            if camp:
+                resolved["campaign_name"] = str(camp.get("name") or "").strip()
+                resolved["objective"] = str(camp.get("objective") or "").strip()
+
+    resolved.update(
+        {
+            "business_name": str(os.getenv("BUSINESS_NAME", "Verane")).strip(),
+            "business_phone": str(os.getenv("BUSINESS_PHONE", "")).strip(),
+            "business_email": str(os.getenv("BUSINESS_EMAIL", "")).strip(),
+            "assistant_name": str(os.getenv("ASSISTANT_NAME", "Asistente Verane")).strip(),
+            "assistant_phone": str(os.getenv("ASSISTANT_PHONE", "")).strip(),
+        }
+    )
+
+    for k, v in (payload.overrides or {}).items():
+        resolved[str(k)] = v
+
+    blocks = _normalize_template_blocks(template.get("blocks_json"), body_fallback=template.get("body") or "")
+    rendered_blocks: List[Dict[str, Any]] = []
+    missing_params: List[str] = []
+
+    for b in blocks:
+        kind = str(b.get("kind") or "text").lower()
+        delay_ms = int(b.get("delay_ms") or 0)
+        if kind == "image":
+            caption = _render_template(str(b.get("caption") or ""), resolved)
+            rendered_blocks.append(
+                {
+                    "kind": "image",
+                    "media_id": str(b.get("media_id") or ""),
+                    "image_url": str(b.get("image_url") or ""),
+                    "caption": caption,
+                    "delay_ms": delay_ms,
+                }
+            )
+            missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved))
+            continue
+
+        txt = _render_template(str(b.get("text") or ""), resolved)
+        rendered_blocks.append({"kind": "text", "text": txt, "delay_ms": delay_ms})
+        missing_params.extend(_collect_missing_params(str(b.get("text") or ""), resolved))
+
+    missing_unique: List[str] = []
+    for m in missing_params:
+        if m not in missing_unique:
+            missing_unique.append(m)
+
+    return {
+        "template_id": int(template_id),
+        "messages_rendered": rendered_blocks,
+        "resolved_params": resolved,
+        "missing_params": missing_unique,
+    }
 
 
 # =========================================================
@@ -2021,23 +2448,41 @@ async def campaign_engine_tick_now(
 # Triggers
 # =========================================================
 
+@app.get("/api/triggers/catalog")
+def triggers_catalog():
+    return get_trigger_catalog()
+
+
 @app.get("/api/triggers")
 def list_triggers(active: str = Query("all", description="all|yes|no")):
     active = (active or "all").strip().lower()
     where_sql = ""
     if active == "yes":
-        where_sql = "WHERE is_active = TRUE"
+        where_sql = "WHERE t.is_active = TRUE"
     elif active == "no":
-        where_sql = "WHERE is_active = FALSE"
+        where_sql = "WHERE t.is_active = FALSE"
 
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
             SELECT
-                id, name, event_type, conditions_json, action_json,
-                cooldown_minutes, is_active, last_run_at, created_at, updated_at
-            FROM automation_triggers
+                t.id, t.name, t.event_type, t.trigger_type, t.flow_event,
+                t.conditions_json, t.action_json,
+                t.cooldown_minutes, t.is_active, t.last_run_at, t.created_at, t.updated_at,
+                t.assistant_enabled, t.assistant_message_type,
+                t.priority, t.block_ai, t.stop_on_match, t.only_when_no_takeover,
+                (
+                    SELECT COUNT(*)
+                    FROM trigger_executions e
+                    WHERE e.trigger_id = t.id
+                ) AS executions_count,
+                (
+                    SELECT MAX(e2.executed_at)
+                    FROM trigger_executions e2
+                    WHERE e2.trigger_id = t.id
+                ) AS last_execution_at
+            FROM automation_triggers t
             {where_sql}
-            ORDER BY updated_at DESC, id DESC
+            ORDER BY t.priority ASC, t.updated_at DESC, t.id DESC
         """)).mappings().all()
 
     return {"triggers": [dict(r) for r in rows]}
@@ -2046,30 +2491,52 @@ def list_triggers(active: str = Query("all", description="all|yes|no")):
 @app.post("/api/triggers")
 def create_trigger(payload: TriggerIn):
     name = (payload.name or "").strip()
-    event_type = (payload.event_type or "").strip().lower()
+    event_type = _normalize_event_type(payload.event_type)
     if not name or not event_type:
         raise HTTPException(status_code=400, detail="name and event_type are required")
+
+    trigger_type = _normalize_trigger_type(payload.trigger_type)
+    flow_event = _normalize_flow_event(payload.flow_event)
+    assistant_message_type = _normalize_assistant_message_type(payload.assistant_message_type)
 
     with engine.begin() as conn:
         row = conn.execute(text("""
             INSERT INTO automation_triggers (
-                name, event_type, conditions_json, action_json,
-                cooldown_minutes, is_active, created_at, updated_at
+                name, event_type, trigger_type, flow_event,
+                conditions_json, action_json,
+                cooldown_minutes, is_active,
+                assistant_enabled, assistant_message_type,
+                priority, block_ai, stop_on_match, only_when_no_takeover,
+                created_at, updated_at
             )
             VALUES (
-                :name, :event_type, CAST(:conditions_json AS jsonb), CAST(:action_json AS jsonb),
-                :cooldown_minutes, :is_active, NOW(), NOW()
+                :name, :event_type, :trigger_type, :flow_event,
+                CAST(:conditions_json AS jsonb), CAST(:action_json AS jsonb),
+                :cooldown_minutes, :is_active,
+                :assistant_enabled, :assistant_message_type,
+                :priority, :block_ai, :stop_on_match, :only_when_no_takeover,
+                NOW(), NOW()
             )
             RETURNING
-                id, name, event_type, conditions_json, action_json,
-                cooldown_minutes, is_active, last_run_at, created_at, updated_at
+                id, name, event_type, trigger_type, flow_event,
+                conditions_json, action_json, cooldown_minutes, is_active, last_run_at, created_at, updated_at,
+                assistant_enabled, assistant_message_type,
+                priority, block_ai, stop_on_match, only_when_no_takeover
         """), {
             "name": name,
             "event_type": event_type,
+            "trigger_type": trigger_type,
+            "flow_event": flow_event,
             "conditions_json": json.dumps(_safe_json_dict(payload.conditions_json), ensure_ascii=False),
             "action_json": json.dumps(_safe_json_dict(payload.action_json), ensure_ascii=False),
             "cooldown_minutes": max(0, min(int(payload.cooldown_minutes or 0), 10080)),
             "is_active": bool(payload.is_active),
+            "assistant_enabled": bool(payload.assistant_enabled),
+            "assistant_message_type": assistant_message_type,
+            "priority": max(1, min(int(payload.priority or 100), 9999)),
+            "block_ai": bool(payload.block_ai),
+            "stop_on_match": bool(payload.stop_on_match),
+            "only_when_no_takeover": bool(payload.only_when_no_takeover),
         }).mappings().first()
 
     return {"trigger": dict(row or {})}
@@ -2092,11 +2559,19 @@ def update_trigger(trigger_id: int, payload: TriggerPatch):
         params["name"] = name
 
     if "event_type" in data:
-        event_type = str(data.get("event_type") or "").strip().lower()
+        event_type = _normalize_event_type(str(data.get("event_type") or ""))
         if not event_type:
             raise HTTPException(status_code=400, detail="event_type cannot be empty")
         sets.append("event_type = :event_type")
         params["event_type"] = event_type
+
+    if "trigger_type" in data:
+        sets.append("trigger_type = :trigger_type")
+        params["trigger_type"] = _normalize_trigger_type(str(data.get("trigger_type") or ""))
+
+    if "flow_event" in data:
+        sets.append("flow_event = :flow_event")
+        params["flow_event"] = _normalize_flow_event(str(data.get("flow_event") or ""))
 
     if "conditions_json" in data:
         sets.append("conditions_json = CAST(:conditions_json AS jsonb)")
@@ -2114,14 +2589,40 @@ def update_trigger(trigger_id: int, payload: TriggerPatch):
         sets.append("is_active = :is_active")
         params["is_active"] = bool(data.get("is_active"))
 
+    if "assistant_enabled" in data:
+        sets.append("assistant_enabled = :assistant_enabled")
+        params["assistant_enabled"] = bool(data.get("assistant_enabled"))
+
+    if "assistant_message_type" in data:
+        sets.append("assistant_message_type = :assistant_message_type")
+        params["assistant_message_type"] = _normalize_assistant_message_type(str(data.get("assistant_message_type") or ""))
+
+    if "priority" in data:
+        sets.append("priority = :priority")
+        params["priority"] = max(1, min(int(data.get("priority") or 100), 9999))
+
+    if "block_ai" in data:
+        sets.append("block_ai = :block_ai")
+        params["block_ai"] = bool(data.get("block_ai"))
+
+    if "stop_on_match" in data:
+        sets.append("stop_on_match = :stop_on_match")
+        params["stop_on_match"] = bool(data.get("stop_on_match"))
+
+    if "only_when_no_takeover" in data:
+        sets.append("only_when_no_takeover = :only_when_no_takeover")
+        params["only_when_no_takeover"] = bool(data.get("only_when_no_takeover"))
+
     with engine.begin() as conn:
         row = conn.execute(text(f"""
             UPDATE automation_triggers
             SET {", ".join(sets)}
             WHERE id = :trigger_id
             RETURNING
-                id, name, event_type, conditions_json, action_json,
-                cooldown_minutes, is_active, last_run_at, created_at, updated_at
+                id, name, event_type, trigger_type, flow_event,
+                conditions_json, action_json, cooldown_minutes, is_active, last_run_at, created_at, updated_at,
+                assistant_enabled, assistant_message_type,
+                priority, block_ai, stop_on_match, only_when_no_takeover
         """), params).mappings().first()
 
     if not row:

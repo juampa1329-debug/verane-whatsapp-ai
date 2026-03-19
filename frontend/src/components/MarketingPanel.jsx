@@ -1,4 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
+import TemplateBuilderPanel from "./TemplateBuilderPanel";
+import TriggerBuilderPanel from "./TriggerBuilderPanel";
 
 const box = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -76,15 +78,6 @@ export default function MarketingPanel({ apiBase }) {
     segment_id: "",
     template_id: "",
     scheduled_at: "",
-  });
-
-  const [triggerForm, setTriggerForm] = useState({
-    name: "",
-    event_type: "message_in",
-    cooldown_minutes: 60,
-    is_active: true,
-    conditions_json: '{"contains": "hola"}',
-    action_json: '{"type": "template", "template_id": 1}',
   });
 
   const [flowForm, setFlowForm] = useState({
@@ -270,49 +263,6 @@ export default function MarketingPanel({ apiBase }) {
     }
   };
 
-  const createTrigger = async () => {
-    setError("");
-    try {
-      const payload = {
-        name: triggerForm.name.trim(),
-        event_type: triggerForm.event_type,
-        cooldown_minutes: Number(triggerForm.cooldown_minutes || 0),
-        is_active: !!triggerForm.is_active,
-        conditions_json: parseJsonSafe(triggerForm.conditions_json, {}),
-        action_json: parseJsonSafe(triggerForm.action_json, {}),
-      };
-
-      const r = await fetch(`${API}/api/triggers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.detail || "No se pudo crear trigger");
-      setTriggerForm((p) => ({ ...p, name: "" }));
-      await loadTriggers();
-      setTempStatus("Trigger creado");
-    } catch (e) {
-      setError(String(e.message || e));
-    }
-  };
-
-  const toggleTrigger = async (t) => {
-    setError("");
-    try {
-      const r = await fetch(`${API}/api/triggers/${encodeURIComponent(t.id)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: !t.is_active }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.detail || "No se pudo actualizar trigger");
-      await loadTriggers();
-    } catch (e) {
-      setError(String(e.message || e));
-    }
-  };
-
   const createFlow = async () => {
     setError("");
     try {
@@ -387,49 +337,13 @@ export default function MarketingPanel({ apiBase }) {
       {status ? <div style={{ color: "#9be15d", marginBottom: 8 }}>{status}</div> : null}
 
       {tab === "templates" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
-          <div style={box}>
-            <h3 style={{ marginTop: 0 }}>Nueva plantilla</h3>
-            <div style={{ display: "grid", gap: 8 }}>
-              <input style={input} placeholder="Nombre" value={templateForm.name} onChange={(e) => setTemplateForm((p) => ({ ...p, name: e.target.value }))} />
-              <input style={input} placeholder="Categoría" value={templateForm.category} onChange={(e) => setTemplateForm((p) => ({ ...p, category: e.target.value }))} />
-              <input style={input} placeholder="Variables (coma)" value={templateForm.variables} onChange={(e) => setTemplateForm((p) => ({ ...p, variables: e.target.value }))} />
-              <select style={input} value={templateForm.status} onChange={(e) => setTemplateForm((p) => ({ ...p, status: e.target.value }))}>
-                <option value="draft">draft</option>
-                <option value="approved">approved</option>
-                <option value="archived">archived</option>
-              </select>
-              <textarea style={{ ...input, minHeight: 140 }} placeholder="Cuerpo con variables {{nombre}}" value={templateForm.body} onChange={(e) => setTemplateForm((p) => ({ ...p, body: e.target.value }))} />
-              <button onClick={createTemplate} style={smallBtn}>Crear plantilla</button>
-            </div>
-          </div>
-
-          <div style={box}>
-            <h3 style={{ marginTop: 0 }}>Plantillas</h3>
-            <div style={{ overflow: "auto", maxHeight: 520 }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ textAlign: "left" }}>
-                    <th>Nombre</th>
-                    <th>Categoría</th>
-                    <th>Status</th>
-                    <th>Variables</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {templates.map((t) => (
-                    <tr key={t.id}>
-                      <td>{t.name}</td>
-                      <td>{t.category}</td>
-                      <td>{t.status}</td>
-                      <td>{Array.isArray(t.variables_json) ? t.variables_json.join(", ") : "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <TemplateBuilderPanel
+          apiBase={API}
+          templates={templates}
+          onTemplatesReload={loadTemplates}
+          onError={(msg) => setError(String(msg || ""))}
+          onStatus={setTempStatus}
+        />
       ) : null}
 
       {tab === "campaigns" ? (
@@ -486,39 +400,14 @@ export default function MarketingPanel({ apiBase }) {
       ) : null}
 
       {tab === "triggers" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
-          <div style={box}>
-            <h3 style={{ marginTop: 0 }}>Nuevo trigger</h3>
-            <div style={{ display: "grid", gap: 8 }}>
-              <input style={input} placeholder="Nombre" value={triggerForm.name} onChange={(e) => setTriggerForm((p) => ({ ...p, name: e.target.value }))} />
-              <input style={input} placeholder="Evento (message_in, no_reply_24h...)" value={triggerForm.event_type} onChange={(e) => setTriggerForm((p) => ({ ...p, event_type: e.target.value }))} />
-              <input style={input} type="number" placeholder="Cooldown minutos" value={triggerForm.cooldown_minutes} onChange={(e) => setTriggerForm((p) => ({ ...p, cooldown_minutes: e.target.value }))} />
-              <textarea style={{ ...input, minHeight: 80 }} value={triggerForm.conditions_json} onChange={(e) => setTriggerForm((p) => ({ ...p, conditions_json: e.target.value }))} />
-              <textarea style={{ ...input, minHeight: 80 }} value={triggerForm.action_json} onChange={(e) => setTriggerForm((p) => ({ ...p, action_json: e.target.value }))} />
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input type="checkbox" checked={!!triggerForm.is_active} onChange={(e) => setTriggerForm((p) => ({ ...p, is_active: e.target.checked }))} />
-                Activo
-              </label>
-              <button onClick={createTrigger} style={smallBtn}>Crear trigger</button>
-            </div>
-          </div>
-
-          <div style={box}>
-            <h3 style={{ marginTop: 0 }}>Triggers</h3>
-            <div style={{ display: "grid", gap: 8 }}>
-              {triggers.map((t) => (
-                <div key={t.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{t.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.75 }}>{t.event_type} | cooldown {t.cooldown_minutes}m</div>
-                    <div style={{ fontSize: 11, opacity: 0.65 }}>Actualizado: {fmtDt(t.updated_at)}</div>
-                  </div>
-                  <button onClick={() => toggleTrigger(t)} style={smallBtn}>{t.is_active ? "Desactivar" : "Activar"}</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <TriggerBuilderPanel
+          apiBase={API}
+          templates={templates}
+          triggers={triggers}
+          onTriggersReload={loadTriggers}
+          onError={(msg) => setError(String(msg || ""))}
+          onStatus={setTempStatus}
+        />
       ) : null}
 
       {tab === "remarketing" ? (

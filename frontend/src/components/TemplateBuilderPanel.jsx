@@ -25,6 +25,17 @@ const smallBtn = {
   cursor: "pointer",
 };
 
+const TEMPLATE_STATUS_OPTIONS = [
+  { value: "draft", label: "Borrador" },
+  { value: "approved", label: "Aprobada" },
+  { value: "archived", label: "Archivada" },
+];
+
+const TEMPLATE_RENDER_MODE_OPTIONS = [
+  { value: "chat", label: "Chat" },
+  { value: "plain", label: "Plano" },
+];
+
 function emptyTemplateForm() {
   return {
     id: null,
@@ -100,6 +111,69 @@ function paramsRowsFromJson(raw, fallbackKeys = []) {
   return rows;
 }
 
+function buildEditorSignature(form, blocks, params) {
+  const normalizedForm = {
+    name: String(form?.name || "").trim(),
+    category: String(form?.category || "general").trim().toLowerCase() || "general",
+    status: String(form?.status || "draft").trim().toLowerCase() || "draft",
+    render_mode: String(form?.render_mode || "chat").trim().toLowerCase() || "chat",
+    body: String(form?.body || ""),
+  };
+
+  const normalizedBlocks = (blocks || []).map((b) => ({
+    kind: String(b?.kind || "text").toLowerCase(),
+    text: String(b?.text || ""),
+    media_id: String(b?.media_id || ""),
+    image_url: String(b?.image_url || ""),
+    caption: String(b?.caption || ""),
+    delay_ms: Number(b?.delay_ms || 0),
+  }));
+
+  const normalizedParams = (params || []).map((p) => ({
+    key: String(p?.key || "").trim(),
+    example: String(p?.example || ""),
+  }));
+
+  return JSON.stringify({ form: normalizedForm, blocks: normalizedBlocks, params: normalizedParams });
+}
+
+function buildEditorStateFromTemplate(tpl) {
+  if (!tpl) {
+    return {
+      form: emptyTemplateForm(),
+      blocks: [emptyBlock("text")],
+      params: [{ key: "customer_name", example: "Juan Perez" }],
+    };
+  }
+
+  return {
+    form: {
+      id: tpl.id,
+      name: tpl.name || "",
+      category: tpl.category || "general",
+      status: tpl.status || "draft",
+      render_mode: tpl.render_mode || "chat",
+      body: tpl.body || "",
+    },
+    blocks: normalizeTemplateBlocks(tpl.blocks_json, tpl.body || ""),
+    params: paramsRowsFromJson(tpl.params_json, tpl.variables_json || []),
+  };
+}
+
+function fmtDate(value) {
+  if (!value) return "-";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return String(value);
+  }
+}
+
+function statusLabel(value) {
+  const key = String(value || "").toLowerCase();
+  return TEMPLATE_STATUS_OPTIONS.find((s) => s.value === key)?.label || key || "-";
+}
+
 export default function TemplateBuilderPanel({
   apiBase,
   templates,
@@ -108,12 +182,21 @@ export default function TemplateBuilderPanel({
   onStatus,
 }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const initialEditor = useMemo(() => buildEditorStateFromTemplate(null), []);
+
   const [paramsCatalog, setParamsCatalog] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState(null);
-  const [templateForm, setTemplateForm] = useState(emptyTemplateForm());
-  const [templateBlocks, setTemplateBlocks] = useState([emptyBlock("text")]);
-  const [paramRows, setParamRows] = useState([{ key: "customer_name", example: "Juan Perez" }]);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [templateStatusFilter, setTemplateStatusFilter] = useState("all");
+
+  const [templateForm, setTemplateForm] = useState(initialEditor.form);
+  const [templateBlocks, setTemplateBlocks] = useState(initialEditor.blocks);
+  const [paramRows, setParamRows] = useState(initialEditor.params);
   const [showChatPreview, setShowChatPreview] = useState(true);
+  const [draggingBlockIndex, setDraggingBlockIndex] = useState(null);
+  const [dragOverBlockIndex, setDragOverBlockIndex] = useState(null);
+  const [baselineSignature, setBaselineSignature] = useState(() => buildEditorSignature(initialEditor.form, initialEditor.blocks, initialEditor.params));
 
   useEffect(() => {
     const loadCatalog = async () => {
@@ -129,32 +212,21 @@ export default function TemplateBuilderPanel({
     loadCatalog();
   }, [API, onError]);
 
-  useEffect(() => {
-    if (!selectedTemplateId && templates?.[0]?.id) {
-      setSelectedTemplateId(templates[0].id);
-    }
+  const selectedTemplate = useMemo(() => {
+    if (!selectedTemplateId) return null;
+    return (templates || []).find((t) => t.id === selectedTemplateId) || null;
   }, [templates, selectedTemplateId]);
 
-  useEffect(() => {
-    if (!selectedTemplateId) {
-      setTemplateForm(emptyTemplateForm());
-      setTemplateBlocks([emptyBlock("text")]);
-      setParamRows([{ key: "customer_name", example: "Juan Perez" }]);
-      return;
-    }
-    const t = (templates || []).find((x) => x.id === selectedTemplateId);
-    if (!t) return;
-    setTemplateForm({
-      id: t.id,
-      name: t.name || "",
-      category: t.category || "general",
-      status: t.status || "draft",
-      render_mode: t.render_mode || "chat",
-      body: t.body || "",
+  const filteredTemplates = useMemo(() => {
+    const q = String(templateSearch || "").trim().toLowerCase();
+    return (templates || []).filter((t) => {
+      const st = String(t.status || "").toLowerCase();
+      if (templateStatusFilter !== "all" && st !== templateStatusFilter) return false;
+      if (!q) return true;
+      const haystack = `${t.name || ""} ${t.category || ""} ${t.body || ""}`.toLowerCase();
+      return haystack.includes(q);
     });
-    setTemplateBlocks(normalizeTemplateBlocks(t.blocks_json, t.body || ""));
-    setParamRows(paramsRowsFromJson(t.params_json, t.variables_json || []));
-  }, [selectedTemplateId, templates]);
+  }, [templateSearch, templateStatusFilter, templates]);
 
   const previewVars = useMemo(() => {
     const out = {};
@@ -230,18 +302,74 @@ export default function TemplateBuilderPanel({
     };
   }, [paramRows, templateBlocks, templateForm]);
 
-  const onNewTemplate = () => {
-    setSelectedTemplateId(null);
-    setTemplateForm(emptyTemplateForm());
-    setTemplateBlocks([emptyBlock("text")]);
-    setParamRows([{ key: "customer_name", example: "Juan Perez" }]);
+  const currentSignature = useMemo(
+    () => buildEditorSignature(templateForm, templateBlocks, paramRows),
+    [templateForm, templateBlocks, paramRows]
+  );
+  const isDirty = currentSignature !== baselineSignature;
+
+  const applyEditorState = (nextEditor, markClean = true) => {
+    setTemplateForm(nextEditor.form);
+    setTemplateBlocks(nextEditor.blocks);
+    setParamRows(nextEditor.params);
+    if (markClean) {
+      setBaselineSignature(buildEditorSignature(nextEditor.form, nextEditor.blocks, nextEditor.params));
+    }
   };
+
+  const confirmDiscardIfDirty = () => {
+    if (!isDirty) return true;
+    return window.confirm("Tienes cambios sin guardar. Si continuas, se descartaran. ¿Deseas seguir?");
+  };
+
+  const handleNewTemplate = () => {
+    if (!confirmDiscardIfDirty()) return;
+    const fresh = buildEditorStateFromTemplate(null);
+    setIsCreatingNew(true);
+    setSelectedTemplateId(null);
+    applyEditorState(fresh, true);
+    onStatus?.("Modo nueva plantilla");
+  };
+
+  const handleSelectTemplate = (templateId) => {
+    const nextId = Number(templateId || 0);
+    if (!nextId) return;
+    if (!isCreatingNew && selectedTemplateId === nextId) return;
+    if (!confirmDiscardIfDirty()) return;
+    setIsCreatingNew(false);
+    setSelectedTemplateId(nextId);
+  };
+
+  useEffect(() => {
+    if (isCreatingNew) return;
+    const rows = templates || [];
+    if (!rows.length) {
+      if (!selectedTemplateId) {
+        const fresh = buildEditorStateFromTemplate(null);
+        applyEditorState(fresh, true);
+      }
+      return;
+    }
+
+    const exists = rows.some((x) => x.id === selectedTemplateId);
+    if (!selectedTemplateId || !exists) {
+      setSelectedTemplateId(rows[0].id);
+    }
+  }, [templates, selectedTemplateId, isCreatingNew]);
+
+  useEffect(() => {
+    if (isCreatingNew) return;
+    if (!selectedTemplateId) return;
+    const t = (templates || []).find((x) => x.id === selectedTemplateId);
+    if (!t) return;
+    applyEditorState(buildEditorStateFromTemplate(t), true);
+  }, [selectedTemplateId, templates, isCreatingNew]);
 
   const saveTemplate = async () => {
     try {
       if (!payload.name) throw new Error("Nombre de plantilla requerido");
 
-      const isUpdate = !!selectedTemplateId;
+      const isUpdate = !isCreatingNew && !!selectedTemplateId;
       const url = isUpdate
         ? `${API}/api/templates/${encodeURIComponent(selectedTemplateId)}`
         : `${API}/api/templates`;
@@ -256,8 +384,15 @@ export default function TemplateBuilderPanel({
       if (!r.ok) throw new Error(d?.detail || "No se pudo guardar plantilla");
 
       const tpl = d?.template || null;
+      if (tpl?.id) {
+        setIsCreatingNew(false);
+        setSelectedTemplateId(tpl.id);
+        applyEditorState(buildEditorStateFromTemplate(tpl), true);
+      } else {
+        setBaselineSignature(buildEditorSignature(templateForm, templateBlocks, paramRows));
+      }
+
       await onTemplatesReload?.();
-      if (tpl?.id) setSelectedTemplateId(tpl.id);
       onStatus?.(isUpdate ? "Plantilla actualizada" : "Plantilla creada");
     } catch (e) {
       onError?.(String(e.message || e));
@@ -265,22 +400,15 @@ export default function TemplateBuilderPanel({
   };
 
   const revertTemplate = () => {
-    if (!selectedTemplateId) {
-      onNewTemplate();
+    if (isCreatingNew || !selectedTemplateId) {
+      const fresh = buildEditorStateFromTemplate(null);
+      applyEditorState(fresh, true);
+      onStatus?.("Formulario limpio");
       return;
     }
     const t = (templates || []).find((x) => x.id === selectedTemplateId);
     if (!t) return;
-    setTemplateForm({
-      id: t.id,
-      name: t.name || "",
-      category: t.category || "general",
-      status: t.status || "draft",
-      render_mode: t.render_mode || "chat",
-      body: t.body || "",
-    });
-    setTemplateBlocks(normalizeTemplateBlocks(t.blocks_json, t.body || ""));
-    setParamRows(paramsRowsFromJson(t.params_json, t.variables_json || []));
+    applyEditorState(buildEditorStateFromTemplate(t), true);
     onStatus?.("Cambios revertidos");
   };
 
@@ -291,6 +419,43 @@ export default function TemplateBuilderPanel({
   const addBlock = (kind = "text") => setTemplateBlocks((prev) => [...prev, emptyBlock(kind)]);
   const updateBlock = (idx, patch) => setTemplateBlocks((prev) => prev.map((b, i) => (i === idx ? { ...b, ...patch } : b)));
   const removeBlock = (idx) => setTemplateBlocks((prev) => prev.filter((_, i) => i !== idx));
+
+  const reorderBlocks = (fromIdx, toIdx) => {
+    const from = Number(fromIdx);
+    const to = Number(toIdx);
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
+    setTemplateBlocks((prev) => {
+      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+
+  const handleDragStartBlock = (idx) => {
+    setDraggingBlockIndex(idx);
+    setDragOverBlockIndex(idx);
+  };
+
+  const handleDragOverBlock = (idx, e) => {
+    e.preventDefault();
+    if (draggingBlockIndex === null) return;
+    if (idx !== dragOverBlockIndex) setDragOverBlockIndex(idx);
+  };
+
+  const handleDropBlock = (idx, e) => {
+    e.preventDefault();
+    if (draggingBlockIndex === null) return;
+    reorderBlocks(draggingBlockIndex, idx);
+    setDraggingBlockIndex(null);
+    setDragOverBlockIndex(null);
+  };
+
+  const handleDragEndBlock = () => {
+    setDraggingBlockIndex(null);
+    setDragOverBlockIndex(null);
+  };
 
   const insertParamInBlock = (idx, field) => {
     const block = templateBlocks[idx] || {};
@@ -327,200 +492,312 @@ export default function TemplateBuilderPanel({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "560px 1fr", gap: 12 }}>
-      <div style={{ ...box, display: "grid", gap: 12, maxHeight: 700, overflow: "auto" }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          <select
-            style={{ ...input, flex: 1 }}
-            value={selectedTemplateId || ""}
-            onChange={(e) => setSelectedTemplateId(e.target.value ? Number(e.target.value) : null)}
-          >
-            <option value="">(Nueva plantilla)</option>
-            {(templates || []).map((t) => (
-              <option key={t.id} value={t.id}>
-                #{t.id} - {t.name}
-              </option>
+    <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12, alignItems: "start" }}>
+      <div style={{ ...box, display: "grid", gap: 10, maxHeight: 740, overflow: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0 }}>Plantillas</h3>
+          <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={handleNewTemplate}>+ Nueva</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 8 }}>
+          <input
+            style={input}
+            placeholder="Buscar..."
+            value={templateSearch}
+            onChange={(e) => setTemplateSearch(e.target.value)}
+          />
+          <select style={input} value={templateStatusFilter} onChange={(e) => setTemplateStatusFilter(e.target.value)}>
+            <option value="all">Todos</option>
+            {TEMPLATE_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-          <button style={smallBtn} onClick={onNewTemplate}>Nueva</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Nombre</div>
-            <input style={input} value={templateForm.name} onChange={(e) => setTemplateForm((p) => ({ ...p, name: e.target.value }))} />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Categoria</div>
-            <input style={input} value={templateForm.category} onChange={(e) => setTemplateForm((p) => ({ ...p, category: e.target.value }))} />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Status</div>
-            <select style={input} value={templateForm.status} onChange={(e) => setTemplateForm((p) => ({ ...p, status: e.target.value }))}>
-              <option value="draft">draft</option>
-              <option value="approved">approved</option>
-              <option value="archived">archived</option>
-            </select>
-          </label>
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Vista</div>
-            <select style={input} value={templateForm.render_mode} onChange={(e) => setTemplateForm((p) => ({ ...p, render_mode: e.target.value }))}>
-              <option value="chat">chat</option>
-              <option value="plain">plain</option>
-            </select>
-          </label>
-        </div>
-
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <h4 style={{ margin: 0 }}>Parametros (opcional)</h4>
-            <button style={smallBtn} onClick={addParamRow}>+ Parametro</button>
-          </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            {paramRows.map((row, idx) => (
-              <div key={`pr-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6 }}>
-                <select style={input} value={row.key} onChange={(e) => updateParamRow(idx, { key: e.target.value })}>
-                  <option value="">Parametro...</option>
-                  {(paramsCatalog || []).map((p) => (
-                    <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
-                  ))}
-                </select>
-                <input style={input} value={row.example} onChange={(e) => updateParamRow(idx, { example: e.target.value })} placeholder="Ejemplo" />
-                <button style={smallBtn} onClick={() => removeParamRow(idx)}>x</button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <h4 style={{ margin: 0 }}>Mensajes de la secuencia</h4>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button style={smallBtn} onClick={() => addBlock("text")}>+ Texto</button>
-              <button style={smallBtn} onClick={() => addBlock("image")}>+ Imagen</button>
-            </div>
+        <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 170px", gap: 8, padding: "8px 10px", fontSize: 12, opacity: 0.8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+            <div>Nombre</div>
+            <div>Mensajes</div>
+            <div>Creado</div>
           </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
-            {templateBlocks.map((b, idx) => {
-              const kind = String(b.kind || "text").toLowerCase();
+          <div style={{ maxHeight: 590, overflow: "auto", display: "grid" }}>
+            {filteredTemplates.map((t) => {
+              const count = normalizeTemplateBlocks(t.blocks_json, t.body || "").length;
+              const selected = !isCreatingNew && selectedTemplateId === t.id;
               return (
-                <div key={`blk-${idx}`} style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10, padding: 10 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr auto", gap: 6, marginBottom: 8 }}>
-                    <select
-                      style={input}
-                      value={kind}
-                      onChange={(e) => {
-                        const nextKind = e.target.value;
-                        if (nextKind === "image") {
-                          updateBlock(idx, { kind: "image", text: undefined, caption: b.caption || "", media_id: b.media_id || "", image_url: b.image_url || "" });
-                        } else {
-                          updateBlock(idx, { kind: "text", text: b.text || b.caption || "", caption: undefined, media_id: undefined, image_url: undefined });
-                        }
-                      }}
-                    >
-                      <option value="text">Texto</option>
-                      <option value="image">Imagen</option>
-                    </select>
-
-                    <input style={input} type="number" value={Number(b.delay_ms || 0)} onChange={(e) => updateBlock(idx, { delay_ms: e.target.value })} placeholder="Delay ms" />
-                    <button style={smallBtn} onClick={() => removeBlock(idx)}>Eliminar</button>
+                <button
+                  type="button"
+                  key={t.id}
+                  onClick={() => handleSelectTemplate(t.id)}
+                  style={{
+                    textAlign: "left",
+                    border: "none",
+                    borderBottom: "1px solid rgba(255,255,255,0.08)",
+                    background: selected ? "rgba(255,255,255,0.12)" : "transparent",
+                    color: "inherit",
+                    padding: "10px",
+                    cursor: "pointer",
+                    display: "grid",
+                    gridTemplateColumns: "1fr 90px 170px",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                  title={`Estado: ${statusLabel(t.status)}${t.category ? ` | Categoria: ${t.category}` : ""}`}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.name || "(sin nombre)"}</div>
+                    <div style={{ fontSize: 11, opacity: 0.7 }}>{statusLabel(t.status)}</div>
                   </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
-                    <select style={input} value={b.insert_key || ""} onChange={(e) => updateBlock(idx, { insert_key: e.target.value })}>
-                      <option value="">Insertar parametro...</option>
-                      {(paramsCatalog || []).map((p) => (
-                        <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
-                      ))}
-                    </select>
-                    <button style={smallBtn} onClick={() => insertParamInBlock(idx, kind === "image" ? "caption" : "text")}>Insertar</button>
-                  </div>
-
-                  {kind === "image" ? (
-                    <div style={{ display: "grid", gap: 6 }}>
-                      <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
-                      <input style={input} value={b.image_url || ""} onChange={(e) => updateBlock(idx, { image_url: e.target.value })} placeholder="URL de preview (opcional)" />
-                      <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption de la imagen" />
-                      <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
-                        Subir imagen
-                        <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadTemplateImage(idx, e.target.files?.[0])} />
-                      </label>
-                    </div>
-                  ) : (
-                    <textarea style={{ ...input, minHeight: 85 }} value={b.text || ""} onChange={(e) => updateBlock(idx, { text: e.target.value })} placeholder="Texto del mensaje" />
-                  )}
-                </div>
+                  <div>{count}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85 }}>{fmtDate(t.created_at)}</div>
+                </button>
               );
             })}
+            {!filteredTemplates.length ? (
+              <div style={{ padding: 14, fontSize: 13, opacity: 0.7 }}>No hay plantillas para ese filtro.</div>
+            ) : null}
           </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={saveTemplate}>Guardar</button>
-          <button style={smallBtn} onClick={revertTemplate}>Revertir</button>
         </div>
       </div>
 
-      <div style={{ ...box, minHeight: 700, display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <h3 style={{ margin: 0 }}>Mensajes</h3>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-            <input type="checkbox" checked={showChatPreview} onChange={(e) => setShowChatPreview(e.target.checked)} />
-            Vista chat
-          </label>
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.12)",
-            padding: 10,
-            overflow: "auto",
-            background: "rgba(0,0,0,0.18)",
-            display: "grid",
-            gap: 8,
-          }}
-        >
-          {previewBlocks.map((m, idx) => (
-            <div key={`pv-${idx}`}>
-              <div
-                style={{
-                  maxWidth: "88%",
-                  marginLeft: showChatPreview ? "auto" : 0,
-                  background: showChatPreview ? "rgba(8,122,111,0.85)" : "rgba(255,255,255,0.06)",
-                  color: "#fff",
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  fontSize: 14,
-                }}
-              >
-                {m.kind === "image" ? (
-                  <>
-                    {(m.image_url || m.media_id) ? (
-                      <div style={{ marginBottom: m.caption ? 8 : 0 }}>
-                        <img
-                          src={m.image_url || `${API}/api/media/proxy/${encodeURIComponent(m.media_id)}`}
-                          alt="preview"
-                          style={{ maxWidth: 260, borderRadius: 8, display: "block" }}
-                        />
-                      </div>
-                    ) : null}
-                    {m.caption || "[imagen]"}
-                  </>
-                ) : (
-                  m.text || "[texto vacio]"
-                )}
-              </div>
-              <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                delay: {Number(m.delay_ms || 0)} ms
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(520px, 1fr) minmax(320px, 0.9fr)", gap: 12, alignItems: "start" }}>
+        <div style={{ ...box, display: "grid", gap: 12, maxHeight: 740, overflow: "auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+            <div>
+              <h3 style={{ margin: 0 }}>{isCreatingNew ? "Nueva plantilla" : (selectedTemplate?.name || "Plantilla")}</h3>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                {isCreatingNew ? "Modo creacion" : `ID #${selectedTemplate?.id || "-"} | ${statusLabel(templateForm.status)}`}
               </div>
             </div>
-          ))}
+            <div style={{ fontSize: 12, color: isDirty ? "#f6c15b" : "#9be15d" }}>
+              {isDirty ? "Cambios sin guardar" : "Guardado"}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <label>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>Nombre</div>
+              <input style={input} value={templateForm.name} onChange={(e) => setTemplateForm((p) => ({ ...p, name: e.target.value }))} />
+            </label>
+            <label>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>Categoria</div>
+              <input style={input} value={templateForm.category} onChange={(e) => setTemplateForm((p) => ({ ...p, category: e.target.value }))} />
+            </label>
+            <label>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>Estado</div>
+              <select style={input} value={templateForm.status} onChange={(e) => setTemplateForm((p) => ({ ...p, status: e.target.value }))}>
+                {TEMPLATE_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>Vista</div>
+              <select style={input} value={templateForm.render_mode} onChange={(e) => setTemplateForm((p) => ({ ...p, render_mode: e.target.value }))}>
+                {TEMPLATE_RENDER_MODE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <h4 style={{ margin: 0 }}>Parametros (opcional)</h4>
+              <button style={smallBtn} onClick={addParamRow}>+ Parametro</button>
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {paramRows.map((row, idx) => (
+                <div key={`pr-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6 }}>
+                  <select style={input} value={row.key} onChange={(e) => updateParamRow(idx, { key: e.target.value })}>
+                    <option value="">Parametro...</option>
+                    {(paramsCatalog || []).map((p) => (
+                      <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
+                    ))}
+                  </select>
+                  <input style={input} value={row.example} onChange={(e) => updateParamRow(idx, { example: e.target.value })} placeholder="Ejemplo" />
+                  <button style={smallBtn} onClick={() => removeParamRow(idx)}>x</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <h4 style={{ margin: 0 }}>Mensajes de la secuencia</h4>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button style={smallBtn} onClick={() => addBlock("text")}>+ Texto</button>
+                <button style={smallBtn} onClick={() => addBlock("image")}>+ Imagen</button>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {templateBlocks.map((b, idx) => {
+                const kind = String(b.kind || "text").toLowerCase();
+                return (
+                  <div
+                    key={`blk-${idx}`}
+                    onDragOver={(e) => handleDragOverBlock(idx, e)}
+                    onDrop={(e) => handleDropBlock(idx, e)}
+                    style={{
+                      border: dragOverBlockIndex === idx ? "1px solid rgba(46,204,113,0.95)" : "1px solid rgba(255,255,255,0.14)",
+                      borderRadius: 10,
+                      padding: 10,
+                    }}
+                  >
+                    <div style={{ display: "grid", gridTemplateColumns: "auto 130px 1fr auto", gap: 6, marginBottom: 8 }}>
+                      <button
+                        style={{ ...smallBtn, cursor: "grab", whiteSpace: "nowrap" }}
+                        title="Arrastrar para reordenar"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", String(idx));
+                          handleDragStartBlock(idx);
+                        }}
+                        onDragEnd={handleDragEndBlock}
+                      >
+                        Arrastrar
+                      </button>
+                      <select
+                        style={input}
+                        value={kind}
+                        onChange={(e) => {
+                          const nextKind = e.target.value;
+                          if (nextKind === "image") {
+                            updateBlock(idx, { kind: "image", text: undefined, caption: b.caption || "", media_id: b.media_id || "", image_url: b.image_url || "" });
+                          } else {
+                            updateBlock(idx, { kind: "text", text: b.text || b.caption || "", caption: undefined, media_id: undefined, image_url: undefined });
+                          }
+                        }}
+                      >
+                        <option value="text">Texto</option>
+                        <option value="image">Imagen</option>
+                      </select>
+
+                      <input style={input} type="number" value={Number(b.delay_ms || 0)} onChange={(e) => updateBlock(idx, { delay_ms: e.target.value })} placeholder="Delay ms" />
+                      <button style={smallBtn} onClick={() => removeBlock(idx)}>Eliminar</button>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
+                      <select style={input} value={b.insert_key || ""} onChange={(e) => updateBlock(idx, { insert_key: e.target.value })}>
+                        <option value="">Insertar parametro...</option>
+                        {(paramsCatalog || []).map((p) => (
+                          <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
+                        ))}
+                      </select>
+                      <button style={smallBtn} onClick={() => insertParamInBlock(idx, kind === "image" ? "caption" : "text")}>Insertar</button>
+                    </div>
+
+                    {kind === "image" ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
+                        <input style={input} value={b.image_url || ""} onChange={(e) => updateBlock(idx, { image_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption de la imagen" />
+                        <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
+                          Subir imagen
+                          <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadTemplateImage(idx, e.target.files?.[0])} />
+                        </label>
+                      </div>
+                    ) : (
+                      <textarea style={{ ...input, minHeight: 85 }} value={b.text || ""} onChange={(e) => updateBlock(idx, { text: e.target.value })} placeholder="Texto del mensaje" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={saveTemplate}>Guardar</button>
+            <button style={smallBtn} onClick={revertTemplate}>Revertir</button>
+          </div>
+        </div>
+
+        <div style={{ ...box, minHeight: 740, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ margin: 0 }}>Mensajes</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input type="checkbox" checked={showChatPreview} onChange={(e) => setShowChatPreview(e.target.checked)} />
+              Vista chat
+            </label>
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.12)",
+              padding: 10,
+              overflow: "auto",
+              background: "rgba(0,0,0,0.18)",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            {previewBlocks.map((m, idx) => (
+              <div
+                key={`pv-${idx}`}
+                onDragOver={(e) => handleDragOverBlock(idx, e)}
+                onDrop={(e) => handleDropBlock(idx, e)}
+                style={{
+                  border: dragOverBlockIndex === idx ? "1px dashed rgba(46,204,113,0.95)" : "1px dashed transparent",
+                  borderRadius: 10,
+                  padding: 4,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: showChatPreview ? "flex-end" : "flex-start", marginBottom: 4 }}>
+                  <button
+                    style={{ ...smallBtn, padding: "4px 8px", fontSize: 12, cursor: "grab" }}
+                    title="Arrastrar para reordenar"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(idx));
+                      handleDragStartBlock(idx);
+                    }}
+                    onDragEnd={handleDragEndBlock}
+                  >
+                    Arrastrar
+                  </button>
+                </div>
+                <div
+                  style={{
+                    maxWidth: "88%",
+                    marginLeft: showChatPreview ? "auto" : 0,
+                    background: showChatPreview ? "rgba(8,122,111,0.85)" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    fontSize: 14,
+                  }}
+                >
+                  {m.kind === "image" ? (
+                    <>
+                      {(m.image_url || m.media_id) ? (
+                        <div style={{ marginBottom: m.caption ? 8 : 0 }}>
+                          <img
+                            src={m.image_url || `${API}/api/media/proxy/${encodeURIComponent(m.media_id)}`}
+                            alt="preview"
+                            style={{ maxWidth: 260, borderRadius: 8, display: "block" }}
+                          />
+                        </div>
+                      ) : null}
+                      {m.caption || "[imagen]"}
+                    </>
+                  ) : (
+                    m.text || "[texto vacio]"
+                  )}
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                  delay: {Number(m.delay_ms || 0)} ms
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

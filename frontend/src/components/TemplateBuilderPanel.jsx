@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const box = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -51,6 +51,12 @@ function emptyBlock(kind = "text") {
   if (kind === "image") {
     return { kind: "image", media_id: "", image_url: "", caption: "", delay_ms: 0, insert_key: "customer_name" };
   }
+  if (kind === "video") {
+    return { kind: "video", media_id: "", video_url: "", caption: "", delay_ms: 0, insert_key: "customer_name" };
+  }
+  if (kind === "audio") {
+    return { kind: "audio", media_id: "", audio_url: "", delay_ms: 0, insert_key: "customer_name" };
+  }
   return { kind: "text", text: "", delay_ms: 0, insert_key: "customer_name" };
 }
 
@@ -71,12 +77,25 @@ function normalizeTemplateBlocks(rawBlocks, bodyFallback = "") {
     const kind = String(b.kind || b.type || "text").toLowerCase();
     const delayMs = Number.isFinite(Number(b.delay_ms)) ? Math.max(0, Number(b.delay_ms)) : 0;
 
-    if (kind === "image") {
+    if (kind === "image" || kind === "video" || kind === "audio") {
       const mediaId = String(b.media_id || "").trim();
-      const imageUrl = String(b.image_url || b.url || "").trim();
+      const mediaUrl = String(
+        (kind === "image" ? b.image_url : kind === "video" ? b.video_url : b.audio_url)
+        || b.media_url
+        || b.url
+        || ""
+      ).trim();
       const caption = String(b.caption || "");
-      if (!mediaId && !imageUrl) return;
-      out.push({ kind: "image", media_id: mediaId, image_url: imageUrl, caption, delay_ms: delayMs, insert_key: "customer_name" });
+      if (!mediaId && !mediaUrl) return;
+      if (kind === "image") {
+        out.push({ kind: "image", media_id: mediaId, image_url: mediaUrl, caption, delay_ms: delayMs, insert_key: "customer_name" });
+        return;
+      }
+      if (kind === "video") {
+        out.push({ kind: "video", media_id: mediaId, video_url: mediaUrl, caption, delay_ms: delayMs, insert_key: "customer_name" });
+        return;
+      }
+      out.push({ kind: "audio", media_id: mediaId, audio_url: mediaUrl, delay_ms: delayMs, insert_key: "customer_name" });
       return;
     }
 
@@ -125,6 +144,8 @@ function buildEditorSignature(form, blocks, params) {
     text: String(b?.text || ""),
     media_id: String(b?.media_id || ""),
     image_url: String(b?.image_url || ""),
+    video_url: String(b?.video_url || ""),
+    audio_url: String(b?.audio_url || ""),
     caption: String(b?.caption || ""),
     delay_ms: Number(b?.delay_ms || 0),
   }));
@@ -197,6 +218,10 @@ export default function TemplateBuilderPanel({
   const [draggingBlockIndex, setDraggingBlockIndex] = useState(null);
   const [dragOverBlockIndex, setDragOverBlockIndex] = useState(null);
   const [baselineSignature, setBaselineSignature] = useState(() => buildEditorSignature(initialEditor.form, initialEditor.blocks, initialEditor.params));
+  const [recordingBlockIndex, setRecordingBlockIndex] = useState(null);
+  const mediaRecorderRef = useRef(null);
+  const recordingStreamRef = useRef(null);
+  const recordingChunksRef = useRef([]);
 
   useEffect(() => {
     const loadCatalog = async () => {
@@ -211,6 +236,24 @@ export default function TemplateBuilderPanel({
     };
     loadCatalog();
   }, [API, onError]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+        }
+      } catch (_) {
+        // no-op
+      }
+      if (recordingStreamRef.current) {
+        recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      mediaRecorderRef.current = null;
+      recordingStreamRef.current = null;
+      recordingChunksRef.current = [];
+    };
+  }, []);
 
   const selectedTemplate = useMemo(() => {
     if (!selectedTemplateId) return null;
@@ -241,14 +284,24 @@ export default function TemplateBuilderPanel({
   const previewBlocks = useMemo(() => {
     return (templateBlocks || []).map((b) => {
       const kind = String(b.kind || "text").toLowerCase();
-      if (kind === "image") {
-        return {
-          kind: "image",
+      if (kind === "image" || kind === "video" || kind === "audio") {
+        const mediaUrl = String(
+          (kind === "image" ? b.image_url : kind === "video" ? b.video_url : b.audio_url)
+          || b.media_url
+          || ""
+        );
+        const out = {
+          kind,
           media_id: String(b.media_id || ""),
-          image_url: String(b.image_url || ""),
-          caption: renderText(String(b.caption || ""), previewVars),
           delay_ms: Number(b.delay_ms || 0),
         };
+        if (kind === "image") out.image_url = mediaUrl;
+        if (kind === "video") out.video_url = mediaUrl;
+        if (kind === "audio") out.audio_url = mediaUrl;
+        if (kind === "image" || kind === "video") {
+          out.caption = renderText(String(b.caption || ""), previewVars);
+        }
+        return out;
       }
       return {
         kind: "text",
@@ -270,14 +323,23 @@ export default function TemplateBuilderPanel({
       .map((b) => {
         const kind = String(b.kind || "text").toLowerCase();
         const delayMs = Number.isFinite(Number(b.delay_ms)) ? Math.max(0, Number(b.delay_ms)) : 0;
-        if (kind === "image") {
-          return {
-            kind: "image",
-            media_id: String(b.media_id || "").trim(),
-            image_url: String(b.image_url || "").trim(),
-            caption: String(b.caption || ""),
+        if (kind === "image" || kind === "video" || kind === "audio") {
+          const mediaId = String(b.media_id || "").trim();
+          const mediaUrl = String(
+            (kind === "image" ? b.image_url : kind === "video" ? b.video_url : b.audio_url)
+            || b.media_url
+            || ""
+          ).trim();
+          const out = {
+            kind,
+            media_id: mediaId,
             delay_ms: delayMs,
           };
+          if (kind === "image") out.image_url = mediaUrl;
+          if (kind === "video") out.video_url = mediaUrl;
+          if (kind === "audio") out.audio_url = mediaUrl;
+          if (kind === "image" || kind === "video") out.caption = String(b.caption || "");
+          return out;
         }
         return {
           kind: "text",
@@ -287,6 +349,8 @@ export default function TemplateBuilderPanel({
       })
       .filter((b) => {
         if (b.kind === "image") return !!(b.media_id || b.image_url);
+        if (b.kind === "video") return !!(b.media_id || b.video_url);
+        if (b.kind === "audio") return !!(b.media_id || b.audio_url);
         return !!String(b.text || "").trim();
       });
 
@@ -461,6 +525,7 @@ export default function TemplateBuilderPanel({
     const block = templateBlocks[idx] || {};
     const key = String(block.insert_key || "").trim();
     if (!key) return;
+    if (field !== "caption" && field !== "text") return;
     const token = `{{${key}}}`;
     if (field === "caption") {
       updateBlock(idx, { caption: `${String(block.caption || "")} ${token}`.trim() });
@@ -469,23 +534,114 @@ export default function TemplateBuilderPanel({
     updateBlock(idx, { text: `${String(block.text || "")} ${token}`.trim() });
   };
 
-  const uploadTemplateImage = async (idx, file) => {
+  const uploadTemplateMedia = async (idx, file, kind) => {
     if (!file) return;
+    const mediaKind = String(kind || "image").toLowerCase();
+    if (!["image", "video", "audio"].includes(mediaKind)) return;
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("kind", "image");
+      fd.append("kind", mediaKind);
 
       const r = await fetch(`${API}/api/media/upload`, { method: "POST", body: fd });
       const d = await r.json();
-      if (!r.ok) throw new Error(d?.detail || "No se pudo subir imagen");
+      if (!r.ok) throw new Error(d?.detail || `No se pudo subir ${mediaKind}`);
 
       const mediaId = String(d?.media_id || "").trim();
-      updateBlock(idx, {
-        media_id: mediaId,
-        image_url: mediaId ? `${API}/api/media/proxy/${encodeURIComponent(mediaId)}` : "",
+      const proxyUrl = mediaId ? `${API}/api/media/proxy/${encodeURIComponent(mediaId)}` : "";
+
+      if (mediaKind === "image") {
+        updateBlock(idx, { media_id: mediaId, image_url: proxyUrl });
+      } else if (mediaKind === "video") {
+        updateBlock(idx, { media_id: mediaId, video_url: proxyUrl });
+      } else {
+        updateBlock(idx, { media_id: mediaId, audio_url: proxyUrl });
+      }
+      onStatus?.(`${mediaKind[0].toUpperCase()}${mediaKind.slice(1)} cargado al template`);
+    } catch (e) {
+      onError?.(String(e.message || e));
+    }
+  };
+
+  const startAudioRecording = async (idx) => {
+    try {
+      if (typeof window === "undefined" || typeof window.MediaRecorder === "undefined") {
+        throw new Error("Tu navegador no soporta grabacion de audio");
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("No se pudo acceder al microfono");
+      }
+
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      if (recordingStreamRef.current) {
+        recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredMimeTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/ogg",
+      ];
+      const selectedMime = preferredMimeTypes.find((m) => {
+        try {
+          return window.MediaRecorder.isTypeSupported(m);
+        } catch (_) {
+          return false;
+        }
       });
-      onStatus?.("Imagen cargada al template");
+
+      const recorder = selectedMime ? new window.MediaRecorder(stream, { mimeType: selectedMime }) : new window.MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          recordingChunksRef.current.push(ev.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        setRecordingBlockIndex(null);
+        const mimeType = recorder.mimeType || selectedMime || "audio/webm";
+        const blob = new Blob(recordingChunksRef.current, { type: mimeType });
+        recordingChunksRef.current = [];
+        if (recordingStreamRef.current) {
+          recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+          recordingStreamRef.current = null;
+        }
+        mediaRecorderRef.current = null;
+
+        if (!blob.size) {
+          onError?.("No se capturo audio");
+          return;
+        }
+
+        const ext = mimeType.includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: mimeType });
+        await uploadTemplateMedia(idx, file, "audio");
+      };
+
+      recorder.start();
+      setRecordingBlockIndex(idx);
+      onStatus?.("Grabando audio...");
+    } catch (e) {
+      setRecordingBlockIndex(null);
+      onError?.(String(e.message || e));
+    }
+  };
+
+  const stopAudioRecording = () => {
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+        setRecordingBlockIndex(null);
+        onStatus?.("Procesando audio...");
+      }
     } catch (e) {
       onError?.(String(e.message || e));
     }
@@ -629,12 +785,15 @@ export default function TemplateBuilderPanel({
               <div style={{ display: "flex", gap: 6 }}>
                 <button style={smallBtn} onClick={() => addBlock("text")}>+ Texto</button>
                 <button style={smallBtn} onClick={() => addBlock("image")}>+ Imagen</button>
+                <button style={smallBtn} onClick={() => addBlock("video")}>+ Video</button>
+                <button style={smallBtn} onClick={() => addBlock("audio")}>+ Audio</button>
               </div>
             </div>
 
             <div style={{ display: "grid", gap: 8 }}>
               {templateBlocks.map((b, idx) => {
                 const kind = String(b.kind || "text").toLowerCase();
+                const insertField = kind === "image" || kind === "video" ? "caption" : kind === "text" ? "text" : "";
                 return (
                   <div
                     key={`blk-${idx}`}
@@ -666,14 +825,52 @@ export default function TemplateBuilderPanel({
                         onChange={(e) => {
                           const nextKind = e.target.value;
                           if (nextKind === "image") {
-                            updateBlock(idx, { kind: "image", text: undefined, caption: b.caption || "", media_id: b.media_id || "", image_url: b.image_url || "" });
+                            updateBlock(idx, {
+                              kind: "image",
+                              text: undefined,
+                              caption: b.caption || b.text || "",
+                              media_id: b.media_id || "",
+                              image_url: b.image_url || "",
+                              video_url: undefined,
+                              audio_url: undefined,
+                            });
+                          } else if (nextKind === "video") {
+                            updateBlock(idx, {
+                              kind: "video",
+                              text: undefined,
+                              caption: b.caption || b.text || "",
+                              media_id: b.media_id || "",
+                              image_url: undefined,
+                              video_url: b.video_url || "",
+                              audio_url: undefined,
+                            });
+                          } else if (nextKind === "audio") {
+                            updateBlock(idx, {
+                              kind: "audio",
+                              text: undefined,
+                              caption: undefined,
+                              media_id: b.media_id || "",
+                              image_url: undefined,
+                              video_url: undefined,
+                              audio_url: b.audio_url || "",
+                            });
                           } else {
-                            updateBlock(idx, { kind: "text", text: b.text || b.caption || "", caption: undefined, media_id: undefined, image_url: undefined });
+                            updateBlock(idx, {
+                              kind: "text",
+                              text: b.text || b.caption || "",
+                              caption: undefined,
+                              media_id: undefined,
+                              image_url: undefined,
+                              video_url: undefined,
+                              audio_url: undefined,
+                            });
                           }
                         }}
                       >
                         <option value="text">Texto</option>
                         <option value="image">Imagen</option>
+                        <option value="video">Video</option>
+                        <option value="audio">Audio</option>
                       </select>
 
                       <input style={input} type="number" value={Number(b.delay_ms || 0)} onChange={(e) => updateBlock(idx, { delay_ms: e.target.value })} placeholder="Delay ms" />
@@ -687,7 +884,7 @@ export default function TemplateBuilderPanel({
                           <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
                         ))}
                       </select>
-                      <button style={smallBtn} onClick={() => insertParamInBlock(idx, kind === "image" ? "caption" : "text")}>Insertar</button>
+                      <button style={smallBtn} disabled={!insertField} onClick={() => insertParamInBlock(idx, insertField)}>Insertar</button>
                     </div>
 
                     {kind === "image" ? (
@@ -697,8 +894,41 @@ export default function TemplateBuilderPanel({
                         <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption de la imagen" />
                         <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                           Subir imagen
-                          <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadTemplateImage(idx, e.target.files?.[0])} />
+                          <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadTemplateMedia(idx, e.target.files?.[0], "image")} />
                         </label>
+                      </div>
+                    ) : kind === "video" ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
+                        <input style={input} value={b.video_url || ""} onChange={(e) => updateBlock(idx, { video_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption del video" />
+                        <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
+                          Subir video
+                          <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => uploadTemplateMedia(idx, e.target.files?.[0], "video")} />
+                        </label>
+                      </div>
+                    ) : kind === "audio" ? (
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
+                        <input style={input} value={b.audio_url || ""} onChange={(e) => updateBlock(idx, { audio_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
+                            Subir audio
+                            <input type="file" accept="audio/*" style={{ display: "none" }} onChange={(e) => uploadTemplateMedia(idx, e.target.files?.[0], "audio")} />
+                          </label>
+                          {recordingBlockIndex === idx ? (
+                            <button style={{ ...smallBtn, borderColor: "#ff7675" }} onClick={stopAudioRecording}>
+                              Detener grabacion
+                            </button>
+                          ) : (
+                            <button style={smallBtn} onClick={() => startAudioRecording(idx)}>
+                              Grabar microfono
+                            </button>
+                          )}
+                        </div>
+                        {(b.audio_url || b.media_id) ? (
+                          <audio controls src={b.audio_url || `${API}/api/media/proxy/${encodeURIComponent(b.media_id)}`} />
+                        ) : null}
                       </div>
                     ) : (
                       <textarea style={{ ...input, minHeight: 85 }} value={b.text || ""} onChange={(e) => updateBlock(idx, { text: e.target.value })} placeholder="Texto del mensaje" />
@@ -785,6 +1015,26 @@ export default function TemplateBuilderPanel({
                         </div>
                       ) : null}
                       {m.caption || "[imagen]"}
+                    </>
+                  ) : m.kind === "video" ? (
+                    <>
+                      {(m.video_url || m.media_id) ? (
+                        <div style={{ marginBottom: m.caption ? 8 : 0 }}>
+                          <video
+                            src={m.video_url || `${API}/api/media/proxy/${encodeURIComponent(m.media_id)}`}
+                            controls
+                            style={{ maxWidth: 260, borderRadius: 8, display: "block" }}
+                          />
+                        </div>
+                      ) : null}
+                      {m.caption || "[video]"}
+                    </>
+                  ) : m.kind === "audio" ? (
+                    <>
+                      {(m.audio_url || m.media_id) ? (
+                        <audio controls src={m.audio_url || `${API}/api/media/proxy/${encodeURIComponent(m.media_id)}`} />
+                      ) : null}
+                      {!m.audio_url && !m.media_id ? "[audio]" : ""}
                     </>
                   ) : (
                     m.text || "[texto vacio]"

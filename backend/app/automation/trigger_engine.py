@@ -153,21 +153,31 @@ def _normalize_template_blocks(raw_blocks: Any, body_fallback: str = "") -> List
             delay_ms = 0
         delay_ms = max(0, min(delay_ms, 60000))
 
-        if kind == "image":
+        if kind in ("image", "video", "audio"):
             media_id = str(item.get("media_id") or "").strip()
-            image_url = str(item.get("image_url") or item.get("url") or "").strip()
-            caption = str(item.get("caption") or item.get("text") or "").strip()
-            if not media_id and not image_url:
+            media_url = str(
+                item.get(f"{kind}_url")
+                or item.get("media_url")
+                or item.get("url")
+                or ""
+            ).strip()
+            caption = str(item.get("caption") or item.get("text") or "").strip() if kind in ("image", "video") else ""
+            if not media_id and not media_url:
                 continue
-            out.append(
-                {
-                    "kind": "image",
-                    "media_id": media_id,
-                    "image_url": image_url,
-                    "caption": caption,
-                    "delay_ms": delay_ms,
-                }
-            )
+            block = {
+                "kind": kind,
+                "media_id": media_id,
+                "delay_ms": delay_ms,
+            }
+            if kind == "image":
+                block["image_url"] = media_url
+            elif kind == "video":
+                block["video_url"] = media_url
+            else:
+                block["audio_url"] = media_url
+            if kind in ("image", "video"):
+                block["caption"] = caption
+            out.append(block)
             continue
 
         txt = str(item.get("text") or item.get("content") or item.get("body") or "").strip()
@@ -297,16 +307,18 @@ def _render_template_blocks(template_row: Dict[str, Any], variables: Dict[str, A
         kind = str(block.get("kind") or "text").strip().lower()
         delay_ms = int(block.get("delay_ms") or 0)
 
-        if kind == "image":
-            rendered.append(
-                {
-                    "kind": "image",
-                    "media_id": str(block.get("media_id") or "").strip(),
-                    "image_url": str(block.get("image_url") or "").strip(),
-                    "caption": _render_template(str(block.get("caption") or ""), variables),
-                    "delay_ms": delay_ms,
-                }
-            )
+        if kind in ("image", "video", "audio"):
+            media_url_key = "image_url" if kind == "image" else ("video_url" if kind == "video" else "audio_url")
+            media_url = str(block.get(media_url_key) or block.get("media_url") or block.get("url") or "").strip()
+            out_block = {
+                "kind": kind,
+                "media_id": str(block.get("media_id") or "").strip(),
+                media_url_key: media_url,
+                "delay_ms": delay_ms,
+            }
+            if kind in ("image", "video"):
+                out_block["caption"] = _render_template(str(block.get("caption") or ""), variables)
+            rendered.append(out_block)
             continue
 
         rendered.append(
@@ -416,20 +428,20 @@ async def _send_template_blocks(
     for idx, block in enumerate(blocks):
         kind = str(block.get("kind") or "text").strip().lower()
         delay_ms = int(block.get("delay_ms") or 0)
-        msg_type = "image" if kind == "image" else "text"
+        msg_type = kind if kind in ("image", "video", "audio") else "text"
 
         block_text = ""
         media_id = ""
         media_caption = ""
 
         try:
-            if kind == "image":
+            if kind in ("image", "video", "audio"):
                 media_id = str(block.get("media_id") or "").strip()
-                media_caption = str(block.get("caption") or "").strip()
+                media_caption = str(block.get("caption") or "").strip() if kind in ("image", "video") else ""
                 if not media_id:
-                    raise RuntimeError("image block without media_id")
-                wa = await send_whatsapp_media_id(phone, "image", media_id, media_caption)
-                block_text = media_caption
+                    raise RuntimeError(f"{kind} block without media_id")
+                wa = await send_whatsapp_media_id(phone, kind, media_id, media_caption)
+                block_text = media_caption or f"[{kind}]"
             else:
                 block_text = str(block.get("text") or "").strip()
                 if not block_text:

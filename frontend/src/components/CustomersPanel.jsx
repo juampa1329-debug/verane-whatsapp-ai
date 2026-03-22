@@ -32,6 +32,17 @@ function fullName(c) {
   return n || c?.phone || "";
 }
 
+function stageFromEnrollment(enrollment) {
+  if (!enrollment) return "";
+  const st = String(enrollment.state || "").toLowerCase();
+  if (st === "hold") return "hold";
+  if (st === "completed") return "done";
+  if (st === "exited") return "clear";
+  const step = Number(enrollment.current_step_order || 0);
+  if (Number.isFinite(step) && step > 0) return `s${step}`;
+  return "";
+}
+
 export default function CustomersPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
   const [loading, setLoading] = useState(true);
@@ -43,11 +54,39 @@ export default function CustomersPanel({ apiBase }) {
   const [customers, setCustomers] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState("");
   const [form, setForm] = useState({});
+  const [rmkCatalog, setRmkCatalog] = useState([]);
+  const [rmkEnrollments, setRmkEnrollments] = useState([]);
+  const [rmkFlowId, setRmkFlowId] = useState("");
+  const [rmkStage, setRmkStage] = useState("");
+  const [rmkSaving, setRmkSaving] = useState(false);
 
   const selected = useMemo(
     () => customers.find((c) => c.phone === selectedPhone) || null,
     [customers, selectedPhone]
   );
+
+  const selectedRmkFlow = useMemo(
+    () => (rmkCatalog || []).find((f) => String(f.id) === String(rmkFlowId)) || null,
+    [rmkCatalog, rmkFlowId]
+  );
+
+  const selectedEnrollment = useMemo(
+    () => (rmkEnrollments || []).find((e) => String(e.flow_id) === String(rmkFlowId)) || null,
+    [rmkEnrollments, rmkFlowId]
+  );
+
+  const stageOptions = useMemo(() => {
+    const steps = Array.isArray(selectedRmkFlow?.steps) ? selectedRmkFlow.steps : [];
+    const byOrder = [...steps].sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
+    const opts = byOrder.map((s) => ({
+      value: `s${Number(s.step_order || 1)}`,
+      label: `Etapa ${Number(s.step_order || 1)}${s.template_name ? ` - ${s.template_name}` : ""}`,
+    }));
+    opts.push({ value: "hold", label: "Pausar (hold)" });
+    opts.push({ value: "done", label: "Finalizar (done)" });
+    opts.push({ value: "clear", label: "Quitar del flow" });
+    return opts;
+  }, [selectedRmkFlow]);
 
   const loadCustomers = async () => {
     setLoading(true);
@@ -87,6 +126,76 @@ export default function CustomersPanel({ apiBase }) {
     }
   };
 
+  const loadRemarketingCatalog = async () => {
+    try {
+      const r = await fetch(`${API}/api/remarketing/stages/catalog`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo cargar catalogo de remarketing");
+      const flows = Array.isArray(d?.flows) ? d.flows : [];
+      setRmkCatalog(flows);
+      if (!rmkFlowId && flows[0]?.id) {
+        setRmkFlowId(String(flows[0].id));
+      }
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const loadRemarketingForPhone = async (phone) => {
+    if (!phone) {
+      setRmkEnrollments([]);
+      return;
+    }
+    try {
+      const r = await fetch(`${API}/api/remarketing/contacts/${encodeURIComponent(phone)}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo cargar estado de remarketing");
+      const enrollments = Array.isArray(d?.enrollments) ? d.enrollments : [];
+      setRmkEnrollments(enrollments);
+
+      const currentFlow = enrollments[0]?.flow_id ? String(enrollments[0].flow_id) : "";
+      if (currentFlow) {
+        setRmkFlowId(currentFlow);
+      } else if (!rmkFlowId && rmkCatalog[0]?.id) {
+        setRmkFlowId(String(rmkCatalog[0].id));
+      }
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const applyRemarketingStage = async () => {
+    if (!selectedPhone || !rmkFlowId || !rmkStage) return;
+    setRmkSaving(true);
+    setError("");
+    setStatus("");
+    try {
+      const r = await fetch(`${API}/api/remarketing/stage/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: selectedPhone,
+          flow_id: Number(rmkFlowId),
+          stage: rmkStage,
+          send_now: true,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo asignar etapa");
+      setStatus("Etapa de remarketing actualizada");
+      await Promise.all([
+        loadRemarketingForPhone(selectedPhone),
+        loadCustomerDetail(selectedPhone),
+        loadCustomers(),
+      ]);
+      setTimeout(() => setStatus(""), 2600);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setRmkSaving(false);
+    }
+  };
+
   const saveCustomer = async () => {
     if (!selectedPhone) return;
     setSaving(true);
@@ -122,6 +231,11 @@ export default function CustomersPanel({ apiBase }) {
   }, []);
 
   useEffect(() => {
+    loadRemarketingCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     const t = setTimeout(() => {
       loadCustomers();
     }, 350);
@@ -132,9 +246,24 @@ export default function CustomersPanel({ apiBase }) {
   useEffect(() => {
     if (selectedPhone) {
       loadCustomerDetail(selectedPhone);
+      loadRemarketingForPhone(selectedPhone);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPhone]);
+
+  useEffect(() => {
+    if (selectedEnrollment) {
+      const suggested = stageFromEnrollment(selectedEnrollment);
+      if (suggested) {
+        setRmkStage(suggested);
+        return;
+      }
+    }
+    const firstStep = selectedRmkFlow?.steps?.[0]?.step_order;
+    if (firstStep) {
+      setRmkStage(`s${Number(firstStep)}`);
+    }
+  }, [selectedEnrollment, selectedRmkFlow]);
 
   return (
     <div className="placeholder-view" style={{ alignItems: "stretch" }}>
@@ -238,6 +367,44 @@ export default function CustomersPanel({ apiBase }) {
                   <div style={{ fontSize: 12, marginBottom: 4 }}>Tags (coma separadas)</div>
                   <input style={inputStyle} value={form.tags || ""} onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))} />
                 </label>
+
+                <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>Remarketing por etapas</div>
+                  {rmkCatalog.length === 0 ? (
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>No hay flows activos para asignar.</div>
+                  ) : (
+                    <>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
+                        <select style={inputStyle} value={rmkFlowId} onChange={(e) => setRmkFlowId(e.target.value)}>
+                          <option value="">Flow</option>
+                          {rmkCatalog.map((f) => (
+                            <option key={f.id} value={String(f.id)}>
+                              {f.name}
+                            </option>
+                          ))}
+                        </select>
+                        <select style={inputStyle} value={rmkStage} onChange={(e) => setRmkStage(e.target.value)}>
+                          <option value="">Etapa</option>
+                          {stageOptions.map((s) => (
+                            <option key={s.value} value={s.value}>
+                              {s.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          style={{ padding: "8px 12px", borderRadius: 8, cursor: "pointer" }}
+                          onClick={applyRemarketingStage}
+                          disabled={!rmkFlowId || !rmkStage || rmkSaving}
+                        >
+                          {rmkSaving ? "Aplicando..." : "Aplicar"}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
+                        Actual: {selectedEnrollment ? `${selectedEnrollment.flow_name || "Flow"} - ${selectedEnrollment.state} - paso ${selectedEnrollment.current_step_order || "-"}` : "Sin enrollment"}
+                      </div>
+                    </>
+                  )}
+                </div>
 
                 <label>
                   <div style={{ fontSize: 12, marginBottom: 4 }}>Notas</div>

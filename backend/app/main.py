@@ -16,6 +16,13 @@ from starlette.requests import Request as StarletteRequest
 from app.db import engine
 from app.campaigns.engine import campaign_engine_tick, engine_settings, run_campaign_engine_forever
 from app.automation.trigger_engine import get_trigger_catalog
+from app.remarketing.engine import (
+    process_due_remarketing,
+    remarketing_settings,
+    list_stage_catalog,
+    get_phone_enrollments,
+    assign_phone_stage,
+)
 
 # ✅ Pipeline core (nuevo flujo real)
 from app.pipeline.ingest_core import run_ingest, IngestMessage
@@ -512,6 +519,32 @@ def ensure_schema():
         """))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_steps_flow_id ON remarketing_steps (flow_id)"""))
 
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS remarketing_enrollments (
+                id SERIAL PRIMARY KEY,
+                flow_id INTEGER NOT NULL REFERENCES remarketing_flows(id) ON DELETE CASCADE,
+                phone TEXT NOT NULL,
+                current_step_order INTEGER NOT NULL DEFAULT 1,
+                state TEXT NOT NULL DEFAULT 'active',
+                enrolled_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                step_started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                next_run_at TIMESTAMP NULL,
+                last_sent_at TIMESTAMP NULL,
+                last_sent_step_order INTEGER NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                UNIQUE (flow_id, phone)
+            )
+        """))
+        conn.execute(text("""ALTER TABLE remarketing_enrollments ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMP NULL"""))
+        conn.execute(text("""ALTER TABLE remarketing_enrollments ADD COLUMN IF NOT EXISTS last_sent_at TIMESTAMP NULL"""))
+        conn.execute(text("""ALTER TABLE remarketing_enrollments ADD COLUMN IF NOT EXISTS last_sent_step_order INTEGER NULL"""))
+        conn.execute(text("""ALTER TABLE remarketing_enrollments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()"""))
+        conn.execute(text("""ALTER TABLE remarketing_enrollments ADD COLUMN IF NOT EXISTS meta_json JSONB NOT NULL DEFAULT '{}'::jsonb"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_enrollments_flow_state ON remarketing_enrollments (flow_id, state)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_enrollments_state_next_run ON remarketing_enrollments (state, next_run_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_enrollments_phone ON remarketing_enrollments (phone)"""))
+
 
 @app.on_event("startup")
 def _startup():
@@ -716,6 +749,13 @@ class RemarketingStepPatch(BaseModel):
     template_id: Optional[int] = None
 
 
+class RemarketingStageAssignIn(BaseModel):
+    phone: str
+    flow_id: int
+    stage: str = "s1"
+    send_now: bool = True
+
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -864,21 +904,31 @@ def _normalize_template_blocks(raw_blocks: Any, body_fallback: str = "") -> List
             delay_ms = 0
         delay_ms = max(0, min(delay_ms, 60000))
 
-        if kind == "image":
+        if kind in ("image", "video", "audio"):
             media_id = str(item.get("media_id") or "").strip()
-            image_url = str(item.get("image_url") or item.get("url") or "").strip()
-            caption = str(item.get("caption") or item.get("text") or "").strip()
-            if not media_id and not image_url:
+            media_url = str(
+                item.get(f"{kind}_url")
+                or item.get("media_url")
+                or item.get("url")
+                or ""
+            ).strip()
+            caption = str(item.get("caption") or item.get("text") or "").strip() if kind in ("image", "video") else ""
+            if not media_id and not media_url:
                 continue
-            blocks.append(
-                {
-                    "kind": "image",
-                    "media_id": media_id,
-                    "image_url": image_url,
-                    "caption": caption,
-                    "delay_ms": delay_ms,
-                }
-            )
+            block = {
+                "kind": kind,
+                "media_id": media_id,
+                "delay_ms": delay_ms,
+            }
+            if kind == "image":
+                block["image_url"] = media_url
+            elif kind == "video":
+                block["video_url"] = media_url
+            else:
+                block["audio_url"] = media_url
+            if kind in ("image", "video"):
+                block["caption"] = caption
+            blocks.append(block)
             continue
 
         text_val = str(item.get("text") or item.get("content") or item.get("body") or "").strip()
@@ -2022,17 +2072,20 @@ def preview_template(template_id: int, payload: TemplatePreviewIn):
     for b in blocks:
         kind = str(b.get("kind") or "text").lower()
         delay_ms = int(b.get("delay_ms") or 0)
-        if kind == "image":
-            caption = _render_template(str(b.get("caption") or ""), resolved_vars)
+        if kind in ("image", "video", "audio"):
+            media_url_key = "image_url" if kind == "image" else ("video_url" if kind == "video" else "audio_url")
+            media_url = str(b.get(media_url_key) or b.get("media_url") or b.get("url") or "")
             block_out = {
-                "kind": "image",
+                "kind": kind,
                 "media_id": str(b.get("media_id") or ""),
-                "image_url": str(b.get("image_url") or ""),
-                "caption": caption,
+                media_url_key: media_url,
                 "delay_ms": delay_ms,
             }
+            if kind in ("image", "video"):
+                caption = _render_template(str(b.get("caption") or ""), resolved_vars)
+                block_out["caption"] = caption
+                missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved_vars))
             rendered_blocks.append(block_out)
-            missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved_vars))
             continue
 
         text_val = _render_template(str(b.get("text") or ""), resolved_vars)
@@ -2153,18 +2206,20 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
     for b in blocks:
         kind = str(b.get("kind") or "text").lower()
         delay_ms = int(b.get("delay_ms") or 0)
-        if kind == "image":
-            caption = _render_template(str(b.get("caption") or ""), resolved)
-            rendered_blocks.append(
-                {
-                    "kind": "image",
-                    "media_id": str(b.get("media_id") or ""),
-                    "image_url": str(b.get("image_url") or ""),
-                    "caption": caption,
-                    "delay_ms": delay_ms,
-                }
-            )
-            missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved))
+        if kind in ("image", "video", "audio"):
+            media_url_key = "image_url" if kind == "image" else ("video_url" if kind == "video" else "audio_url")
+            media_url = str(b.get(media_url_key) or b.get("media_url") or b.get("url") or "")
+            block_out = {
+                "kind": kind,
+                "media_id": str(b.get("media_id") or ""),
+                media_url_key: media_url,
+                "delay_ms": delay_ms,
+            }
+            if kind in ("image", "video"):
+                caption = _render_template(str(b.get("caption") or ""), resolved)
+                block_out["caption"] = caption
+                missing_params.extend(_collect_missing_params(str(b.get("caption") or ""), resolved))
+            rendered_blocks.append(block_out)
             continue
 
         txt = _render_template(str(b.get("text") or ""), resolved)
@@ -2425,6 +2480,7 @@ def campaign_stats(campaign_id: int):
 @app.get("/api/campaigns/engine/status")
 def campaign_engine_status():
     cfg = engine_settings()
+    rmk_cfg = remarketing_settings()
     running = bool(_campaign_engine_task and not _campaign_engine_task.done())
     return {
         "enabled": bool(cfg.get("enabled")),
@@ -2432,6 +2488,9 @@ def campaign_engine_status():
         "interval_sec": int(cfg.get("interval_sec") or 0),
         "batch_size": int(cfg.get("batch_size") or 0),
         "send_delay_ms": int(cfg.get("send_delay_ms") or 0),
+        "remarketing_enabled": bool(rmk_cfg.get("enabled")),
+        "remarketing_batch_size": int(rmk_cfg.get("batch_size") or 0),
+        "remarketing_resume_after_minutes": int(rmk_cfg.get("resume_after_minutes") or 0),
     }
 
 
@@ -2786,3 +2845,88 @@ def update_remarketing_step(step_id: int, payload: RemarketingStepPatch):
         raise HTTPException(status_code=404, detail="step not found")
 
     return {"step": dict(row)}
+
+
+@app.get("/api/remarketing/flows/{flow_id}/enrollments")
+def list_remarketing_enrollments(
+    flow_id: int,
+    state: str = Query("all", description="all|active|hold|completed|exited"),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    state = (state or "all").strip().lower()
+    where_state = ""
+    params: Dict[str, Any] = {
+        "flow_id": int(flow_id),
+        "limit": int(limit),
+    }
+    if state != "all":
+        where_state = "AND LOWER(e.state) = :state"
+        params["state"] = state
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT
+                e.id,
+                e.flow_id,
+                e.phone,
+                e.current_step_order,
+                e.state,
+                e.enrolled_at,
+                e.step_started_at,
+                e.next_run_at,
+                e.last_sent_at,
+                e.last_sent_step_order,
+                e.updated_at,
+                COALESCE(c.first_name, '') AS first_name,
+                COALESCE(c.last_name, '') AS last_name,
+                COALESCE(c.tags, '') AS tags,
+                s.template_id AS current_template_id,
+                t.name AS current_template_name
+            FROM remarketing_enrollments e
+            LEFT JOIN conversations c ON c.phone = e.phone
+            LEFT JOIN remarketing_steps s
+                ON s.flow_id = e.flow_id
+               AND s.step_order = e.current_step_order
+            LEFT JOIN message_templates t ON t.id = s.template_id
+            WHERE e.flow_id = :flow_id
+            {where_state}
+            ORDER BY e.updated_at DESC, e.id DESC
+            LIMIT :limit
+        """), params).mappings().all()
+
+    return {"enrollments": [dict(r) for r in rows]}
+
+
+@app.get("/api/remarketing/stages/catalog")
+def remarketing_stages_catalog():
+    return {"flows": list_stage_catalog()}
+
+
+@app.get("/api/remarketing/contacts/{phone}")
+def remarketing_contact_state(phone: str):
+    p = (phone or "").strip()
+    if not p:
+        raise HTTPException(status_code=400, detail="phone required")
+    return {"phone": p, "enrollments": get_phone_enrollments(p)}
+
+
+@app.post("/api/remarketing/stage/assign")
+def assign_remarketing_stage(payload: RemarketingStageAssignIn):
+    result = assign_phone_stage(
+        phone=payload.phone,
+        flow_id=payload.flow_id,
+        stage=payload.stage,
+        send_now=bool(payload.send_now),
+        source="api",
+    )
+    if not result.get("ok"):
+        detail = str(result.get("error") or "cannot_assign_stage")
+        raise HTTPException(status_code=400, detail=detail)
+    return result
+
+
+@app.post("/api/remarketing/engine/tick")
+async def remarketing_engine_tick_now(
+    limit: int = Query(300, ge=1, le=5000),
+):
+    return await process_due_remarketing(limit=limit)

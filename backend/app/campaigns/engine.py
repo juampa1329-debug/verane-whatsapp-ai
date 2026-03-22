@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.db import engine
 from app.automation.trigger_engine import process_due_scheduled_trigger_messages
+from app.remarketing.engine import process_due_remarketing
 from app.routes.whatsapp import send_whatsapp_media_id, send_whatsapp_text
 
 
@@ -515,6 +516,7 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
 
     completed_now = _refresh_campaign_completion()
     scheduled_result = await process_due_scheduled_trigger_messages(limit=max(10, int(batch)))
+    remarketing_result = await process_due_remarketing(limit=max(10, int(batch) * 5))
 
     return {
         "ok": True,
@@ -526,6 +528,16 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
         "trigger_scheduled_claimed": int(scheduled_result.get("claimed") or 0),
         "trigger_scheduled_sent": int(scheduled_result.get("sent") or 0),
         "trigger_scheduled_failed": int(scheduled_result.get("failed") or 0),
+        "remarketing_flows": int(remarketing_result.get("flows") or 0),
+        "remarketing_enrolled": int(remarketing_result.get("enrolled") or 0),
+        "remarketing_checked": int(remarketing_result.get("checked") or 0),
+        "remarketing_sent": int(remarketing_result.get("sent") or 0),
+        "remarketing_advanced": int(remarketing_result.get("advanced") or 0),
+        "remarketing_held": int(remarketing_result.get("held") or 0),
+        "remarketing_resumed": int(remarketing_result.get("resumed") or 0),
+        "remarketing_completed": int(remarketing_result.get("completed") or 0),
+        "remarketing_exited": int(remarketing_result.get("exited") or 0),
+        "remarketing_failed": int(remarketing_result.get("failed") or 0),
         "batch_size": batch,
         "send_delay_ms": delay_ms,
         "ts": now.isoformat(),

@@ -37,6 +37,7 @@ def remarketing_settings() -> Dict[str, Any]:
         "new_enrollments_per_flow": _env_int("REMARKETING_NEW_PER_FLOW", 100, min_v=1, max_v=2000),
         "resume_after_minutes": _env_int("REMARKETING_RESUME_AFTER_MINUTES", 720, min_v=1, max_v=60 * 24 * 60),
         "retry_minutes": _env_int("REMARKETING_RETRY_MINUTES", 30, min_v=1, max_v=60 * 24),
+        "service_window_hours": _env_int("REMARKETING_SERVICE_WINDOW_HOURS", 24, min_v=1, max_v=48),
     }
 
 
@@ -274,6 +275,7 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
                     f.name AS flow_name,
                     f.is_active,
                     s.step_order,
+                    s.stage_name,
                     s.wait_minutes,
                     s.template_id,
                     t.name AS template_name
@@ -303,14 +305,15 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
         if step_order is None:
             continue
 
-        by_flow[flow_id]["steps"].append(
-            {
-                "step_order": int(step_order),
-                "wait_minutes": int(row.get("wait_minutes") or 0),
-                "template_id": int(row.get("template_id") or 0) if row.get("template_id") is not None else None,
-                "template_name": str(row.get("template_name") or "").strip(),
-            }
-        )
+            by_flow[flow_id]["steps"].append(
+                {
+                    "step_order": int(step_order),
+                    "stage_name": str(row.get("stage_name") or "").strip(),
+                    "wait_minutes": int(row.get("wait_minutes") or 0),
+                    "template_id": int(row.get("template_id") or 0) if row.get("template_id") is not None else None,
+                    "template_name": str(row.get("template_name") or "").strip(),
+                }
+            )
 
     return list(by_flow.values())
 
@@ -337,7 +340,9 @@ def get_phone_enrollments(phone: str) -> List[Dict[str, Any]]:
                     e.last_sent_at,
                     e.last_sent_step_order,
                     e.updated_at,
+                    e.meta_json,
                     COALESCE(c.tags, '') AS tags,
+                    s.stage_name AS current_stage_name,
                     s.template_id AS current_template_id,
                     t.name AS current_template_name
                 FROM remarketing_enrollments e
@@ -647,10 +652,13 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
             "completed": 0,
             "exited": 0,
             "failed": 0,
+            "blocked_window": 0,
         }
 
     now = datetime.utcnow()
     batch_limit = max(1, min(int(limit or cfg.get("batch_size") or 200), 4000))
+    service_window_hours = int(cfg.get("service_window_hours") or 24)
+    service_window_minutes = max(1, service_window_hours * 60)
 
     with engine.begin() as conn:
         flow_rows = conn.execute(
@@ -708,6 +716,7 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
     completed = 0
     exited = 0
     failed = 0
+    blocked_window = 0
 
     new_per_flow = int(cfg.get("new_enrollments_per_flow") or 100)
 
@@ -932,11 +941,10 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
         if state == "hold":
             resume_after = _flow_resume_after_minutes(flow_entry_rules, cfg)
             should_resume = False
-            if last_in_at is None:
-                should_resume = True
-            else:
+            if last_in_at is not None:
                 mins_since_last_in = (now - last_in_at).total_seconds() / 60.0
-                if mins_since_last_in >= resume_after:
+                within_service_window = mins_since_last_in <= float(service_window_minutes)
+                if within_service_window and mins_since_last_in >= resume_after:
                     should_resume = True
 
             if should_resume:
@@ -948,7 +956,8 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                             SET state = 'active',
                                 step_started_at = :step_started_at,
                                 next_run_at = :next_run_at,
-                                updated_at = NOW()
+                                updated_at = NOW(),
+                                meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
                             WHERE id = :id
                             """
                         ),
@@ -956,6 +965,7 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                             "id": enrollment_id,
                             "step_started_at": now,
                             "next_run_at": now,
+                            "meta_patch": '{"hold_reason":"resumed"}',
                         },
                     )
                     stage_for_tag = last_sent_step_order if last_sent_step_order > 0 else current_step_order
@@ -978,13 +988,15 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                         UPDATE remarketing_enrollments
                         SET state = 'hold',
                             step_started_at = :step_started_at,
-                            updated_at = NOW()
+                            updated_at = NOW(),
+                            meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
                         WHERE id = :id
                         """
                     ),
                     {
                         "id": enrollment_id,
                         "step_started_at": now,
+                        "meta_patch": '{"hold_reason":"user_replied"}',
                     },
                 )
                 _set_flow_tags(
@@ -1007,6 +1019,43 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
             due_at = base_time + timedelta(minutes=_step_wait_minutes(step))
 
         if now < due_at:
+            continue
+
+        minutes_since_last_in: float | None = None
+        if last_in_at is not None:
+            minutes_since_last_in = (now - last_in_at).total_seconds() / 60.0
+        within_service_window = bool(
+            minutes_since_last_in is not None and minutes_since_last_in <= float(service_window_minutes)
+        )
+        if not within_service_window:
+            stage_for_tag = last_sent_step_order if last_sent_step_order > 0 else current_step_order
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE remarketing_enrollments
+                        SET state = 'hold',
+                            next_run_at = NULL,
+                            step_started_at = :step_started_at,
+                            updated_at = NOW(),
+                            meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "id": enrollment_id,
+                        "step_started_at": now,
+                        "meta_patch": '{"hold_reason":"outside_service_window"}',
+                    },
+                )
+                _set_flow_tags(
+                    conn,
+                    phone=phone,
+                    flow_id=flow_id,
+                    stage_order=stage_for_tag,
+                    state="hold",
+                )
+            blocked_window += 1
             continue
 
         template_id = int(step.get("template_id") or 0)
@@ -1144,5 +1193,7 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
         "completed": int(completed),
         "exited": int(exited),
         "failed": int(failed),
+        "blocked_window": int(blocked_window),
+        "service_window_hours": int(service_window_hours),
         "ts": now.isoformat(),
     }

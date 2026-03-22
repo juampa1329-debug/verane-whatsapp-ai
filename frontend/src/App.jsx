@@ -107,6 +107,14 @@ function stageFromEnrollment(enrollment) {
   return "";
 }
 
+function defaultStageName(stepOrder) {
+  const n = Number(stepOrder || 0);
+  if (n === 1) return "Primer contacto";
+  if (n === 2) return "Seguimiento intensivo";
+  if (n === 3) return "Cierre fuerte";
+  return `Etapa ${n || 1}`;
+}
+
 const MainNav = ({ activeTab, setActiveTab }) => {
   const navItems = [
     { id: 'dashboard', icon: IconChart, label: 'Dashboard' },
@@ -278,6 +286,7 @@ const CustomerCardCRM = ({ phone, takeover }) => {
   const [rmkStage, setRmkStage] = useState("");
   const [rmkSaving, setRmkSaving] = useState(false);
   const [rmkStatus, setRmkStatus] = useState("");
+  const [rmkSendNow, setRmkSendNow] = useState(true);
 
   const selectedRmkFlow = (rmkCatalog || []).find((f) => String(f.id) === String(rmkFlowId)) || null;
   const selectedEnrollment = (rmkEnrollments || []).find((e) => String(e.flow_id) === String(rmkFlowId)) || null;
@@ -287,7 +296,7 @@ const CustomerCardCRM = ({ phone, takeover }) => {
     const byOrder = [...steps].sort((a, b) => Number(a.step_order || 0) - Number(b.step_order || 0));
     const opts = byOrder.map((s) => ({
       value: `s${Number(s.step_order || 1)}`,
-      label: `Etapa ${Number(s.step_order || 1)}${s.template_name ? ` - ${s.template_name}` : ""}`,
+      label: `${String(s.stage_name || "").trim() || defaultStageName(s.step_order)}${s.template_name ? ` - ${s.template_name}` : ""}`,
     }));
     opts.push({ value: "hold", label: "Pausar (hold)" });
     opts.push({ value: "done", label: "Finalizar (done)" });
@@ -362,7 +371,7 @@ const CustomerCardCRM = ({ phone, takeover }) => {
           phone,
           flow_id: Number(rmkFlowId),
           stage: rmkStage,
-          send_now: true,
+          send_now: !!rmkSendNow,
         }),
       });
       const d = await r.json();
@@ -601,9 +610,16 @@ const CustomerCardCRM = ({ phone, takeover }) => {
                   {rmkSaving ? "Aplicando..." : "Aplicar etapa"}
                 </button>
                 <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  Actual: {selectedEnrollment ? `${selectedEnrollment.flow_name || "Flow"} - ${selectedEnrollment.state} - paso ${selectedEnrollment.current_step_order || "-"}` : "Sin enrollment"}
+                  Actual: {selectedEnrollment ? `${selectedEnrollment.flow_name || "Flow"} - ${selectedEnrollment.state} - ${selectedEnrollment.current_stage_name || defaultStageName(selectedEnrollment.current_step_order)} (paso ${selectedEnrollment.current_step_order || "-"})` : "Sin enrollment"}
+                  {String(selectedEnrollment?.state || "").toLowerCase() === "hold" && selectedEnrollment?.meta_json?.hold_reason
+                    ? ` | motivo hold: ${selectedEnrollment.meta_json.hold_reason}`
+                    : ""}
                 </div>
               </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
+                <input type="checkbox" checked={!!rmkSendNow} onChange={e => setRmkSendNow(e.target.checked)} />
+                Enviar al instante al mover a etapa activa
+              </label>
               {rmkStatus && (
                 <div className="status-msg" style={{ textAlign: "left", marginTop: 8 }}>
                   {rmkStatus}

@@ -511,12 +511,14 @@ def ensure_schema():
                 id SERIAL PRIMARY KEY,
                 flow_id INTEGER NOT NULL REFERENCES remarketing_flows(id) ON DELETE CASCADE,
                 step_order INTEGER NOT NULL DEFAULT 1,
+                stage_name TEXT NOT NULL DEFAULT '',
                 wait_minutes INTEGER NOT NULL DEFAULT 1440,
                 template_id INTEGER REFERENCES message_templates(id) ON DELETE SET NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 UNIQUE (flow_id, step_order)
             )
         """))
+        conn.execute(text("""ALTER TABLE remarketing_steps ADD COLUMN IF NOT EXISTS stage_name TEXT NOT NULL DEFAULT ''"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_steps_flow_id ON remarketing_steps (flow_id)"""))
 
         conn.execute(text("""
@@ -739,12 +741,14 @@ class RemarketingFlowPatch(BaseModel):
 
 class RemarketingStepIn(BaseModel):
     step_order: int = 1
+    stage_name: str = ""
     wait_minutes: int = 1440
     template_id: Optional[int] = None
 
 
 class RemarketingStepPatch(BaseModel):
     step_order: Optional[int] = None
+    stage_name: Optional[str] = None
     wait_minutes: Optional[int] = None
     template_id: Optional[int] = None
 
@@ -2491,6 +2495,7 @@ def campaign_engine_status():
         "remarketing_enabled": bool(rmk_cfg.get("enabled")),
         "remarketing_batch_size": int(rmk_cfg.get("batch_size") or 0),
         "remarketing_resume_after_minutes": int(rmk_cfg.get("resume_after_minutes") or 0),
+        "remarketing_service_window_hours": int(rmk_cfg.get("service_window_hours") or 24),
     }
 
 
@@ -2784,7 +2789,7 @@ def list_remarketing_steps(flow_id: int):
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT
-                s.id, s.flow_id, s.step_order, s.wait_minutes, s.template_id, s.created_at,
+                s.id, s.flow_id, s.step_order, s.stage_name, s.wait_minutes, s.template_id, s.created_at,
                 t.name AS template_name
             FROM remarketing_steps s
             LEFT JOIN message_templates t ON t.id = s.template_id
@@ -2797,14 +2802,16 @@ def list_remarketing_steps(flow_id: int):
 
 @app.post("/api/remarketing/flows/{flow_id}/steps")
 def create_remarketing_step(flow_id: int, payload: RemarketingStepIn):
+    stage_name = str(payload.stage_name or "").strip()
     with engine.begin() as conn:
         row = conn.execute(text("""
-            INSERT INTO remarketing_steps (flow_id, step_order, wait_minutes, template_id, created_at)
-            VALUES (:flow_id, :step_order, :wait_minutes, :template_id, NOW())
-            RETURNING id, flow_id, step_order, wait_minutes, template_id, created_at
+            INSERT INTO remarketing_steps (flow_id, step_order, stage_name, wait_minutes, template_id, created_at)
+            VALUES (:flow_id, :step_order, :stage_name, :wait_minutes, :template_id, NOW())
+            RETURNING id, flow_id, step_order, stage_name, wait_minutes, template_id, created_at
         """), {
             "flow_id": int(flow_id),
             "step_order": max(1, int(payload.step_order or 1)),
+            "stage_name": stage_name,
             "wait_minutes": max(0, int(payload.wait_minutes or 0)),
             "template_id": payload.template_id,
         }).mappings().first()
@@ -2825,6 +2832,10 @@ def update_remarketing_step(step_id: int, payload: RemarketingStepPatch):
         sets.append("step_order = :step_order")
         params["step_order"] = max(1, int(data.get("step_order") or 1))
 
+    if "stage_name" in data:
+        sets.append("stage_name = :stage_name")
+        params["stage_name"] = str(data.get("stage_name") or "").strip()
+
     if "wait_minutes" in data:
         sets.append("wait_minutes = :wait_minutes")
         params["wait_minutes"] = max(0, int(data.get("wait_minutes") or 0))
@@ -2838,7 +2849,7 @@ def update_remarketing_step(step_id: int, payload: RemarketingStepPatch):
             UPDATE remarketing_steps
             SET {", ".join(sets)}
             WHERE id = :step_id
-            RETURNING id, flow_id, step_order, wait_minutes, template_id, created_at
+            RETURNING id, flow_id, step_order, stage_name, wait_minutes, template_id, created_at
         """), params).mappings().first()
 
     if not row:
@@ -2877,9 +2888,11 @@ def list_remarketing_enrollments(
                 e.last_sent_at,
                 e.last_sent_step_order,
                 e.updated_at,
+                e.meta_json,
                 COALESCE(c.first_name, '') AS first_name,
                 COALESCE(c.last_name, '') AS last_name,
                 COALESCE(c.tags, '') AS tags,
+                s.stage_name AS current_stage_name,
                 s.template_id AS current_template_id,
                 t.name AS current_template_name
             FROM remarketing_enrollments e

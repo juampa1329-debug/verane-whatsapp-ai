@@ -27,17 +27,6 @@ const smallBtn = {
   cursor: "pointer",
 };
 
-function parseJsonSafe(raw, fallback = {}) {
-  const txt = String(raw || "").trim();
-  if (!txt) return fallback;
-  try {
-    const j = JSON.parse(txt);
-    return j && typeof j === "object" ? j : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function fmtDt(v) {
   if (!v) return "-";
   try {
@@ -45,6 +34,21 @@ function fmtDt(v) {
   } catch {
     return String(v);
   }
+}
+
+function defaultStageName(stepOrder) {
+  const n = Number(stepOrder || 0);
+  if (n === 1) return "Primer contacto";
+  if (n === 2) return "Seguimiento intensivo";
+  if (n === 3) return "Cierre fuerte";
+  return `Etapa ${n || 1}`;
+}
+
+function takeoverTokenToBool(token) {
+  const v = String(token || "all").toLowerCase();
+  if (v === "on") return true;
+  if (v === "off") return false;
+  return null;
 }
 
 export default function MarketingPanel({ apiBase }) {
@@ -83,12 +87,25 @@ export default function MarketingPanel({ apiBase }) {
   const [flowForm, setFlowForm] = useState({
     name: "",
     is_active: false,
-    entry_rules_json: '{"intent": "BUY_FLOW"}',
-    exit_rules_json: '{"payment_status": "paid"}',
+    entry_intent: "BUY_FLOW",
+    entry_tag: "",
+    entry_payment_status: "",
+    entry_city: "",
+    entry_customer_type: "",
+    entry_takeover: "all",
+    resume_after_minutes: 120,
+    retry_minutes: 30,
+    exit_intent: "",
+    exit_tag: "",
+    exit_payment_status: "paid",
+    exit_city: "",
+    exit_customer_type: "",
+    exit_takeover: "all",
   });
 
   const [stepForm, setStepForm] = useState({
     step_order: 1,
+    stage_name: "Primer contacto",
     wait_minutes: 60,
     template_id: "",
   });
@@ -97,6 +114,10 @@ export default function MarketingPanel({ apiBase }) {
     () => flows.find((f) => f.id === selectedFlowId) || null,
     [flows, selectedFlowId]
   );
+
+  const flowWaitTotalMinutes = useMemo(() => {
+    return (steps || []).reduce((acc, s) => acc + Math.max(0, Number(s.wait_minutes || 0)), 0);
+  }, [steps]);
 
   const setTempStatus = (txt) => {
     setStatus(txt);
@@ -266,11 +287,31 @@ export default function MarketingPanel({ apiBase }) {
   const createFlow = async () => {
     setError("");
     try {
+      const entryRules = {};
+      if (String(flowForm.entry_intent || "").trim()) entryRules.intent = String(flowForm.entry_intent).trim();
+      if (String(flowForm.entry_tag || "").trim()) entryRules.tag = String(flowForm.entry_tag).trim();
+      if (String(flowForm.entry_payment_status || "").trim()) entryRules.payment_status = String(flowForm.entry_payment_status).trim();
+      if (String(flowForm.entry_city || "").trim()) entryRules.city = String(flowForm.entry_city).trim();
+      if (String(flowForm.entry_customer_type || "").trim()) entryRules.customer_type = String(flowForm.entry_customer_type).trim();
+      const entryTakeover = takeoverTokenToBool(flowForm.entry_takeover);
+      if (entryTakeover !== null) entryRules.takeover = entryTakeover;
+      if (Number(flowForm.resume_after_minutes) > 0) entryRules.resume_after_minutes = Number(flowForm.resume_after_minutes);
+      if (Number(flowForm.retry_minutes) > 0) entryRules.retry_minutes = Number(flowForm.retry_minutes);
+
+      const exitRules = {};
+      if (String(flowForm.exit_intent || "").trim()) exitRules.intent = String(flowForm.exit_intent).trim();
+      if (String(flowForm.exit_tag || "").trim()) exitRules.tag = String(flowForm.exit_tag).trim();
+      if (String(flowForm.exit_payment_status || "").trim()) exitRules.payment_status = String(flowForm.exit_payment_status).trim();
+      if (String(flowForm.exit_city || "").trim()) exitRules.city = String(flowForm.exit_city).trim();
+      if (String(flowForm.exit_customer_type || "").trim()) exitRules.customer_type = String(flowForm.exit_customer_type).trim();
+      const exitTakeover = takeoverTokenToBool(flowForm.exit_takeover);
+      if (exitTakeover !== null) exitRules.takeover = exitTakeover;
+
       const payload = {
         name: flowForm.name.trim(),
         is_active: !!flowForm.is_active,
-        entry_rules_json: parseJsonSafe(flowForm.entry_rules_json, {}),
-        exit_rules_json: parseJsonSafe(flowForm.exit_rules_json, {}),
+        entry_rules_json: entryRules,
+        exit_rules_json: exitRules,
       };
 
       const r = await fetch(`${API}/api/remarketing/flows`, {
@@ -294,6 +335,7 @@ export default function MarketingPanel({ apiBase }) {
     try {
       const payload = {
         step_order: Number(stepForm.step_order || 1),
+        stage_name: String(stepForm.stage_name || "").trim(),
         wait_minutes: Number(stepForm.wait_minutes || 0),
         template_id: stepForm.template_id ? Number(stepForm.template_id) : null,
       };
@@ -305,6 +347,8 @@ export default function MarketingPanel({ apiBase }) {
       const d = await r.json();
       if (!r.ok) throw new Error(d?.detail || "No se pudo crear paso");
       await loadSteps(selectedFlowId);
+      const nextOrder = Number(stepForm.step_order || 1) + 1;
+      setStepForm((p) => ({ ...p, step_order: nextOrder, stage_name: defaultStageName(nextOrder) }));
       setTempStatus("Paso agregado");
     } catch (e) {
       setError(String(e.message || e));
@@ -373,6 +417,9 @@ export default function MarketingPanel({ apiBase }) {
               <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
                 Intervalo: {engineInfo?.interval_sec ?? "-"}s | Batch: {engineInfo?.batch_size ?? "-"} | Delay: {engineInfo?.send_delay_ms ?? "-"}ms
               </div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
+                Remarketing: enabled={String(engineInfo?.remarketing_enabled ?? false)} | batch={engineInfo?.remarketing_batch_size ?? "-"} | resume={engineInfo?.remarketing_resume_after_minutes ?? "-"} min | ventana={engineInfo?.remarketing_service_window_hours ?? 24}h
+              </div>
               <button onClick={tickEngineNow} style={smallBtn}>Procesar lote ahora</button>
             </div>
           </div>
@@ -417,8 +464,40 @@ export default function MarketingPanel({ apiBase }) {
               <h3 style={{ marginTop: 0 }}>Nuevo flow</h3>
               <div style={{ display: "grid", gap: 8 }}>
                 <input style={input} placeholder="Nombre" value={flowForm.name} onChange={(e) => setFlowForm((p) => ({ ...p, name: e.target.value }))} />
-                <textarea style={{ ...input, minHeight: 70 }} value={flowForm.entry_rules_json} onChange={(e) => setFlowForm((p) => ({ ...p, entry_rules_json: e.target.value }))} />
-                <textarea style={{ ...input, minHeight: 70 }} value={flowForm.exit_rules_json} onChange={(e) => setFlowForm((p) => ({ ...p, exit_rules_json: e.target.value }))} />
+                <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de entrada al remarketing</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input style={input} placeholder="Intent (ej: BUY_FLOW)" value={flowForm.entry_intent} onChange={(e) => setFlowForm((p) => ({ ...p, entry_intent: e.target.value }))} />
+                    <input style={input} placeholder="Tag contiene" value={flowForm.entry_tag} onChange={(e) => setFlowForm((p) => ({ ...p, entry_tag: e.target.value }))} />
+                    <input style={input} placeholder="Payment status" value={flowForm.entry_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, entry_payment_status: e.target.value }))} />
+                    <input style={input} placeholder="Ciudad contiene" value={flowForm.entry_city} onChange={(e) => setFlowForm((p) => ({ ...p, entry_city: e.target.value }))} />
+                    <input style={input} placeholder="Tipo cliente" value={flowForm.entry_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, entry_customer_type: e.target.value }))} />
+                    <select style={input} value={flowForm.entry_takeover} onChange={(e) => setFlowForm((p) => ({ ...p, entry_takeover: e.target.value }))}>
+                      <option value="all">Takeover: cualquiera</option>
+                      <option value="on">Takeover ON</option>
+                      <option value="off">Takeover OFF</option>
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input style={input} type="number" min={1} placeholder="Reanudar hold después de (min)" value={flowForm.resume_after_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, resume_after_minutes: e.target.value }))} />
+                    <input style={input} type="number" min={1} placeholder="Retry error envío (min)" value={flowForm.retry_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, retry_minutes: e.target.value }))} />
+                  </div>
+                </div>
+                <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de salida del flow</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input style={input} placeholder="Intent" value={flowForm.exit_intent} onChange={(e) => setFlowForm((p) => ({ ...p, exit_intent: e.target.value }))} />
+                    <input style={input} placeholder="Tag contiene" value={flowForm.exit_tag} onChange={(e) => setFlowForm((p) => ({ ...p, exit_tag: e.target.value }))} />
+                    <input style={input} placeholder="Payment status (ej: paid)" value={flowForm.exit_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, exit_payment_status: e.target.value }))} />
+                    <input style={input} placeholder="Ciudad contiene" value={flowForm.exit_city} onChange={(e) => setFlowForm((p) => ({ ...p, exit_city: e.target.value }))} />
+                    <input style={input} placeholder="Tipo cliente" value={flowForm.exit_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, exit_customer_type: e.target.value }))} />
+                    <select style={input} value={flowForm.exit_takeover} onChange={(e) => setFlowForm((p) => ({ ...p, exit_takeover: e.target.value }))}>
+                      <option value="all">Takeover: cualquiera</option>
+                      <option value="on">Takeover ON</option>
+                      <option value="off">Takeover OFF</option>
+                    </select>
+                  </div>
+                </div>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={!!flowForm.is_active} onChange={(e) => setFlowForm((p) => ({ ...p, is_active: e.target.checked }))} />
                   Activo
@@ -450,8 +529,9 @@ export default function MarketingPanel({ apiBase }) {
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Pasos del flow {selectedFlow ? `: ${selectedFlow.name}` : ""}</h3>
 
-            <div style={{ display: "grid", gridTemplateColumns: "120px 120px 1fr auto", gap: 8, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "100px 170px 120px 1fr auto", gap: 8, marginBottom: 12 }}>
               <input style={input} type="number" value={stepForm.step_order} onChange={(e) => setStepForm((p) => ({ ...p, step_order: e.target.value }))} placeholder="Orden" />
+              <input style={input} value={stepForm.stage_name} onChange={(e) => setStepForm((p) => ({ ...p, stage_name: e.target.value }))} placeholder="Nombre etapa" />
               <input style={input} type="number" value={stepForm.wait_minutes} onChange={(e) => setStepForm((p) => ({ ...p, wait_minutes: e.target.value }))} placeholder="Wait min" />
               <select style={input} value={stepForm.template_id} onChange={(e) => setStepForm((p) => ({ ...p, template_id: e.target.value }))}>
                 <option value="">Plantilla</option>
@@ -460,10 +540,15 @@ export default function MarketingPanel({ apiBase }) {
               <button style={smallBtn} onClick={addStep} disabled={!selectedFlowId}>Agregar</button>
             </div>
 
+            <div style={{ fontSize: 12, marginBottom: 8, color: flowWaitTotalMinutes > 1380 ? "#ff9f6e" : "rgba(255,255,255,0.75)" }}>
+              Tiempo total configurado del flow: {flowWaitTotalMinutes} min ({Math.round((flowWaitTotalMinutes / 60) * 10) / 10}h)
+              {flowWaitTotalMinutes > 1380 ? " | Recomendado: <= 1380 min para respetar ventana de 24h." : ""}
+            </div>
+
             <div style={{ display: "grid", gap: 8 }}>
               {steps.map((s) => (
                 <div key={s.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
-                  Paso {s.step_order} | Espera {s.wait_minutes} min | Plantilla: {s.template_name || s.template_id || "-"}
+                  Paso {s.step_order} ({s.stage_name || defaultStageName(s.step_order)}) | Espera {s.wait_minutes} min | Plantilla: {s.template_name || s.template_id || "-"}
                 </div>
               ))}
               {selectedFlowId && steps.length === 0 ? <div style={{ opacity: 0.75 }}>Sin pasos todavía.</div> : null}

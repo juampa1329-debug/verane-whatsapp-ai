@@ -538,6 +538,7 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
         "remarketing_completed": int(remarketing_result.get("completed") or 0),
         "remarketing_exited": int(remarketing_result.get("exited") or 0),
         "remarketing_failed": int(remarketing_result.get("failed") or 0),
+        "remarketing_blocked_window": int(remarketing_result.get("blocked_window") or 0),
         "batch_size": batch,
         "send_delay_ms": delay_ms,
         "ts": now.isoformat(),

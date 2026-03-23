@@ -25,6 +25,12 @@ const smallBtn = {
   cursor: "pointer",
 };
 
+const dangerBtn = {
+  ...smallBtn,
+  border: "1px solid rgba(255,120,120,0.55)",
+  color: "#ffb7b7",
+};
+
 const TEMPLATE_STATUS_OPTIONS = [
   { value: "draft", label: "Borrador" },
   { value: "approved", label: "Aprobada" },
@@ -474,6 +480,26 @@ export default function TemplateBuilderPanel({
     if (!t) return;
     applyEditorState(buildEditorStateFromTemplate(t), true);
     onStatus?.("Cambios revertidos");
+  };
+
+  const deleteTemplate = async () => {
+    if (!selectedTemplateId || isCreatingNew) return;
+    const label = selectedTemplate?.name || `#${selectedTemplateId}`;
+    const ok = window.confirm(`Se eliminara la plantilla "${label}". Esta accion no se puede deshacer.\n\n¿Continuar?`);
+    if (!ok) return;
+    try {
+      const r = await fetch(`${API}/api/templates/${encodeURIComponent(selectedTemplateId)}`, {
+        method: "DELETE",
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo eliminar plantilla");
+      setSelectedTemplateId(null);
+      setIsCreatingNew(false);
+      await onTemplatesReload?.();
+      onStatus?.(`Plantilla eliminada: ${label}`);
+    } catch (e) {
+      onError?.(String(e.message || e));
+    }
   };
 
   const addParamRow = () => setParamRows((prev) => [...prev, { key: "", example: "" }]);
@@ -942,10 +968,11 @@ export default function TemplateBuilderPanel({
           <div style={{ display: "flex", gap: 8 }}>
             <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={saveTemplate}>Guardar</button>
             <button style={smallBtn} onClick={revertTemplate}>Revertir</button>
+            <button style={dangerBtn} onClick={deleteTemplate} disabled={isCreatingNew || !selectedTemplateId}>Eliminar plantilla</button>
           </div>
         </div>
 
-        <div style={{ ...box, minHeight: 740, display: "flex", flexDirection: "column" }}>
+        <div style={{ ...box, minHeight: 740, maxHeight: 740, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0 }}>Mensajes</h3>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
@@ -1001,6 +1028,8 @@ export default function TemplateBuilderPanel({
                     padding: "8px 10px",
                     borderRadius: 10,
                     fontSize: 14,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
                   }}
                 >
                   {m.kind === "image" ? (

@@ -2046,6 +2046,61 @@ def update_template(template_id: int, payload: TemplatePatch):
     return {"template": dict(row)}
 
 
+@app.delete("/api/templates/{template_id}")
+def delete_template(template_id: int):
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, name
+                FROM message_templates
+                WHERE id = :template_id
+                LIMIT 1
+                """
+            ),
+            {"template_id": int(template_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="template not found")
+
+        usage = conn.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM campaigns c WHERE c.template_id = :template_id) AS campaigns_count,
+                    (SELECT COUNT(*) FROM remarketing_steps s WHERE s.template_id = :template_id) AS remarketing_steps_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM trigger_scheduled_messages sm
+                        WHERE sm.template_id = :template_id
+                          AND LOWER(sm.status) IN ('pending', 'processing')
+                    ) AS trigger_scheduled_pending_count
+                """
+            ),
+            {"template_id": int(template_id)},
+        ).mappings().first()
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM message_templates
+                WHERE id = :template_id
+                """
+            ),
+            {"template_id": int(template_id)},
+        )
+
+    return {
+        "ok": True,
+        "deleted": {"id": int(row.get("id") or 0), "name": str(row.get("name") or "").strip()},
+        "detached": {
+            "campaigns": int((usage or {}).get("campaigns_count") or 0),
+            "remarketing_steps": int((usage or {}).get("remarketing_steps_count") or 0),
+            "trigger_scheduled_pending": int((usage or {}).get("trigger_scheduled_pending_count") or 0),
+        },
+    }
+
+
 @app.post("/api/templates/{template_id}/preview")
 def preview_template(template_id: int, payload: TemplatePreviewIn):
     with engine.begin() as conn:
@@ -2368,6 +2423,51 @@ def update_campaign(campaign_id: int, payload: CampaignPatch):
         raise HTTPException(status_code=404, detail="campaign not found")
 
     return {"campaign": dict(row)}
+
+
+@app.delete("/api/campaigns/{campaign_id}")
+def delete_campaign(campaign_id: int):
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, name
+                FROM campaigns
+                WHERE id = :campaign_id
+                LIMIT 1
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="campaign not found")
+
+        stats = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS recipients_count
+                FROM campaign_recipients
+                WHERE campaign_id = :campaign_id
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        ).mappings().first()
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM campaigns
+                WHERE id = :campaign_id
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        )
+
+    return {
+        "ok": True,
+        "deleted": {"id": int(row.get("id") or 0), "name": str(row.get("name") or "").strip()},
+        "cascade": {"campaign_recipients": int((stats or {}).get("recipients_count") or 0)},
+    }
 
 
 @app.post("/api/campaigns/{campaign_id}/launch")
@@ -2695,6 +2795,74 @@ def update_trigger(trigger_id: int, payload: TriggerPatch):
     return {"trigger": dict(row)}
 
 
+@app.delete("/api/triggers/{trigger_id}")
+def delete_trigger(trigger_id: int):
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, name
+                FROM automation_triggers
+                WHERE id = :trigger_id
+                LIMIT 1
+                """
+            ),
+            {"trigger_id": int(trigger_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="trigger not found")
+
+        stats = conn.execute(
+            text(
+                """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM trigger_executions e
+                        WHERE e.trigger_id = :trigger_id
+                    ) AS executions_count,
+                    (
+                        SELECT COUNT(*)
+                        FROM trigger_scheduled_messages sm
+                        WHERE sm.trigger_id = :trigger_id
+                          AND LOWER(sm.status) IN ('pending', 'processing')
+                    ) AS queued_count
+                """
+            ),
+            {"trigger_id": int(trigger_id)},
+        ).mappings().first()
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM trigger_scheduled_messages
+                WHERE trigger_id = :trigger_id
+                  AND LOWER(status) IN ('pending', 'processing')
+                """
+            ),
+            {"trigger_id": int(trigger_id)},
+        )
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM automation_triggers
+                WHERE id = :trigger_id
+                """
+            ),
+            {"trigger_id": int(trigger_id)},
+        )
+
+    return {
+        "ok": True,
+        "deleted": {"id": int(row.get("id") or 0), "name": str(row.get("name") or "").strip()},
+        "cascade": {
+            "trigger_executions": int((stats or {}).get("executions_count") or 0),
+            "trigger_scheduled_cancelled": int((stats or {}).get("queued_count") or 0),
+        },
+    }
+
+
 # =========================================================
 # Remarketing
 # =========================================================
@@ -2782,6 +2950,114 @@ def update_remarketing_flow(flow_id: int, payload: RemarketingFlowPatch):
         raise HTTPException(status_code=404, detail="flow not found")
 
     return {"flow": dict(row)}
+
+
+@app.delete("/api/remarketing/flows/{flow_id}")
+def delete_remarketing_flow(flow_id: int):
+    def _split_tags_csv(raw: str) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for item in str(raw or "").split(","):
+            token = str(item or "").strip().lower()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
+
+    def _join_tags_csv(tags: List[str]) -> str:
+        out: List[str] = []
+        seen = set()
+        for item in tags:
+            token = str(item or "").strip().lower()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return ",".join(out)
+
+    with engine.begin() as conn:
+        flow = conn.execute(
+            text(
+                """
+                SELECT id, name
+                FROM remarketing_flows
+                WHERE id = :flow_id
+                LIMIT 1
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().first()
+        if not flow:
+            raise HTTPException(status_code=404, detail="flow not found")
+
+        stats = conn.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM remarketing_steps s WHERE s.flow_id = :flow_id) AS steps_count,
+                    (SELECT COUNT(*) FROM remarketing_enrollments e WHERE e.flow_id = :flow_id) AS enrollments_count
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().first()
+
+        phones = conn.execute(
+            text(
+                """
+                SELECT DISTINCT e.phone, COALESCE(c.tags, '') AS tags
+                FROM remarketing_enrollments e
+                LEFT JOIN conversations c ON c.phone = e.phone
+                WHERE e.flow_id = :flow_id
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().all()
+
+        prefix = f"rmk_{int(flow_id)}_"
+        tags_cleaned = 0
+        for row in phones:
+            phone = str(row.get("phone") or "").strip()
+            if not phone:
+                continue
+            tags = _split_tags_csv(str(row.get("tags") or ""))
+            filtered = [t for t in tags if not t.startswith(prefix)]
+            if not any(t.startswith("rmk_") for t in filtered):
+                filtered = [t for t in filtered if t != "remarketing"]
+            new_csv = _join_tags_csv(filtered)
+            if new_csv != ",".join(tags):
+                conn.execute(
+                    text(
+                        """
+                        UPDATE conversations
+                        SET tags = :tags,
+                            updated_at = NOW()
+                        WHERE phone = :phone
+                        """
+                    ),
+                    {"phone": phone, "tags": new_csv},
+                )
+                tags_cleaned += 1
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM remarketing_flows
+                WHERE id = :flow_id
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        )
+
+    return {
+        "ok": True,
+        "deleted": {"id": int(flow.get("id") or 0), "name": str(flow.get("name") or "").strip()},
+        "cascade": {
+            "steps": int((stats or {}).get("steps_count") or 0),
+            "enrollments": int((stats or {}).get("enrollments_count") or 0),
+            "conversation_tags_cleaned": int(tags_cleaned),
+        },
+    }
 
 
 @app.get("/api/remarketing/flows/{flow_id}/steps")

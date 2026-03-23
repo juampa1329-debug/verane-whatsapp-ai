@@ -27,6 +27,12 @@ const smallBtn = {
   cursor: "pointer",
 };
 
+const dangerBtn = {
+  ...smallBtn,
+  border: "1px solid rgba(255,120,120,0.55)",
+  color: "#ffb7b7",
+};
+
 function fmtDt(v) {
   if (!v) return "-";
   try {
@@ -271,6 +277,23 @@ export default function MarketingPanel({ apiBase }) {
     }
   };
 
+  const deleteCampaign = async (id) => {
+    const campaign = (campaigns || []).find((c) => c.id === id);
+    const label = campaign?.name || `#${id}`;
+    const ok = window.confirm(`Se eliminara la campaña "${label}" y sus destinatarios. Esta accion no se puede deshacer.\n\n¿Continuar?`);
+    if (!ok) return;
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo eliminar campaña");
+      await loadCampaigns();
+      setTempStatus(`Campaña eliminada: ${label}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
   const tickEngineNow = async () => {
     setError("");
     try {
@@ -324,6 +347,25 @@ export default function MarketingPanel({ apiBase }) {
       setFlowForm((p) => ({ ...p, name: "" }));
       await loadFlows();
       setTempStatus("Flow creado");
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const deleteFlow = async (flowId) => {
+    const flow = (flows || []).find((f) => f.id === flowId);
+    const label = flow?.name || `#${flowId}`;
+    const ok = window.confirm(`Se eliminara el flow "${label}" con sus pasos e inscripciones. Esta accion no se puede deshacer.\n\n¿Continuar?`);
+    if (!ok) return;
+
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/remarketing/flows/${encodeURIComponent(flowId)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo eliminar flow");
+      if (selectedFlowId === flowId) setSelectedFlowId(null);
+      await loadFlows();
+      setTempStatus(`Flow eliminado: ${label}`);
     } catch (e) {
       setError(String(e.message || e));
     }
@@ -437,7 +479,10 @@ export default function MarketingPanel({ apiBase }) {
                       </div>
                       <div style={{ fontSize: 11, opacity: 0.65 }}>Programada: {fmtDt(c.scheduled_at)}</div>
                     </div>
-                    <button style={smallBtn} onClick={() => launchCampaign(c.id)}>Lanzar</button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button style={smallBtn} onClick={() => launchCampaign(c.id)}>Lanzar</button>
+                      <button style={dangerBtn} onClick={() => deleteCampaign(c.id)}>Eliminar</button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -510,17 +555,26 @@ export default function MarketingPanel({ apiBase }) {
               <h3 style={{ marginTop: 0 }}>Flows</h3>
               <div style={{ display: "grid", gap: 6 }}>
                 {flows.map((f) => (
-                  <button
+                  <div
                     key={f.id}
-                    onClick={() => setSelectedFlowId(f.id)}
                     style={{
-                      ...smallBtn,
-                      textAlign: "left",
-                      background: selectedFlowId === f.id ? "rgba(255,255,255,0.16)" : "transparent",
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto",
+                      gap: 6,
                     }}
                   >
-                    {f.name} ({f.steps_count || 0} pasos) {f.is_active ? "[activo]" : ""}
-                  </button>
+                    <button
+                      onClick={() => setSelectedFlowId(f.id)}
+                      style={{
+                        ...smallBtn,
+                        textAlign: "left",
+                        background: selectedFlowId === f.id ? "rgba(255,255,255,0.16)" : "transparent",
+                      }}
+                    >
+                      {f.name} ({f.steps_count || 0} pasos) {f.is_active ? "[activo]" : ""}
+                    </button>
+                    <button style={dangerBtn} onClick={() => deleteFlow(f.id)}>Eliminar</button>
+                  </div>
                 ))}
               </div>
             </div>

@@ -387,6 +387,22 @@ export default function TriggerBuilderPanel({
     }
   };
 
+  const deleteTrigger = async (trigger) => {
+    const label = trigger?.name || `#${trigger?.id ?? ""}`;
+    const ok = window.confirm(`Se eliminara el trigger "${label}". Esta accion no se puede deshacer.\n\n¿Continuar?`);
+    if (!ok) return;
+    try {
+      const r = await fetch(`${API}/api/triggers/${encodeURIComponent(trigger.id)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo eliminar trigger");
+      if (selectedTriggerId === trigger.id) setSelectedTriggerId(null);
+      await onTriggersReload?.();
+      onStatus?.(`Trigger eliminado: ${label}`);
+    } catch (e) {
+      onError?.(String(e.message || e));
+    }
+  };
+
   return (
     <div className="trg-layout">
       <div className="trg-left-col">
@@ -453,6 +469,7 @@ export default function TriggerBuilderPanel({
                   <div className="trg-item-meta">cooldown {t.cooldown_minutes} min | ejecuciones {t.executions_count || 0}</div>
                 </button>
                 <button style={t.is_active ? dangerBtn : smallBtn} onClick={() => toggleActive(t)}>{t.is_active ? "OFF" : "ON"}</button>
+                <button style={dangerBtn} onClick={() => deleteTrigger(t)}>Eliminar</button>
               </div>
             ))}
           </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import EmojiPickerButton from "./EmojiPickerButton";
 
 const box = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -560,6 +561,12 @@ export default function TemplateBuilderPanel({
     updateBlock(idx, { text: `${String(block.text || "")} ${token}`.trim() });
   };
 
+  const appendEmojiToBlockField = (idx, field, emoji) => {
+    const block = templateBlocks[idx] || {};
+    const current = String(block?.[field] || "");
+    updateBlock(idx, { [field]: `${current}${emoji}` });
+  };
+
   const uploadTemplateMedia = async (idx, file, kind) => {
     if (!file) return;
     const mediaKind = String(kind || "image").toLowerCase();
@@ -917,6 +924,9 @@ export default function TemplateBuilderPanel({
                       <div style={{ display: "grid", gap: 6 }}>
                         <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
                         <input style={input} value={b.image_url || ""} onChange={(e) => updateBlock(idx, { image_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <EmojiPickerButton onSelect={(emoji) => appendEmojiToBlockField(idx, "caption", emoji)} title="Agregar emoji al caption" />
+                        </div>
                         <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption de la imagen" />
                         <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                           Subir imagen
@@ -927,6 +937,9 @@ export default function TemplateBuilderPanel({
                       <div style={{ display: "grid", gap: 6 }}>
                         <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
                         <input style={input} value={b.video_url || ""} onChange={(e) => updateBlock(idx, { video_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <EmojiPickerButton onSelect={(emoji) => appendEmojiToBlockField(idx, "caption", emoji)} title="Agregar emoji al caption" />
+                        </div>
                         <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption del video" />
                         <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                           Subir video
@@ -957,7 +970,12 @@ export default function TemplateBuilderPanel({
                         ) : null}
                       </div>
                     ) : (
-                      <textarea style={{ ...input, minHeight: 85 }} value={b.text || ""} onChange={(e) => updateBlock(idx, { text: e.target.value })} placeholder="Texto del mensaje" />
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <EmojiPickerButton onSelect={(emoji) => appendEmojiToBlockField(idx, "text", emoji)} title="Agregar emoji al texto" />
+                        </div>
+                        <textarea style={{ ...input, minHeight: 85 }} value={b.text || ""} onChange={(e) => updateBlock(idx, { text: e.target.value })} placeholder="Texto del mensaje" />
+                      </div>
                     )}
                   </div>
                 );

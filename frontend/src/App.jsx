@@ -4,6 +4,8 @@ import AIPanel from "./components/AIPanel";
 import DashboardPanel from "./components/DashboardPanel";
 import CustomersPanel from "./components/CustomersPanel";
 import MarketingPanel from "./components/MarketingPanel";
+import LabelsPanel from "./components/LabelsPanel";
+import EmojiPickerButton from "./components/EmojiPickerButton";
 
 
 // --- CONFIGURACIÓN ---
@@ -21,6 +23,7 @@ const IconBot = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none
 const IconUser = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>;
 const IconImage = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>;
 const IconTag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><line x1="7" y1="7" x2="7.01" y2="7" /></svg>;
+const IconTagNav = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><line x1="7" y1="7" x2="7.01" y2="7" /></svg>;
 const IconBag = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /><path d="M16 10a4 4 0 0 1-8 0" /></svg>;
 const IconPaperclip = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -120,6 +123,7 @@ const MainNav = ({ activeTab, setActiveTab }) => {
     { id: 'dashboard', icon: IconChart, label: 'Dashboard' },
     { id: 'inbox', icon: IconMessage, label: 'Inbox' },
     { id: 'crm', icon: IconUsers, label: 'Clientes' },
+    { id: 'labels', icon: IconTagNav, label: 'Etiquetas' },
     { id: 'marketing', icon: IconZap, label: 'Campañas' },
     { id: 'settings', icon: IconSettings, label: 'Ajustes' },
   ];
@@ -287,6 +291,13 @@ const CustomerCardCRM = ({ phone, takeover }) => {
   const [rmkSaving, setRmkSaving] = useState(false);
   const [rmkStatus, setRmkStatus] = useState("");
   const [rmkSendNow, setRmkSendNow] = useState(true);
+  const [labelCatalog, setLabelCatalog] = useState([]);
+
+  const currentTagTokens = (form.tags || "")
+    .split(",")
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+  const currentTagSet = new Set(currentTagTokens);
 
   const selectedRmkFlow = (rmkCatalog || []).find((f) => String(f.id) === String(rmkFlowId)) || null;
   const selectedEnrollment = (rmkEnrollments || []).find((e) => String(e.flow_id) === String(rmkFlowId)) || null;
@@ -315,6 +326,18 @@ const CustomerCardCRM = ({ phone, takeover }) => {
     } catch (e) {
       console.error(e);
       return [];
+    }
+  };
+
+  const loadLabelCatalog = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/labels?active=yes&limit=500`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo cargar etiquetas");
+      setLabelCatalog(Array.isArray(d?.labels) ? d.labels : []);
+    } catch (e) {
+      console.error(e);
+      setLabelCatalog([]);
     }
   };
 
@@ -388,6 +411,7 @@ const CustomerCardCRM = ({ phone, takeover }) => {
 
   useEffect(() => {
     loadRemarketingCatalog();
+    loadLabelCatalog();
   }, []);
 
   useEffect(() => {
@@ -444,6 +468,16 @@ const CustomerCardCRM = ({ phone, takeover }) => {
   const handleChange = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
     setDirty(true);
+  };
+
+  const toggleLabelTag = (labelKey) => {
+    const token = String(labelKey || "").trim().toLowerCase();
+    if (!token) return;
+    const next = [...currentTagTokens];
+    const idx = next.findIndex((x) => x === token);
+    if (idx >= 0) next.splice(idx, 1);
+    else next.push(token);
+    handleChange("tags", next.join(","));
   };
 
   if (!phone) return <div className="crm-panel empty" />;
@@ -557,6 +591,38 @@ const CustomerCardCRM = ({ phone, takeover }) => {
             onChange={e => handleChange('tags', e.target.value)}
             placeholder="Separadas por comas..."
           />
+          {labelCatalog.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+              {labelCatalog.map((label) => {
+                const token = String(label.label_key || "").trim().toLowerCase();
+                const active = currentTagSet.has(token);
+                const color = String(label.color || "#64748b");
+                return (
+                  <button
+                    type="button"
+                    key={label.id}
+                    onClick={() => toggleLabelTag(token)}
+                    style={{
+                      border: `1px solid ${active ? color : "rgba(255,255,255,0.16)"}`,
+                      background: active ? `${color}33` : "transparent",
+                      color: "#fff",
+                      borderRadius: 999,
+                      padding: "4px 9px",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                    title={label.description || label.name || token}
+                  >
+                    <span>{label.icon || "🏷️"}</span>
+                    <span>{label.name || token}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="crm-card-info" style={{ marginBottom: 16 }}>
@@ -633,6 +699,12 @@ const CustomerCardCRM = ({ phone, takeover }) => {
 
         <div className="form-group">
           <label className="flex-label"><IconBag /> Notas Internas</label>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+            <EmojiPickerButton
+              onSelect={(emoji) => handleChange("notes", `${form.notes || ""}${emoji}`)}
+              title="Agregar emoji a notas"
+            />
+          </div>
           <textarea
             className="notes-area"
             value={form.notes}
@@ -1320,6 +1392,12 @@ export default function App() {
                   disabled={!selectedPhone || isRecording}
                 />
 
+                <EmojiPickerButton
+                  disabled={!selectedPhone || isRecording}
+                  onSelect={(emoji) => setText((prev) => `${prev || ""}${emoji}`)}
+                  title="Agregar emoji al mensaje"
+                />
+
                 <button
                   onClick={sendMessage}
                   disabled={!text.trim() && !attachment}
@@ -1412,6 +1490,8 @@ export default function App() {
         <DashboardPanel apiBase={API_BASE} />
       ) : activeTab === "crm" ? (
         <CustomersPanel apiBase={API_BASE} />
+      ) : activeTab === "labels" ? (
+        <LabelsPanel apiBase={API_BASE} />
       ) : activeTab === "marketing" ? (
         <MarketingPanel apiBase={API_BASE} />
       ) : activeTab === "settings" ? (

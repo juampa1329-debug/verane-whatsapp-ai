@@ -305,15 +305,15 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
         if step_order is None:
             continue
 
-            by_flow[flow_id]["steps"].append(
-                {
-                    "step_order": int(step_order),
-                    "stage_name": str(row.get("stage_name") or "").strip(),
-                    "wait_minutes": int(row.get("wait_minutes") or 0),
-                    "template_id": int(row.get("template_id") or 0) if row.get("template_id") is not None else None,
-                    "template_name": str(row.get("template_name") or "").strip(),
-                }
-            )
+        by_flow[flow_id]["steps"].append(
+            {
+                "step_order": int(step_order),
+                "stage_name": str(row.get("stage_name") or "").strip(),
+                "wait_minutes": int(row.get("wait_minutes") or 0),
+                "template_id": int(row.get("template_id") or 0) if row.get("template_id") is not None else None,
+                "template_name": str(row.get("template_name") or "").strip(),
+            }
+        )
 
     return list(by_flow.values())
 

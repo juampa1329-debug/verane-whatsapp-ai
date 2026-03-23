@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import EmojiPickerButton from "./EmojiPickerButton";
 
 const shell = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -91,10 +92,28 @@ export default function CustomersPanel({ apiBase }) {
   const [rmkStage, setRmkStage] = useState("");
   const [rmkSaving, setRmkSaving] = useState(false);
   const [rmkSendNow, setRmkSendNow] = useState(true);
+  const [labelsCatalog, setLabelsCatalog] = useState([]);
+  const [intentAnalysis, setIntentAnalysis] = useState(null);
+  const [contextPreview, setContextPreview] = useState(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const selected = useMemo(
     () => customers.find((c) => c.phone === selectedPhone) || null,
     [customers, selectedPhone]
+  );
+
+  const selectedTagTokens = useMemo(
+    () =>
+      (form.tags || "")
+        .split(",")
+        .map((x) => String(x || "").trim().toLowerCase())
+        .filter(Boolean),
+    [form.tags]
+  );
+
+  const selectedTagSet = useMemo(
+    () => new Set(selectedTagTokens),
+    [selectedTagTokens]
   );
 
   const selectedRmkFlow = useMemo(
@@ -178,6 +197,53 @@ export default function CustomersPanel({ apiBase }) {
     }
   };
 
+  const loadLabelsCatalog = async () => {
+    try {
+      const r = await fetch(`${API}/api/labels?active=yes&limit=500`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudieron cargar etiquetas");
+      setLabelsCatalog(Array.isArray(d?.labels) ? d.labels : []);
+    } catch (e) {
+      setError(String(e.message || e));
+      setLabelsCatalog([]);
+    }
+  };
+
+  const loadIntentAnalysis = async (phone) => {
+    if (!phone) {
+      setIntentAnalysis(null);
+      return;
+    }
+    setAnalysisLoading(true);
+    try {
+      const r = await fetch(`${API}/api/customers/${encodeURIComponent(phone)}/intent-analysis?limit=30`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo analizar intenciones");
+      setIntentAnalysis(d || null);
+    } catch (e) {
+      setError(String(e.message || e));
+      setIntentAnalysis(null);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  const loadContextPreview = async (phone) => {
+    if (!phone) {
+      setContextPreview(null);
+      return;
+    }
+    try {
+      const r = await fetch(`${API}/api/customers/${encodeURIComponent(phone)}/context?history_limit=30&max_chars=5000`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo cargar contexto");
+      setContextPreview(d || null);
+    } catch (e) {
+      setError(String(e.message || e));
+      setContextPreview(null);
+    }
+  };
+
   const loadRemarketingForPhone = async (phone) => {
     if (!phone) {
       setRmkEnrollments([]);
@@ -233,6 +299,16 @@ export default function CustomersPanel({ apiBase }) {
     }
   };
 
+  const toggleLabelTag = (labelKey) => {
+    const token = String(labelKey || "").trim().toLowerCase();
+    if (!token) return;
+    const next = [...selectedTagTokens];
+    const idx = next.findIndex((x) => x === token);
+    if (idx >= 0) next.splice(idx, 1);
+    else next.push(token);
+    setForm((p) => ({ ...p, tags: next.join(",") }));
+  };
+
   const saveCustomer = async () => {
     if (!selectedPhone) return;
     setSaving(true);
@@ -269,6 +345,7 @@ export default function CustomersPanel({ apiBase }) {
 
   useEffect(() => {
     loadRemarketingCatalog();
+    loadLabelsCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -284,6 +361,8 @@ export default function CustomersPanel({ apiBase }) {
     if (selectedPhone) {
       loadCustomerDetail(selectedPhone);
       loadRemarketingForPhone(selectedPhone);
+      loadIntentAnalysis(selectedPhone);
+      loadContextPreview(selectedPhone);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPhone]);
@@ -425,6 +504,41 @@ export default function CustomersPanel({ apiBase }) {
                     <div style={{ fontSize: 12, marginBottom: 4 }}>Tags (coma separadas)</div>
                     <input style={inputStyle} value={form.tags || ""} onChange={(e) => setForm((p) => ({ ...p, tags: e.target.value }))} />
                   </label>
+                  {labelsCatalog.length > 0 ? (
+                    <div>
+                      <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>Etiquetas visuales</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {labelsCatalog.map((label) => {
+                          const token = String(label.label_key || "").trim().toLowerCase();
+                          const active = selectedTagSet.has(token);
+                          const color = String(label.color || "#64748b");
+                          return (
+                            <button
+                              key={label.id}
+                              type="button"
+                              onClick={() => toggleLabelTag(token)}
+                              style={{
+                                border: `1px solid ${active ? color : "rgba(255,255,255,0.15)"}`,
+                                background: active ? `${color}33` : "transparent",
+                                color: "#fff",
+                                borderRadius: 999,
+                                padding: "4px 9px",
+                                fontSize: 11,
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                              }}
+                              title={label.description || label.name || token}
+                            >
+                              <span>{label.icon || "🏷️"}</span>
+                              <span>{label.name || token}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -474,7 +588,87 @@ export default function CustomersPanel({ apiBase }) {
               </div>
 
               <div style={card}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700 }}>Intenciones (últimos 30 mensajes)</div>
+                  <button style={softBtn} onClick={() => loadIntentAnalysis(selectedPhone)} disabled={analysisLoading}>
+                    {analysisLoading ? "Analizando..." : "Reanalizar"}
+                  </button>
+                </div>
+                {!intentAnalysis ? (
+                  <div style={{ fontSize: 12, opacity: 0.78 }}>Sin datos de intención.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+                      <div style={{ ...card, padding: 8 }}>
+                        <div style={{ fontSize: 11, opacity: 0.75 }}>Entrantes</div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>{intentAnalysis.incoming_messages_analyzed || 0}</div>
+                      </div>
+                      <div style={{ ...card, padding: 8 }}>
+                        <div style={{ fontSize: 11, opacity: 0.75 }}>Perfumería</div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>{intentAnalysis.perfume_related_messages || 0}</div>
+                      </div>
+                      <div style={{ ...card, padding: 8 }}>
+                        <div style={{ fontSize: 11, opacity: 0.75 }}>Ratio</div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>
+                          {Math.round(Number(intentAnalysis.perfume_interest_ratio || 0) * 100)}%
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Top intenciones</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {(intentAnalysis.top_intents || []).slice(0, 6).map((row) => (
+                          <span
+                            key={`${row.intent}-${row.count}`}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.16)" }}
+                          >
+                            {row.intent}: {row.count}
+                          </span>
+                        ))}
+                        {!intentAnalysis.top_intents?.length ? <span style={{ fontSize: 12, opacity: 0.7 }}>Sin señales</span> : null}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Términos de perfume detectados</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {(intentAnalysis.top_terms || []).slice(0, 10).map((row) => (
+                          <span
+                            key={`${row.term}-${row.count}`}
+                            style={{ fontSize: 11, padding: "3px 8px", borderRadius: 999, border: "1px solid rgba(46,204,113,0.35)", color: "#9be15d" }}
+                          >
+                            {row.term} ({row.count})
+                          </span>
+                        ))}
+                        {!intentAnalysis.top_terms?.length ? <span style={{ fontSize: 12, opacity: 0.7 }}>Sin términos</span> : null}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={card}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700 }}>Contexto por conversación (IA)</div>
+                  <button style={softBtn} onClick={() => loadContextPreview(selectedPhone)}>Recargar contexto</button>
+                </div>
+                <textarea
+                  style={{ ...inputStyle, minHeight: 150, resize: "vertical" }}
+                  readOnly
+                  value={contextPreview?.context || ""}
+                  placeholder="Aquí verás el contexto que usa la IA para este cliente."
+                />
+              </div>
+
+              <div style={card}>
                 <div style={{ fontWeight: 700, marginBottom: 8 }}>Notas</div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+                  <EmojiPickerButton
+                    onSelect={(emoji) => setForm((p) => ({ ...p, notes: `${p.notes || ""}${emoji}` }))}
+                    title="Agregar emoji a notas"
+                  />
+                </div>
                 <textarea
                   style={{ ...inputStyle, minHeight: 170, resize: "vertical" }}
                   value={form.notes || ""}
@@ -488,4 +682,3 @@ export default function CustomersPanel({ apiBase }) {
     </div>
   );
 }
-

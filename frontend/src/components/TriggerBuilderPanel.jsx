@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import "./TriggerBuilderPanel.css";
+import EmojiPickerButton from "./EmojiPickerButton";
 
 const input = {
   width: "100%",
@@ -698,6 +699,12 @@ export default function TriggerBuilderPanel({
                 {a.type === "notify_admins" ? (
                   <div className="trg-stack">
                     <input style={input} placeholder="Telefonos admins (coma)" value={a.phones || ""} onChange={(e) => updateAction(idx, { phones: e.target.value })} />
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <EmojiPickerButton
+                        onSelect={(emoji) => updateAction(idx, { message: `${a.message || ""}${emoji}` })}
+                        title="Agregar emoji al mensaje"
+                      />
+                    </div>
                     <textarea style={{ ...input, minHeight: 70 }} placeholder="Mensaje para administradores" value={a.message || ""} onChange={(e) => updateAction(idx, { message: e.target.value })} />
                   </div>
                 ) : null}

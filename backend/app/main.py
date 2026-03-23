@@ -3,6 +3,8 @@
 import asyncio
 import json
 import os
+import re
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +28,8 @@ from app.remarketing.engine import (
 
 # ✅ Pipeline core (nuevo flujo real)
 from app.pipeline.ingest_core import run_ingest, IngestMessage
+from app.ai.context_builder import build_ai_meta
+from app.ai.intent_router import detect_intent
 
 # ✅ Woo sender (endpoint manual)
 from app.pipeline.wc_sender import wc_send_product
@@ -350,6 +354,56 @@ def ensure_schema():
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_customer_segments_updated_at ON customer_segments (updated_at DESC)"""))
 
         # -------------------------
+        # crm_labels
+        # -------------------------
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS crm_labels (
+                id SERIAL PRIMARY KEY,
+                label_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '#64748b',
+                icon TEXT NOT NULL DEFAULT 'tag',
+                description TEXT NOT NULL DEFAULT '',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS label_key TEXT"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#64748b'"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT 'tag'"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()"""))
+        conn.execute(text("""ALTER TABLE crm_labels ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()"""))
+        conn.execute(text("""
+            UPDATE crm_labels
+            SET label_key = CASE
+                WHEN COALESCE(TRIM(label_key),'') <> '' THEN LOWER(TRIM(label_key))
+                ELSE LOWER(REGEXP_REPLACE(COALESCE(name,''), '[^a-zA-Z0-9]+', '_', 'g'))
+            END
+        """))
+        conn.execute(text("""
+            UPDATE crm_labels
+            SET label_key = CONCAT('label_', id)
+            WHERE COALESCE(TRIM(label_key),'') = ''
+        """))
+        conn.execute(text("""
+            WITH dups AS (
+                SELECT id, label_key, ROW_NUMBER() OVER (PARTITION BY label_key ORDER BY id ASC) AS rn
+                FROM crm_labels
+            )
+            UPDATE crm_labels l
+            SET label_key = CONCAT(l.label_key, '_', l.id)
+            FROM dups
+            WHERE dups.id = l.id
+              AND dups.rn > 1
+        """))
+        conn.execute(text("""CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_labels_label_key ON crm_labels (label_key)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_crm_labels_active ON crm_labels (is_active)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_crm_labels_updated_at ON crm_labels (updated_at DESC)"""))
+
+        # -------------------------
         # message_templates
         # -------------------------
         conn.execute(text("""
@@ -639,6 +693,24 @@ class SegmentPatch(BaseModel):
     is_active: Optional[bool] = None
 
 
+class LabelIn(BaseModel):
+    name: str
+    label_key: str = ""
+    color: str = "#64748b"
+    icon: str = "tag"
+    description: str = ""
+    is_active: bool = True
+
+
+class LabelPatch(BaseModel):
+    name: Optional[str] = None
+    label_key: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 class TemplateIn(BaseModel):
     name: str
     category: str = "general"
@@ -775,6 +847,55 @@ def _parse_tags_param(tags: str) -> List[str]:
     return out
 
 
+def _split_tags_csv(raw: str) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for item in str(raw or "").split(","):
+        token = str(item or "").strip().lower()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
+def _join_tags_csv(tags: List[str]) -> str:
+    out: List[str] = []
+    seen = set()
+    for item in tags:
+        token = str(item or "").strip().lower()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return ",".join(out)
+
+
+def _normalize_label_key(raw: str, fallback: str = "") -> str:
+    token = str(raw or "").strip().lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    token = token.strip("_")
+    if token:
+        return token[:64]
+    fb = str(fallback or "").strip().lower()
+    fb = re.sub(r"[^a-z0-9]+", "_", fb).strip("_")
+    return (fb[:64] or "label")
+
+
+def _normalize_label_color(raw: str) -> str:
+    val = str(raw or "").strip().lower()
+    if re.fullmatch(r"#[0-9a-f]{6}", val):
+        return val
+    return "#64748b"
+
+
+def _normalize_label_icon(raw: str) -> str:
+    icon = str(raw or "").strip()
+    if not icon:
+        return "tag"
+    return icon[:48]
+
+
 def _parse_range_days(raw: str, default_days: int = 7, max_days: int = 365) -> int:
     token = (raw or "").strip().lower()
     if not token:
@@ -795,6 +916,91 @@ def _safe_json_dict(val: Any) -> Dict[str, Any]:
     if isinstance(val, dict):
         return val
     return {}
+
+
+def _replace_tag_key_everywhere(conn, old_key: str, new_key: str) -> int:
+    old = _normalize_label_key(old_key)
+    new = _normalize_label_key(new_key)
+    if not old or not new or old == new:
+        return 0
+
+    rows = conn.execute(
+        text(
+            """
+            SELECT phone, COALESCE(tags, '') AS tags
+            FROM conversations
+            WHERE LOWER(COALESCE(tags, '')) LIKE :needle
+            """
+        ),
+        {"needle": f"%{old}%"},
+    ).mappings().all()
+
+    changed = 0
+    for row in rows:
+        phone = str(row.get("phone") or "").strip()
+        if not phone:
+            continue
+        tags = _split_tags_csv(str(row.get("tags") or ""))
+        if old not in tags:
+            continue
+        replaced = [new if t == old else t for t in tags]
+        next_csv = _join_tags_csv(replaced)
+        if next_csv == _join_tags_csv(tags):
+            continue
+        conn.execute(
+            text(
+                """
+                UPDATE conversations
+                SET tags = :tags,
+                    updated_at = NOW()
+                WHERE phone = :phone
+                """
+            ),
+            {"phone": phone, "tags": next_csv},
+        )
+        changed += 1
+    return changed
+
+
+def _remove_tag_key_everywhere(conn, key: str) -> int:
+    tag_key = _normalize_label_key(key)
+    if not tag_key:
+        return 0
+
+    rows = conn.execute(
+        text(
+            """
+            SELECT phone, COALESCE(tags, '') AS tags
+            FROM conversations
+            WHERE LOWER(COALESCE(tags, '')) LIKE :needle
+            """
+        ),
+        {"needle": f"%{tag_key}%"},
+    ).mappings().all()
+
+    changed = 0
+    for row in rows:
+        phone = str(row.get("phone") or "").strip()
+        if not phone:
+            continue
+        tags = _split_tags_csv(str(row.get("tags") or ""))
+        filtered = [t for t in tags if t != tag_key]
+        next_csv = _join_tags_csv(filtered)
+        if next_csv == _join_tags_csv(tags):
+            continue
+        conn.execute(
+            text(
+                """
+                UPDATE conversations
+                SET tags = :tags,
+                    updated_at = NOW()
+                WHERE phone = :phone
+                """
+            ),
+            {"phone": phone, "tags": next_csv},
+        )
+        changed += 1
+    return changed
 
 
 def _normalize_status(raw: str, allowed: set[str], default: str) -> str:
@@ -856,6 +1062,70 @@ def _normalize_assistant_message_type(raw: str) -> str:
     v = aliases.get(v, v)
     allowed = {"auto", "text", "audio"}
     return v if v in allowed else "auto"
+
+
+PERFUME_RELATED_INTENTS = {
+    "PRODUCT_SEARCH",
+    "PREFERENCE_RECO",
+    "PRICE_STOCK",
+    "BUY_FLOW",
+    "COMPARE",
+    "PHOTO_REQUEST",
+    "CHOICE",
+}
+
+PERFUME_TERMS = [
+    "perfume",
+    "colonia",
+    "fragancia",
+    "dior",
+    "versace",
+    "lattafa",
+    "armaf",
+    "carolina herrera",
+    "paco rabanne",
+    "chanel",
+    "givenchy",
+    "ysl",
+    "sauvage",
+    "invictus",
+    "one million",
+    "eros",
+    "le male",
+    "bleu de chanel",
+    "212",
+]
+
+
+def _normalize_text_plain(raw: str) -> str:
+    text_value = str(raw or "").strip().lower()
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ñ": "n",
+    }
+    for src, dst in replacements.items():
+        text_value = text_value.replace(src, dst)
+    text_value = re.sub(r"\s+", " ", text_value).strip()
+    return text_value
+
+
+def _extract_perfume_terms(raw: str) -> List[str]:
+    t = _normalize_text_plain(raw)
+    if not t:
+        return []
+    found: List[str] = []
+    for term in PERFUME_TERMS:
+        if term in t:
+            found.append(term)
+    return found
+
+
+def _is_perfume_related_intent(intent: str) -> bool:
+    return str(intent or "").strip().upper() in PERFUME_RELATED_INTENTS
 
 
 def _render_template(body: str, variables: Dict[str, Any]) -> str:
@@ -1645,6 +1915,226 @@ def update_customer_segment(segment_id: int, payload: SegmentPatch):
     return {"segment": dict(row)}
 
 
+@app.get("/api/labels")
+def list_labels(
+    active: str = Query("all", description="all|yes|no"),
+    search: str = Query("", description="Buscar por nombre/key/descripcion"),
+    limit: int = Query(300, ge=1, le=2000),
+):
+    active = (active or "all").strip().lower()
+    search = (search or "").strip().lower()
+
+    where: List[str] = []
+    params: Dict[str, Any] = {"limit": int(limit)}
+
+    if active == "yes":
+        where.append("l.is_active = TRUE")
+    elif active == "no":
+        where.append("l.is_active = FALSE")
+
+    if search:
+        where.append(
+            "(LOWER(l.name) LIKE :search OR LOWER(l.label_key) LIKE :search OR LOWER(COALESCE(l.description,'')) LIKE :search)"
+        )
+        params["search"] = f"%{search}%"
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    l.id,
+                    l.label_key,
+                    l.name,
+                    l.color,
+                    l.icon,
+                    l.description,
+                    l.is_active,
+                    l.created_at,
+                    l.updated_at,
+                    COALESCE(u.usage_count, 0) AS usage_count
+                FROM crm_labels l
+                LEFT JOIN (
+                    SELECT
+                        TRIM(LOWER(x)) AS tag_key,
+                        COUNT(DISTINCT c.phone) AS usage_count
+                    FROM conversations c
+                    CROSS JOIN LATERAL regexp_split_to_table(COALESCE(c.tags, ''), ',') AS x
+                    WHERE TRIM(x) <> ''
+                    GROUP BY TRIM(LOWER(x))
+                ) u
+                  ON u.tag_key = l.label_key
+                {where_sql}
+                ORDER BY l.updated_at DESC, l.id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+
+    return {"labels": [dict(r) for r in rows]}
+
+
+@app.post("/api/labels")
+def create_label(payload: LabelIn):
+    name = str(payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    label_key = _normalize_label_key(payload.label_key, fallback=name)
+    color = _normalize_label_color(payload.color)
+    icon = _normalize_label_icon(payload.icon)
+    description = str(payload.description or "").strip()
+
+    with engine.begin() as conn:
+        exists = conn.execute(
+            text("SELECT id FROM crm_labels WHERE label_key = :label_key LIMIT 1"),
+            {"label_key": label_key},
+        ).mappings().first()
+        if exists:
+            raise HTTPException(status_code=409, detail="label_key already exists")
+
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO crm_labels (
+                    label_key, name, color, icon, description, is_active, created_at, updated_at
+                )
+                VALUES (
+                    :label_key, :name, :color, :icon, :description, :is_active, NOW(), NOW()
+                )
+                RETURNING id, label_key, name, color, icon, description, is_active, created_at, updated_at
+                """
+            ),
+            {
+                "label_key": label_key,
+                "name": name,
+                "color": color,
+                "icon": icon,
+                "description": description,
+                "is_active": bool(payload.is_active),
+            },
+        ).mappings().first()
+
+    return {"label": dict(row or {})}
+
+
+@app.patch("/api/labels/{label_id}")
+def update_label(label_id: int, payload: LabelPatch):
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with engine.begin() as conn:
+        current = conn.execute(
+            text(
+                """
+                SELECT id, label_key, name, color, icon, description, is_active
+                FROM crm_labels
+                WHERE id = :label_id
+                LIMIT 1
+                """
+            ),
+            {"label_id": int(label_id)},
+        ).mappings().first()
+        if not current:
+            raise HTTPException(status_code=404, detail="label not found")
+
+        sets: List[str] = ["updated_at = NOW()"]
+        params: Dict[str, Any] = {"label_id": int(label_id)}
+        old_key = str(current.get("label_key") or "").strip().lower()
+        new_key = old_key
+
+        if "name" in data:
+            name = str(data.get("name") or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="name cannot be empty")
+            sets.append("name = :name")
+            params["name"] = name
+
+        if "label_key" in data:
+            proposed_key = _normalize_label_key(str(data.get("label_key") or ""), fallback=str(current.get("name") or "label"))
+            check = conn.execute(
+                text("SELECT id FROM crm_labels WHERE label_key = :label_key AND id <> :label_id LIMIT 1"),
+                {"label_key": proposed_key, "label_id": int(label_id)},
+            ).mappings().first()
+            if check:
+                raise HTTPException(status_code=409, detail="label_key already exists")
+            sets.append("label_key = :label_key")
+            params["label_key"] = proposed_key
+            new_key = proposed_key
+
+        if "color" in data:
+            sets.append("color = :color")
+            params["color"] = _normalize_label_color(data.get("color"))
+
+        if "icon" in data:
+            sets.append("icon = :icon")
+            params["icon"] = _normalize_label_icon(data.get("icon"))
+
+        if "description" in data:
+            sets.append("description = :description")
+            params["description"] = str(data.get("description") or "").strip()
+
+        if "is_active" in data:
+            sets.append("is_active = :is_active")
+            params["is_active"] = bool(data.get("is_active"))
+
+        row = conn.execute(
+            text(
+                f"""
+                UPDATE crm_labels
+                SET {", ".join(sets)}
+                WHERE id = :label_id
+                RETURNING id, label_key, name, color, icon, description, is_active, created_at, updated_at
+                """
+            ),
+            params,
+        ).mappings().first()
+
+        renamed_on = 0
+        if old_key and new_key and old_key != new_key:
+            renamed_on = _replace_tag_key_everywhere(conn, old_key, new_key)
+
+    return {"label": dict(row or {}), "renamed_on_conversations": int(renamed_on)}
+
+
+@app.delete("/api/labels/{label_id}")
+def delete_label(label_id: int, cleanup_tags: bool = Query(False, description="Si true, remueve el tag de conversaciones")):
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, label_key, name
+                FROM crm_labels
+                WHERE id = :label_id
+                LIMIT 1
+                """
+            ),
+            {"label_id": int(label_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="label not found")
+
+        cleaned = 0
+        if cleanup_tags:
+            cleaned = _remove_tag_key_everywhere(conn, str(row.get("label_key") or ""))
+
+        conn.execute(
+            text("DELETE FROM crm_labels WHERE id = :label_id"),
+            {"label_id": int(label_id)},
+        )
+
+    return {
+        "ok": True,
+        "deleted": {"id": int(row.get("id") or 0), "label_key": str(row.get("label_key") or ""), "name": str(row.get("name") or "")},
+        "cleanup_tags": bool(cleanup_tags),
+        "conversations_cleaned": int(cleaned),
+    }
+
+
 @app.get("/api/customers")
 def list_customers(
     search: str = Query("", description="Buscar por telefono/nombre/texto"),
@@ -1854,6 +2344,191 @@ def patch_customer(phone: str, payload: CustomerPatch):
         """), params)
 
     return get_customer(phone)
+
+
+@app.get("/api/customers/{phone}/context")
+def get_customer_context(
+    phone: str,
+    history_limit: int = Query(30, ge=5, le=120),
+    max_chars: int = Query(6000, ge=300, le=12000),
+):
+    p = (phone or "").strip()
+    if not p:
+        raise HTTPException(status_code=400, detail="phone required")
+
+    meta = build_ai_meta(p, "", history_limit=history_limit)
+    context = str(meta.get("context") or "")
+    if max_chars > 0 and len(context) > max_chars:
+        context = context[:max_chars].rstrip() + "..."
+
+    return {
+        "phone": p,
+        "history_limit": int(history_limit),
+        "context_chars": len(context),
+        "flags": meta.get("flags") if isinstance(meta.get("flags"), dict) else {},
+        "crm": meta.get("crm") if isinstance(meta.get("crm"), dict) else {},
+        "context": context,
+    }
+
+
+@app.get("/api/customers/{phone}/intent-analysis")
+def customer_intent_analysis(
+    phone: str,
+    limit: int = Query(30, ge=5, le=120),
+):
+    p = (phone or "").strip()
+    if not p:
+        raise HTTPException(status_code=400, detail="phone required")
+
+    with engine.begin() as conn:
+        convo = conn.execute(
+            text(
+                """
+                SELECT
+                    COALESCE(ai_state, '') AS ai_state,
+                    COALESCE(first_name, '') AS first_name,
+                    COALESCE(last_name, '') AS last_name,
+                    COALESCE(city, '') AS city,
+                    COALESCE(customer_type, '') AS customer_type,
+                    COALESCE(tags, '') AS tags,
+                    COALESCE(payment_status, '') AS payment_status
+                FROM conversations
+                WHERE phone = :phone
+                LIMIT 1
+                """
+            ),
+            {"phone": p},
+        ).mappings().first() or {}
+
+        rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    phone,
+                    direction,
+                    msg_type,
+                    COALESCE(text, '') AS text,
+                    COALESCE(extracted_text, '') AS extracted_text,
+                    created_at
+                FROM messages
+                WHERE phone = :phone
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"phone": p, "limit": int(limit)},
+        ).mappings().all()
+
+    messages = [dict(r) for r in rows]
+    messages.reverse()
+
+    crm_snapshot = {
+        "first_name": str(convo.get("first_name") or ""),
+        "last_name": str(convo.get("last_name") or ""),
+        "city": str(convo.get("city") or ""),
+        "customer_type": str(convo.get("customer_type") or ""),
+        "tags": str(convo.get("tags") or ""),
+        "payment_status": str(convo.get("payment_status") or ""),
+    }
+    ai_state = str(convo.get("ai_state") or "")
+
+    intent_counter: Counter[str] = Counter()
+    term_counter: Counter[str] = Counter()
+    query_counter: Counter[str] = Counter()
+    timeline: List[Dict[str, Any]] = []
+
+    incoming_total = 0
+    perfume_related_total = 0
+
+    for row in messages:
+        direction = str(row.get("direction") or "").strip().lower()
+        msg_type = str(row.get("msg_type") or "text").strip().lower()
+        text_value = str(row.get("text") or "")
+        extracted = str(row.get("extracted_text") or "")
+
+        event: Dict[str, Any] = {
+            "id": int(row.get("id") or 0),
+            "created_at": row.get("created_at"),
+            "direction": direction,
+            "msg_type": msg_type,
+            "text": text_value,
+        }
+
+        if direction == "in":
+            incoming_total += 1
+            intent = detect_intent(
+                user_text=text_value,
+                msg_type=msg_type,
+                state=ai_state,
+                extracted_text=extracted,
+                crm_snapshot=crm_snapshot,
+            )
+            normalized_intent = str(intent.intent or "").strip().upper()
+            confidence = float(intent.confidence or 0)
+            payload = intent.payload if isinstance(intent.payload, dict) else {}
+            query = str(payload.get("query") or "").strip()
+            perfume_related = _is_perfume_related_intent(normalized_intent)
+
+            intent_counter[normalized_intent] += 1
+            if perfume_related:
+                perfume_related_total += 1
+            if query:
+                query_counter[query] += 1
+
+            for term in _extract_perfume_terms(f"{text_value} {extracted} {query}"):
+                term_counter[term] += 1
+
+            event.update(
+                {
+                    "intent": normalized_intent or "UNKNOWN",
+                    "confidence": round(confidence, 3),
+                    "perfume_related": perfume_related,
+                    "query": query,
+                }
+            )
+        else:
+            for term in _extract_perfume_terms(text_value):
+                term_counter[term] += 1
+
+        timeline.append(event)
+
+    top_intents = [
+        {"intent": k, "count": int(v)}
+        for k, v in intent_counter.most_common(8)
+    ]
+    top_terms = [
+        {"term": k, "count": int(v)}
+        for k, v in term_counter.most_common(12)
+    ]
+    top_queries = [
+        {"query": k, "count": int(v)}
+        for k, v in query_counter.most_common(8)
+    ]
+
+    perfume_ratio = (perfume_related_total / incoming_total) if incoming_total else 0.0
+    signals = []
+    if perfume_ratio >= 0.7:
+        signals.append("interes_alto_perfumeria")
+    if intent_counter.get("BUY_FLOW", 0) > 0:
+        signals.append("senal_compra")
+    if intent_counter.get("PRICE_STOCK", 0) > 0:
+        signals.append("consulta_precio_stock")
+    if intent_counter.get("UNKNOWN", 0) >= max(3, incoming_total // 2):
+        signals.append("intencion_ambigua")
+
+    return {
+        "phone": p,
+        "window_messages": len(messages),
+        "incoming_messages_analyzed": int(incoming_total),
+        "perfume_related_messages": int(perfume_related_total),
+        "perfume_interest_ratio": round(perfume_ratio, 4),
+        "top_intents": top_intents,
+        "top_terms": top_terms,
+        "top_queries": top_queries,
+        "signals": signals,
+        "timeline": timeline,
+    }
 
 
 # =========================================================

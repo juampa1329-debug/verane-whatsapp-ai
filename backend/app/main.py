@@ -832,6 +832,11 @@ class RemarketingStageAssignIn(BaseModel):
     send_now: bool = True
 
 
+class RemarketingDispatchIn(BaseModel):
+    include_hold: bool = False
+    limit: int = 600
+
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -1913,6 +1918,110 @@ def update_customer_segment(segment_id: int, payload: SegmentPatch):
         raise HTTPException(status_code=404, detail="segment not found")
 
     return {"segment": dict(row)}
+
+
+@app.get("/api/remarketing/filter-options")
+def remarketing_filter_options(limit: int = Query(300, ge=20, le=5000)):
+    cap = int(limit)
+
+    with engine.begin() as conn:
+        intent_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT UPPER(TRIM(COALESCE(c.intent_current, ''))) AS value
+                FROM conversations c
+                WHERE TRIM(COALESCE(c.intent_current, '')) <> ''
+                ORDER BY value ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": cap},
+        ).mappings().all()
+
+        payment_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT LOWER(TRIM(COALESCE(c.payment_status, ''))) AS value
+                FROM conversations c
+                WHERE TRIM(COALESCE(c.payment_status, '')) <> ''
+                ORDER BY value ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": cap},
+        ).mappings().all()
+
+        city_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT LOWER(TRIM(COALESCE(c.city, ''))) AS value
+                FROM conversations c
+                WHERE TRIM(COALESCE(c.city, '')) <> ''
+                ORDER BY value ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": cap},
+        ).mappings().all()
+
+        customer_type_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT LOWER(TRIM(COALESCE(c.customer_type, ''))) AS value
+                FROM conversations c
+                WHERE TRIM(COALESCE(c.customer_type, '')) <> ''
+                ORDER BY value ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": cap},
+        ).mappings().all()
+
+        tag_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT q.tag AS value
+                FROM (
+                    SELECT TRIM(LOWER(x)) AS tag
+                    FROM conversations c
+                    CROSS JOIN LATERAL regexp_split_to_table(COALESCE(c.tags, ''), ',') AS x
+                    WHERE TRIM(x) <> ''
+                    UNION
+                    SELECT TRIM(LOWER(COALESCE(l.label_key, ''))) AS tag
+                    FROM crm_labels l
+                    WHERE TRIM(COALESCE(l.label_key, '')) <> ''
+                ) q
+                ORDER BY q.tag ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": cap},
+        ).mappings().all()
+
+    def _vals(rows: List[Dict[str, Any]]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for row in rows:
+            token = str((row or {}).get("value") or "").strip()
+            if not token:
+                continue
+            key = token.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+        return out
+
+    return {
+        "options": {
+            "intent": _vals(intent_rows),
+            "tag": _vals(tag_rows),
+            "payment_status": _vals(payment_rows),
+            "city": _vals(city_rows),
+            "customer_type": _vals(customer_type_rows),
+            "takeover": ["all", "on", "off"],
+        }
+    }
 
 
 @app.get("/api/labels")
@@ -3809,6 +3918,282 @@ def update_remarketing_step(step_id: int, payload: RemarketingStepPatch):
     return {"step": dict(row)}
 
 
+@app.delete("/api/remarketing/steps/{step_id}")
+def delete_remarketing_step(step_id: int):
+    with engine.begin() as conn:
+        step = conn.execute(
+            text(
+                """
+                SELECT id, flow_id, step_order, stage_name, template_id
+                FROM remarketing_steps
+                WHERE id = :step_id
+                LIMIT 1
+                """
+            ),
+            {"step_id": int(step_id)},
+        ).mappings().first()
+        if not step:
+            raise HTTPException(status_code=404, detail="step not found")
+
+        flow_id = int(step.get("flow_id") or 0)
+        old_step_order = int(step.get("step_order") or 0)
+
+        conn.execute(
+            text(
+                """
+                DELETE FROM remarketing_steps
+                WHERE id = :step_id
+                """
+            ),
+            {"step_id": int(step_id)},
+        )
+
+        remaining = conn.execute(
+            text(
+                """
+                SELECT
+                    MIN(step_order) AS first_step_order,
+                    COUNT(*) AS steps_count
+                FROM remarketing_steps
+                WHERE flow_id = :flow_id
+                """
+            ),
+            {"flow_id": flow_id},
+        ).mappings().first()
+
+        steps_count = int((remaining or {}).get("steps_count") or 0)
+        first_step_order = int((remaining or {}).get("first_step_order") or 0) if steps_count > 0 else 0
+        moved_to_hold = False
+
+        if steps_count > 0 and first_step_order > 0:
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET current_step_order = :new_step_order,
+                        step_started_at = NOW(),
+                        next_run_at = NOW(),
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND current_step_order = :old_step_order
+                      AND LOWER(state) IN ('active', 'hold')
+                    """
+                ),
+                {
+                    "flow_id": flow_id,
+                    "old_step_order": old_step_order,
+                    "new_step_order": first_step_order,
+                    "meta_patch": '{"step_deleted_reassigned": true}',
+                },
+            )
+        else:
+            moved_to_hold = True
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET state = 'hold',
+                        next_run_at = NULL,
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND current_step_order = :old_step_order
+                      AND LOWER(state) IN ('active', 'hold')
+                    """
+                ),
+                {
+                    "flow_id": flow_id,
+                    "old_step_order": old_step_order,
+                    "meta_patch": '{"step_deleted_without_replacement": true}',
+                },
+            )
+
+    return {
+        "ok": True,
+        "deleted": {
+            "id": int(step.get("id") or 0),
+            "flow_id": int(step.get("flow_id") or 0),
+            "step_order": int(step.get("step_order") or 0),
+            "stage_name": str(step.get("stage_name") or "").strip(),
+            "template_id": step.get("template_id"),
+        },
+        "enrollment_relinked": int(rs.rowcount or 0),
+        "moved_to_hold": bool(moved_to_hold),
+        "remaining_steps": int(steps_count),
+    }
+
+
+@app.post("/api/remarketing/flows/{flow_id}/dispatch")
+async def dispatch_remarketing_flow_now(flow_id: int, payload: RemarketingDispatchIn):
+    safe_limit = max(1, min(int(payload.limit or 600), 5000))
+    include_hold = bool(payload.include_hold)
+
+    with engine.begin() as conn:
+        flow = conn.execute(
+            text(
+                """
+                SELECT id, name, is_active
+                FROM remarketing_flows
+                WHERE id = :flow_id
+                LIMIT 1
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().first()
+        if not flow:
+            raise HTTPException(status_code=404, detail="flow not found")
+        if not bool(flow.get("is_active")):
+            raise HTTPException(status_code=409, detail="flow is inactive")
+
+        if include_hold:
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET state = 'active',
+                        step_started_at = NOW(),
+                        next_run_at = NOW(),
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND LOWER(state) IN ('active', 'hold')
+                    """
+                ),
+                {
+                    "flow_id": int(flow_id),
+                    "meta_patch": '{"manual_flow_dispatch": true, "include_hold": true}',
+                },
+            )
+        else:
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET next_run_at = NOW(),
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND LOWER(state) = 'active'
+                    """
+                ),
+                {
+                    "flow_id": int(flow_id),
+                    "meta_patch": '{"manual_flow_dispatch": true, "include_hold": false}',
+                },
+            )
+
+    run_result = await process_due_remarketing(limit=safe_limit, flow_id=int(flow_id))
+    return {
+        "ok": True,
+        "flow_id": int(flow_id),
+        "flow_name": str(flow.get("name") or "").strip(),
+        "include_hold": include_hold,
+        "enrollments_queued": int(rs.rowcount or 0),
+        "engine_result": run_result,
+    }
+
+
+@app.post("/api/remarketing/steps/{step_id}/dispatch")
+async def dispatch_remarketing_step_now(step_id: int, payload: RemarketingDispatchIn):
+    safe_limit = max(1, min(int(payload.limit or 600), 5000))
+    include_hold = bool(payload.include_hold)
+
+    with engine.begin() as conn:
+        step = conn.execute(
+            text(
+                """
+                SELECT
+                    s.id,
+                    s.flow_id,
+                    s.step_order,
+                    s.stage_name,
+                    f.name AS flow_name,
+                    f.is_active
+                FROM remarketing_steps s
+                JOIN remarketing_flows f ON f.id = s.flow_id
+                WHERE s.id = :step_id
+                LIMIT 1
+                """
+            ),
+            {"step_id": int(step_id)},
+        ).mappings().first()
+        if not step:
+            raise HTTPException(status_code=404, detail="step not found")
+        if not bool(step.get("is_active")):
+            raise HTTPException(status_code=409, detail="flow is inactive")
+
+        flow_id = int(step.get("flow_id") or 0)
+        target_step = int(step.get("step_order") or 0)
+        if flow_id <= 0 or target_step <= 0:
+            raise HTTPException(status_code=400, detail="invalid step")
+
+        meta_patch = json.dumps(
+            {
+                "manual_step_dispatch": True,
+                "step_id": int(step_id),
+                "step_order": int(target_step),
+                "include_hold": include_hold,
+            },
+            ensure_ascii=False,
+        )
+
+        if include_hold:
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET current_step_order = :target_step,
+                        state = 'active',
+                        step_started_at = NOW(),
+                        next_run_at = NOW(),
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND LOWER(state) IN ('active', 'hold')
+                    """
+                ),
+                {
+                    "flow_id": flow_id,
+                    "target_step": target_step,
+                    "meta_patch": meta_patch,
+                },
+            )
+        else:
+            rs = conn.execute(
+                text(
+                    """
+                    UPDATE remarketing_enrollments
+                    SET current_step_order = :target_step,
+                        step_started_at = NOW(),
+                        next_run_at = NOW(),
+                        updated_at = NOW(),
+                        meta_json = COALESCE(meta_json, '{}'::jsonb) || CAST(:meta_patch AS jsonb)
+                    WHERE flow_id = :flow_id
+                      AND LOWER(state) = 'active'
+                    """
+                ),
+                {
+                    "flow_id": flow_id,
+                    "target_step": target_step,
+                    "meta_patch": meta_patch,
+                },
+            )
+
+    run_result = await process_due_remarketing(limit=safe_limit, flow_id=flow_id)
+    return {
+        "ok": True,
+        "flow_id": int(flow_id),
+        "flow_name": str(step.get("flow_name") or "").strip(),
+        "step_id": int(step.get("id") or 0),
+        "step_order": int(step.get("step_order") or 0),
+        "stage_name": str(step.get("stage_name") or "").strip(),
+        "include_hold": include_hold,
+        "enrollments_queued": int(rs.rowcount or 0),
+        "engine_result": run_result,
+    }
+
+
 @app.get("/api/remarketing/flows/{flow_id}/enrollments")
 def list_remarketing_enrollments(
     flow_id: int,
@@ -3892,5 +4277,7 @@ def assign_remarketing_stage(payload: RemarketingStageAssignIn):
 @app.post("/api/remarketing/engine/tick")
 async def remarketing_engine_tick_now(
     limit: int = Query(300, ge=1, le=5000),
+    flow_id: int = Query(0, ge=0),
 ):
-    return await process_due_remarketing(limit=limit)
+    fid = int(flow_id or 0)
+    return await process_due_remarketing(limit=limit, flow_id=(fid if fid > 0 else None))

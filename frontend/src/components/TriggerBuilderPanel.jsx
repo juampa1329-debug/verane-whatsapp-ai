@@ -422,7 +422,7 @@ export default function TriggerBuilderPanel({
             ) : null}
 
             <div className="trg-two-col">
-              <input style={input} type="number" min="0" placeholder="Cooldown (min)" value={form.cooldown_minutes} onChange={(e) => setForm((p) => ({ ...p, cooldown_minutes: e.target.value }))} />
+              <input style={input} type="number" min="0" placeholder="Enfriamiento (min)" value={form.cooldown_minutes} onChange={(e) => setForm((p) => ({ ...p, cooldown_minutes: e.target.value }))} />
               <input style={input} type="number" min="1" placeholder="Prioridad" value={form.priority} onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))} />
             </div>
 
@@ -591,7 +591,7 @@ export default function TriggerBuilderPanel({
                       <option value="eq">Igual</option>
                     </select>
                     <input style={input} type="number" value={c.value || 0} onChange={(e) => updateCondition(idx, { value: e.target.value })} placeholder="Cantidad" />
-                    <input style={input} type="number" value={c.window_hours || 24} onChange={(e) => updateCondition(idx, { window_hours: e.target.value })} placeholder="Ultimas horas" />
+                    <input style={input} type="number" value={c.window_hours || 24} onChange={(e) => updateCondition(idx, { window_hours: e.target.value })} placeholder="Últimas horas" />
                   </div>
                 ) : null}
 
@@ -677,7 +677,7 @@ export default function TriggerBuilderPanel({
                         <option value="on">Takeover ON</option>
                         <option value="off">Takeover OFF</option>
                       </select>
-                      <input style={input} placeholder="AI state opcional" value={a.ai_state || ""} onChange={(e) => updateAction(idx, { ai_state: e.target.value })} />
+                      <input style={input} placeholder="Estado de IA (opcional)" value={a.ai_state || ""} onChange={(e) => updateAction(idx, { ai_state: e.target.value })} />
                     </div>
                     <label className="trg-check">
                       <input type="checkbox" checked={!!a.clear_ai_state} onChange={(e) => updateAction(idx, { clear_ai_state: e.target.checked })} />
@@ -698,7 +698,7 @@ export default function TriggerBuilderPanel({
 
                 {a.type === "notify_admins" ? (
                   <div className="trg-stack">
-                    <input style={input} placeholder="Telefonos admins (coma)" value={a.phones || ""} onChange={(e) => updateAction(idx, { phones: e.target.value })} />
+                    <input style={input} placeholder="Teléfonos de admins (coma)" value={a.phones || ""} onChange={(e) => updateAction(idx, { phones: e.target.value })} />
                     <div style={{ display: "flex", justifyContent: "flex-end" }}>
                       <EmojiPickerButton
                         onSelect={(emoji) => updateAction(idx, { message: `${a.message || ""}${emoji}` })}
@@ -710,7 +710,7 @@ export default function TriggerBuilderPanel({
                 ) : null}
 
                 {a.type === "extract_conversation_info" ? (
-                  <input style={input} type="number" value={a.last_messages || 10} onChange={(e) => updateAction(idx, { last_messages: e.target.value })} placeholder="Ultimos mensajes a analizar" />
+                  <input style={input} type="number" value={a.last_messages || 10} onChange={(e) => updateAction(idx, { last_messages: e.target.value })} placeholder="Últimos mensajes a analizar" />
                 ) : null}
 
                 {a.type === "schedule_message" ? (
@@ -719,7 +719,7 @@ export default function TriggerBuilderPanel({
                       <option value="">Plantilla</option>
                       {(templates || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
-                    <input style={input} type="number" value={a.delay_minutes || 0} onChange={(e) => updateAction(idx, { delay_minutes: e.target.value })} placeholder="Delay minutos" />
+                    <input style={input} type="number" value={a.delay_minutes || 0} onChange={(e) => updateAction(idx, { delay_minutes: e.target.value })} placeholder="Retraso (minutos)" />
                   </div>
                 ) : null}
               </div>

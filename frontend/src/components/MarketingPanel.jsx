@@ -33,6 +33,15 @@ const dangerBtn = {
   color: "#ffb7b7",
 };
 
+const EMPTY_FILTER_OPTIONS = {
+  intent: [],
+  tag: [],
+  payment_status: [],
+  city: [],
+  customer_type: [],
+  takeover: ["all", "on", "off"],
+};
+
 function fmtDt(v) {
   if (!v) return "-";
   try {
@@ -57,6 +66,10 @@ function takeoverTokenToBool(token) {
   return null;
 }
 
+function asList(v) {
+  return Array.isArray(v) ? v : [];
+}
+
 export default function MarketingPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
 
@@ -71,8 +84,12 @@ export default function MarketingPanel({ apiBase }) {
   const [segments, setSegments] = useState([]);
   const [steps, setSteps] = useState([]);
   const [engineInfo, setEngineInfo] = useState(null);
+  const [filterOptions, setFilterOptions] = useState(EMPTY_FILTER_OPTIONS);
 
   const [selectedFlowId, setSelectedFlowId] = useState(null);
+  const [stepEdits, setStepEdits] = useState({});
+  const [dispatchIncludeHold, setDispatchIncludeHold] = useState(false);
+  const [dispatchLimit, setDispatchLimit] = useState(600);
 
   const [templateForm, setTemplateForm] = useState({
     name: "",
@@ -93,7 +110,7 @@ export default function MarketingPanel({ apiBase }) {
   const [flowForm, setFlowForm] = useState({
     name: "",
     is_active: false,
-    entry_intent: "BUY_FLOW",
+    entry_intent: "",
     entry_tag: "",
     entry_payment_status: "",
     entry_city: "",
@@ -103,7 +120,7 @@ export default function MarketingPanel({ apiBase }) {
     retry_minutes: 30,
     exit_intent: "",
     exit_tag: "",
-    exit_payment_status: "paid",
+    exit_payment_status: "",
     exit_city: "",
     exit_customer_type: "",
     exit_takeover: "all",
@@ -178,6 +195,16 @@ export default function MarketingPanel({ apiBase }) {
     setEngineInfo(d || null);
   };
 
+  const loadFilterOptions = async () => {
+    const r = await fetch(`${API}/api/remarketing/filter-options?limit=500`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error filter options");
+    setFilterOptions({
+      ...EMPTY_FILTER_OPTIONS,
+      ...(d?.options || {}),
+    });
+  };
+
   const loadSteps = async (flowId) => {
     if (!flowId) {
       setSteps([]);
@@ -192,7 +219,15 @@ export default function MarketingPanel({ apiBase }) {
   const loadAll = async () => {
     setError("");
     try {
-      await Promise.all([loadTemplates(), loadCampaigns(), loadTriggers(), loadFlows(), loadSegments(), loadEngineStatus()]);
+      await Promise.all([
+        loadTemplates(),
+        loadCampaigns(),
+        loadTriggers(),
+        loadFlows(),
+        loadSegments(),
+        loadEngineStatus(),
+        loadFilterOptions(),
+      ]);
     } catch (e) {
       setError(String(e.message || e));
     }
@@ -207,6 +242,19 @@ export default function MarketingPanel({ apiBase }) {
     loadSteps(selectedFlowId).catch((e) => setError(String(e.message || e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFlowId]);
+
+  useEffect(() => {
+    const next = {};
+    (steps || []).forEach((s) => {
+      next[s.id] = {
+        step_order: Number(s.step_order || 1),
+        stage_name: String(s.stage_name || defaultStageName(s.step_order)),
+        wait_minutes: Number(s.wait_minutes || 0),
+        template_id: s.template_id ? String(s.template_id) : "",
+      };
+    });
+    setStepEdits(next);
+  }, [steps]);
 
   const createTemplate = async () => {
     setError("");
@@ -375,10 +423,11 @@ export default function MarketingPanel({ apiBase }) {
     if (!selectedFlowId) return;
     setError("");
     try {
+      const nextOrder = Math.max(1, Number(stepForm.step_order || 1));
       const payload = {
-        step_order: Number(stepForm.step_order || 1),
-        stage_name: String(stepForm.stage_name || "").trim(),
-        wait_minutes: Number(stepForm.wait_minutes || 0),
+        step_order: nextOrder,
+        stage_name: String(stepForm.stage_name || "").trim() || defaultStageName(nextOrder),
+        wait_minutes: Math.max(0, Number(stepForm.wait_minutes || 0)),
         template_id: stepForm.template_id ? Number(stepForm.template_id) : null,
       };
       const r = await fetch(`${API}/api/remarketing/flows/${encodeURIComponent(selectedFlowId)}/steps`, {
@@ -389,13 +438,116 @@ export default function MarketingPanel({ apiBase }) {
       const d = await r.json();
       if (!r.ok) throw new Error(d?.detail || "No se pudo crear paso");
       await loadSteps(selectedFlowId);
-      const nextOrder = Number(stepForm.step_order || 1) + 1;
-      setStepForm((p) => ({ ...p, step_order: nextOrder, stage_name: defaultStageName(nextOrder) }));
+      const followingOrder = nextOrder + 1;
+      setStepForm((p) => ({ ...p, step_order: followingOrder, stage_name: defaultStageName(followingOrder) }));
       setTempStatus("Paso agregado");
     } catch (e) {
       setError(String(e.message || e));
     }
   };
+
+  const setStepEdit = (stepId, patch) => {
+    setStepEdits((prev) => ({
+      ...prev,
+      [stepId]: {
+        ...(prev?.[stepId] || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const saveStep = async (stepId) => {
+    if (!selectedFlowId) return;
+    const edit = stepEdits?.[stepId];
+    if (!edit) return;
+    setError("");
+    try {
+      const payload = {
+        step_order: Math.max(1, Number(edit.step_order || 1)),
+        stage_name: String(edit.stage_name || "").trim() || defaultStageName(edit.step_order),
+        wait_minutes: Math.max(0, Number(edit.wait_minutes || 0)),
+        template_id: edit.template_id ? Number(edit.template_id) : null,
+      };
+      const r = await fetch(`${API}/api/remarketing/steps/${encodeURIComponent(stepId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo guardar el paso");
+      await loadSteps(selectedFlowId);
+      setTempStatus(`Paso ${payload.step_order} guardado`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const removeStep = async (step) => {
+    if (!step?.id || !selectedFlowId) return;
+    const label = `Paso ${step.step_order} (${step.stage_name || defaultStageName(step.step_order)})`;
+    const ok = window.confirm(`Se eliminara ${label}. Esta accion no se puede deshacer.\n\n¿Continuar?`);
+    if (!ok) return;
+    setError("");
+    try {
+      const r = await fetch(`${API}/api/remarketing/steps/${encodeURIComponent(step.id)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo eliminar paso");
+      await loadSteps(selectedFlowId);
+      setTempStatus(`${label} eliminado`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const dispatchFlowNow = async () => {
+    if (!selectedFlowId) return;
+    setError("");
+    try {
+      const payload = {
+        include_hold: !!dispatchIncludeHold,
+        limit: Math.max(1, Number(dispatchLimit || 600)),
+      };
+      const r = await fetch(`${API}/api/remarketing/flows/${encodeURIComponent(selectedFlowId)}/dispatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo disparar flow");
+      await Promise.all([loadFlows(), loadSteps(selectedFlowId)]);
+      setTempStatus(`Flow disparado: cola=${d?.enrollments_queued ?? 0}, enviados=${d?.engine_result?.sent ?? 0}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const dispatchStepNow = async (stepId) => {
+    if (!stepId || !selectedFlowId) return;
+    setError("");
+    try {
+      const payload = {
+        include_hold: !!dispatchIncludeHold,
+        limit: Math.max(1, Number(dispatchLimit || 600)),
+      };
+      const r = await fetch(`${API}/api/remarketing/steps/${encodeURIComponent(stepId)}/dispatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || "No se pudo disparar etapa");
+      await Promise.all([loadFlows(), loadSteps(selectedFlowId)]);
+      setTempStatus(`Etapa disparada: cola=${d?.enrollments_queued ?? 0}, enviados=${d?.engine_result?.sent ?? 0}`);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  };
+
+  const intentOptions = asList(filterOptions?.intent);
+  const tagOptions = asList(filterOptions?.tag);
+  const paymentOptions = asList(filterOptions?.payment_status);
+  const cityOptions = asList(filterOptions?.city);
+  const customerTypeOptions = asList(filterOptions?.customer_type);
 
   return (
     <div className="placeholder-view" style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start" }}>
@@ -508,38 +660,68 @@ export default function MarketingPanel({ apiBase }) {
             <div style={box}>
               <h3 style={{ marginTop: 0 }}>Nuevo flow</h3>
               <div style={{ display: "grid", gap: 8 }}>
-                <input style={input} placeholder="Nombre" value={flowForm.name} onChange={(e) => setFlowForm((p) => ({ ...p, name: e.target.value }))} />
+                <input style={input} placeholder="Nombre del flow" value={flowForm.name} onChange={(e) => setFlowForm((p) => ({ ...p, name: e.target.value }))} />
                 <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de entrada al remarketing</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <input style={input} placeholder="Intent (ej: BUY_FLOW)" value={flowForm.entry_intent} onChange={(e) => setFlowForm((p) => ({ ...p, entry_intent: e.target.value }))} />
-                    <input style={input} placeholder="Tag contiene" value={flowForm.entry_tag} onChange={(e) => setFlowForm((p) => ({ ...p, entry_tag: e.target.value }))} />
-                    <input style={input} placeholder="Payment status" value={flowForm.entry_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, entry_payment_status: e.target.value }))} />
-                    <input style={input} placeholder="Ciudad contiene" value={flowForm.entry_city} onChange={(e) => setFlowForm((p) => ({ ...p, entry_city: e.target.value }))} />
-                    <input style={input} placeholder="Tipo cliente" value={flowForm.entry_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, entry_customer_type: e.target.value }))} />
+                    <select style={input} value={flowForm.entry_intent} onChange={(e) => setFlowForm((p) => ({ ...p, entry_intent: e.target.value }))}>
+                      <option value="">Intento (todos)</option>
+                      {intentOptions.map((v) => <option key={`entry_intent_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.entry_tag} onChange={(e) => setFlowForm((p) => ({ ...p, entry_tag: e.target.value }))}>
+                      <option value="">Etiqueta (todas)</option>
+                      {tagOptions.map((v) => <option key={`entry_tag_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.entry_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, entry_payment_status: e.target.value }))}>
+                      <option value="">Estado de pago (todos)</option>
+                      {paymentOptions.map((v) => <option key={`entry_payment_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.entry_city} onChange={(e) => setFlowForm((p) => ({ ...p, entry_city: e.target.value }))}>
+                      <option value="">Ciudad (todas)</option>
+                      {cityOptions.map((v) => <option key={`entry_city_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.entry_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, entry_customer_type: e.target.value }))}>
+                      <option value="">Tipo de cliente (todos)</option>
+                      {customerTypeOptions.map((v) => <option key={`entry_customer_${v}`} value={v}>{v}</option>)}
+                    </select>
                     <select style={input} value={flowForm.entry_takeover} onChange={(e) => setFlowForm((p) => ({ ...p, entry_takeover: e.target.value }))}>
                       <option value="all">Takeover: cualquiera</option>
-                      <option value="on">Takeover ON</option>
-                      <option value="off">Takeover OFF</option>
+                      <option value="on">Takeover activado</option>
+                      <option value="off">Takeover desactivado</option>
                     </select>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     <input style={input} type="number" min={1} placeholder="Reanudar hold después de (min)" value={flowForm.resume_after_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, resume_after_minutes: e.target.value }))} />
-                    <input style={input} type="number" min={1} placeholder="Retry error envío (min)" value={flowForm.retry_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, retry_minutes: e.target.value }))} />
+                    <input style={input} type="number" min={1} placeholder="Reintento por error de envío (min)" value={flowForm.retry_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, retry_minutes: e.target.value }))} />
                   </div>
                 </div>
                 <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de salida del flow</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <input style={input} placeholder="Intent" value={flowForm.exit_intent} onChange={(e) => setFlowForm((p) => ({ ...p, exit_intent: e.target.value }))} />
-                    <input style={input} placeholder="Tag contiene" value={flowForm.exit_tag} onChange={(e) => setFlowForm((p) => ({ ...p, exit_tag: e.target.value }))} />
-                    <input style={input} placeholder="Payment status (ej: paid)" value={flowForm.exit_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, exit_payment_status: e.target.value }))} />
-                    <input style={input} placeholder="Ciudad contiene" value={flowForm.exit_city} onChange={(e) => setFlowForm((p) => ({ ...p, exit_city: e.target.value }))} />
-                    <input style={input} placeholder="Tipo cliente" value={flowForm.exit_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, exit_customer_type: e.target.value }))} />
+                    <select style={input} value={flowForm.exit_intent} onChange={(e) => setFlowForm((p) => ({ ...p, exit_intent: e.target.value }))}>
+                      <option value="">Intento (todos)</option>
+                      {intentOptions.map((v) => <option key={`exit_intent_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.exit_tag} onChange={(e) => setFlowForm((p) => ({ ...p, exit_tag: e.target.value }))}>
+                      <option value="">Etiqueta (todas)</option>
+                      {tagOptions.map((v) => <option key={`exit_tag_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.exit_payment_status} onChange={(e) => setFlowForm((p) => ({ ...p, exit_payment_status: e.target.value }))}>
+                      <option value="">Estado de pago (todos)</option>
+                      {paymentOptions.map((v) => <option key={`exit_payment_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.exit_city} onChange={(e) => setFlowForm((p) => ({ ...p, exit_city: e.target.value }))}>
+                      <option value="">Ciudad (todas)</option>
+                      {cityOptions.map((v) => <option key={`exit_city_${v}`} value={v}>{v}</option>)}
+                    </select>
+                    <select style={input} value={flowForm.exit_customer_type} onChange={(e) => setFlowForm((p) => ({ ...p, exit_customer_type: e.target.value }))}>
+                      <option value="">Tipo de cliente (todos)</option>
+                      {customerTypeOptions.map((v) => <option key={`exit_customer_${v}`} value={v}>{v}</option>)}
+                    </select>
                     <select style={input} value={flowForm.exit_takeover} onChange={(e) => setFlowForm((p) => ({ ...p, exit_takeover: e.target.value }))}>
                       <option value="all">Takeover: cualquiera</option>
-                      <option value="on">Takeover ON</option>
-                      <option value="off">Takeover OFF</option>
+                      <option value="on">Takeover activado</option>
+                      <option value="off">Takeover desactivado</option>
                     </select>
                   </div>
                 </div>
@@ -583,10 +765,29 @@ export default function MarketingPanel({ apiBase }) {
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Pasos del flow {selectedFlow ? `: ${selectedFlow.name}` : ""}</h3>
 
-            <div style={{ display: "grid", gridTemplateColumns: "100px 170px 120px 1fr auto", gap: 8, marginBottom: 12 }}>
+            <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8, marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Disparar flow</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 220px 180px", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={dispatchIncludeHold} onChange={(e) => setDispatchIncludeHold(e.target.checked)} />
+                  Incluir contactos en hold
+                </label>
+                <input
+                  style={input}
+                  type="number"
+                  min={1}
+                  placeholder="Límite por ejecución"
+                  value={dispatchLimit}
+                  onChange={(e) => setDispatchLimit(e.target.value)}
+                />
+                <button style={smallBtn} onClick={dispatchFlowNow} disabled={!selectedFlowId}>Disparar flow ahora</button>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "110px 190px 130px 1fr auto", gap: 8, marginBottom: 12 }}>
               <input style={input} type="number" value={stepForm.step_order} onChange={(e) => setStepForm((p) => ({ ...p, step_order: e.target.value }))} placeholder="Orden" />
-              <input style={input} value={stepForm.stage_name} onChange={(e) => setStepForm((p) => ({ ...p, stage_name: e.target.value }))} placeholder="Nombre etapa" />
-              <input style={input} type="number" value={stepForm.wait_minutes} onChange={(e) => setStepForm((p) => ({ ...p, wait_minutes: e.target.value }))} placeholder="Wait min" />
+              <input style={input} value={stepForm.stage_name} onChange={(e) => setStepForm((p) => ({ ...p, stage_name: e.target.value }))} placeholder="Nombre de etapa" />
+              <input style={input} type="number" value={stepForm.wait_minutes} onChange={(e) => setStepForm((p) => ({ ...p, wait_minutes: e.target.value }))} placeholder="Espera (min)" />
               <select style={input} value={stepForm.template_id} onChange={(e) => setStepForm((p) => ({ ...p, template_id: e.target.value }))}>
                 <option value="">Plantilla</option>
                 {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -600,11 +801,52 @@ export default function MarketingPanel({ apiBase }) {
             </div>
 
             <div style={{ display: "grid", gap: 8 }}>
-              {steps.map((s) => (
-                <div key={s.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
-                  Paso {s.step_order} ({s.stage_name || defaultStageName(s.step_order)}) | Espera {s.wait_minutes} min | Plantilla: {s.template_name || s.template_id || "-"}
-                </div>
-              ))}
+              {steps.map((s) => {
+                const edit = stepEdits?.[s.id] || {
+                  step_order: Number(s.step_order || 1),
+                  stage_name: String(s.stage_name || defaultStageName(s.step_order)),
+                  wait_minutes: Number(s.wait_minutes || 0),
+                  template_id: s.template_id ? String(s.template_id) : "",
+                };
+                return (
+                  <div key={s.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "90px 180px 130px 1fr auto auto auto", gap: 8 }}>
+                      <input
+                        style={input}
+                        type="number"
+                        min={1}
+                        value={edit.step_order}
+                        onChange={(e) => setStepEdit(s.id, { step_order: e.target.value })}
+                        placeholder="Orden"
+                      />
+                      <input
+                        style={input}
+                        value={edit.stage_name}
+                        onChange={(e) => setStepEdit(s.id, { stage_name: e.target.value })}
+                        placeholder="Nombre de etapa"
+                      />
+                      <input
+                        style={input}
+                        type="number"
+                        min={0}
+                        value={edit.wait_minutes}
+                        onChange={(e) => setStepEdit(s.id, { wait_minutes: e.target.value })}
+                        placeholder="Espera (min)"
+                      />
+                      <select style={input} value={edit.template_id} onChange={(e) => setStepEdit(s.id, { template_id: e.target.value })}>
+                        <option value="">Plantilla</option>
+                        {templates.map((t) => <option key={`${s.id}_${t.id}`} value={t.id}>{t.name}</option>)}
+                      </select>
+                      <button style={smallBtn} onClick={() => saveStep(s.id)}>Guardar</button>
+                      <button style={smallBtn} onClick={() => dispatchStepNow(s.id)}>Disparar etapa</button>
+                      <button style={dangerBtn} onClick={() => removeStep(s)}>Borrar</button>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.72 }}>
+                      ID paso: {s.id} | Plantilla actual: {s.template_name || s.template_id || "-"}
+                    </div>
+                  </div>
+                );
+              })}
               {selectedFlowId && steps.length === 0 ? <div style={{ opacity: 0.75 }}>Sin pasos todavía.</div> : null}
             </div>
           </div>

@@ -636,12 +636,17 @@ def assign_phone_stage(
     return {"ok": False, "error": "stage_not_supported"}
 
 
-async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]:
+async def process_due_remarketing(*, limit: int | None = None, flow_id: int | None = None) -> Dict[str, Any]:
     cfg = remarketing_settings()
+    flow_filter_id = int(flow_id or 0)
+    if flow_filter_id <= 0:
+        flow_filter_id = None
+
     if not bool(cfg.get("enabled")):
         return {
             "ok": True,
             "enabled": False,
+            "flow_id": flow_filter_id,
             "flows": 0,
             "enrolled": 0,
             "checked": 0,
@@ -661,20 +666,39 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
     service_window_minutes = max(1, service_window_hours * 60)
 
     with engine.begin() as conn:
+        flow_where = "WHERE is_active = TRUE"
+        flow_params: Dict[str, Any] = {}
+        if flow_filter_id is not None:
+            flow_where += " AND id = :flow_id"
+            flow_params["flow_id"] = int(flow_filter_id)
+
         flow_rows = conn.execute(
             text(
-                """
+                f"""
                 SELECT id, name, entry_rules_json, exit_rules_json
                 FROM remarketing_flows
-                WHERE is_active = TRUE
+                {flow_where}
                 ORDER BY updated_at DESC, id DESC
                 """
-            )
+            ),
+            flow_params,
         ).mappings().all()
+
+        steps_where = """
+                WHERE s.flow_id IN (
+                    SELECT id
+                    FROM remarketing_flows
+                    WHERE is_active = TRUE
+                )
+        """
+        steps_params: Dict[str, Any] = {}
+        if flow_filter_id is not None:
+            steps_where += "\n                  AND s.flow_id = :flow_id"
+            steps_params["flow_id"] = int(flow_filter_id)
 
         step_rows = conn.execute(
             text(
-                """
+                f"""
                 SELECT
                     s.flow_id,
                     s.step_order,
@@ -683,14 +707,11 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                     t.name AS template_name
                 FROM remarketing_steps s
                 LEFT JOIN message_templates t ON t.id = s.template_id
-                WHERE s.flow_id IN (
-                    SELECT id
-                    FROM remarketing_flows
-                    WHERE is_active = TRUE
-                )
+                {steps_where}
                 ORDER BY s.flow_id ASC, s.step_order ASC
                 """
-            )
+            ),
+            steps_params,
         ).mappings().all()
 
     flow_map: Dict[int, Dict[str, Any]] = {}
@@ -820,9 +841,15 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                 enrolled += 1
 
     with engine.begin() as conn:
+        enroll_where_flow = ""
+        enroll_params: Dict[str, Any] = {"limit": int(batch_limit)}
+        if flow_filter_id is not None:
+            enroll_where_flow = "AND e.flow_id = :flow_id"
+            enroll_params["flow_id"] = int(flow_filter_id)
+
         enroll_rows = conn.execute(
             text(
-                """
+                f"""
                 SELECT
                     e.id,
                     e.flow_id,
@@ -852,12 +879,13 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
                 JOIN remarketing_flows f ON f.id = e.flow_id
                 LEFT JOIN conversations c ON c.phone = e.phone
                 WHERE f.is_active = TRUE
+                  {enroll_where_flow}
                   AND LOWER(e.state) IN ('active', 'hold')
                 ORDER BY e.updated_at ASC, e.id ASC
                 LIMIT :limit
                 """
             ),
-            {"limit": int(batch_limit)},
+            enroll_params,
         ).mappings().all()
 
     checked = len(enroll_rows)
@@ -1183,6 +1211,7 @@ async def process_due_remarketing(*, limit: int | None = None) -> Dict[str, Any]
     return {
         "ok": True,
         "enabled": True,
+        "flow_id": flow_filter_id,
         "flows": len(flow_map),
         "enrolled": int(enrolled),
         "checked": int(checked),

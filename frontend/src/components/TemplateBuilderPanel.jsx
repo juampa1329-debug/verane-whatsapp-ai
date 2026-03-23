@@ -906,7 +906,7 @@ export default function TemplateBuilderPanel({
                         <option value="audio">Audio</option>
                       </select>
 
-                      <input style={input} type="number" value={Number(b.delay_ms || 0)} onChange={(e) => updateBlock(idx, { delay_ms: e.target.value })} placeholder="Delay ms" />
+                      <input style={input} type="number" value={Number(b.delay_ms || 0)} onChange={(e) => updateBlock(idx, { delay_ms: e.target.value })} placeholder="Espera (ms)" />
                       <button style={smallBtn} onClick={() => removeBlock(idx)}>Eliminar</button>
                     </div>
 
@@ -923,11 +923,11 @@ export default function TemplateBuilderPanel({
                     {kind === "image" ? (
                       <div style={{ display: "grid", gap: 6 }}>
                         <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
-                        <input style={input} value={b.image_url || ""} onChange={(e) => updateBlock(idx, { image_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <input style={input} value={b.image_url || ""} onChange={(e) => updateBlock(idx, { image_url: e.target.value })} placeholder="URL de vista previa (opcional)" />
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
                           <EmojiPickerButton onSelect={(emoji) => appendEmojiToBlockField(idx, "caption", emoji)} title="Agregar emoji al caption" />
                         </div>
-                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption de la imagen" />
+                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Texto de la imagen" />
                         <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                           Subir imagen
                           <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadTemplateMedia(idx, e.target.files?.[0], "image")} />
@@ -936,11 +936,11 @@ export default function TemplateBuilderPanel({
                     ) : kind === "video" ? (
                       <div style={{ display: "grid", gap: 6 }}>
                         <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
-                        <input style={input} value={b.video_url || ""} onChange={(e) => updateBlock(idx, { video_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <input style={input} value={b.video_url || ""} onChange={(e) => updateBlock(idx, { video_url: e.target.value })} placeholder="URL de vista previa (opcional)" />
                         <div style={{ display: "flex", justifyContent: "flex-end" }}>
                           <EmojiPickerButton onSelect={(emoji) => appendEmojiToBlockField(idx, "caption", emoji)} title="Agregar emoji al caption" />
                         </div>
-                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Caption del video" />
+                        <textarea style={{ ...input, minHeight: 70 }} value={b.caption || ""} onChange={(e) => updateBlock(idx, { caption: e.target.value })} placeholder="Texto del video" />
                         <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                           Subir video
                           <input type="file" accept="video/*" style={{ display: "none" }} onChange={(e) => uploadTemplateMedia(idx, e.target.files?.[0], "video")} />
@@ -949,7 +949,7 @@ export default function TemplateBuilderPanel({
                     ) : kind === "audio" ? (
                       <div style={{ display: "grid", gap: 6 }}>
                         <input style={input} value={b.media_id || ""} onChange={(e) => updateBlock(idx, { media_id: e.target.value })} placeholder="media_id de WhatsApp" />
-                        <input style={input} value={b.audio_url || ""} onChange={(e) => updateBlock(idx, { audio_url: e.target.value })} placeholder="URL de preview (opcional)" />
+                        <input style={input} value={b.audio_url || ""} onChange={(e) => updateBlock(idx, { audio_url: e.target.value })} placeholder="URL de vista previa (opcional)" />
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", width: "fit-content" }}>
                             Subir audio

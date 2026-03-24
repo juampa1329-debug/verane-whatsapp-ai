@@ -6,6 +6,7 @@ import CustomersPanel from "./components/CustomersPanel";
 import MarketingPanel from "./components/MarketingPanel";
 import LabelsPanel from "./components/LabelsPanel";
 import EmojiPickerButton from "./components/EmojiPickerButton";
+import useViewport from "./hooks/useViewport";
 
 
 // --- CONFIGURACIÓN ---
@@ -118,7 +119,7 @@ function defaultStageName(stepOrder) {
   return `Etapa ${n || 1}`;
 }
 
-const MainNav = ({ activeTab, setActiveTab }) => {
+const MainNav = ({ activeTab, onChangeTab, isMobile }) => {
   const navItems = [
     { id: 'dashboard', icon: IconChart, label: 'Dashboard' },
     { id: 'inbox', icon: IconMessage, label: 'Inbox' },
@@ -129,13 +130,13 @@ const MainNav = ({ activeTab, setActiveTab }) => {
   ];
 
   return (
-    <div className="main-nav">
+    <div className={`main-nav ${isMobile ? "is-mobile" : ""}`}>
       <div className="nav-logo">V.</div>
       <nav className="nav-items">
         {navItems.map((item) => (
           <button
             key={item.id}
-            onClick={() => setActiveTab(item.id)}
+            onClick={() => onChangeTab(item.id)}
             className={`nav-btn ${activeTab === item.id ? 'active' : ''}`}
           >
             <item.icon />
@@ -269,7 +270,7 @@ const ChatList = ({
 };
 
 // --- 3. Panel de CRM (Datos del cliente) ---
-const CustomerCardCRM = ({ phone, takeover }) => {
+const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) => {
   const [form, setForm] = useState({
     first_name: "", last_name: "", city: "", customer_type: "",
     interests: "", tags: "", notes: ""
@@ -483,9 +484,16 @@ const CustomerCardCRM = ({ phone, takeover }) => {
   if (!phone) return <div className="crm-panel empty" />;
 
   return (
-    <div className="crm-panel">
+    <div className={`crm-panel ${isMobile ? "crm-panel-mobile" : ""}`}>
       <div className="crm-header">
-        <h3><span className="icon-green"><IconUsers /></span> CRM – Cliente</h3>
+        <div className="crm-header-row">
+          {isMobile && (
+            <button type="button" className="mobile-nav-btn" onClick={onBack}>
+              Volver
+            </button>
+          )}
+          <h3><span className="icon-green"><IconUsers /></span> CRM - Cliente</h3>
+        </div>
       </div>
 
       <div className="crm-content custom-scrollbar">
@@ -735,6 +743,8 @@ export default function App() {
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+  const [inboxMobileView, setInboxMobileView] = useState("list");
+  const { isMobile, isTablet } = useViewport();
 
   // filtros inbox
   const [q, setQ] = useState(""); // server-side search
@@ -872,6 +882,7 @@ export default function App() {
 
   const selectChat = async (phone) => {
     setSelectedPhone(phone);
+    if (isMobile) setInboxMobileView("chat");
     await markRead(phone);
     // recargar para que el badge de unread se quite en el inbox (según last_read_at)
     loadConversations();
@@ -1100,6 +1111,15 @@ export default function App() {
     setFilterTags("");
   };
 
+  const handleTabChange = (nextTab) => {
+    setActiveTab(nextTab);
+    setShowAttachMenu(false);
+    if (nextTab !== "inbox") return;
+    if (isMobile && !selectedPhone) {
+      setInboxMobileView("list");
+    }
+  };
+
   // Poll conversations
   useEffect(() => {
     loadConversations();
@@ -1131,57 +1151,89 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPhone]);
 
+  useEffect(() => {
+    if (!isMobile) {
+      setInboxMobileView("chat");
+      return;
+    }
+    if (activeTab !== "inbox") return;
+    if (!selectedPhone) {
+      setInboxMobileView("list");
+    }
+  }, [isMobile, activeTab, selectedPhone]);
+
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
+  const showInboxList = !isMobile || inboxMobileView === "list";
+  const showInboxChat = !isMobile || inboxMobileView === "chat";
+  const showInboxCRM = !isMobile || inboxMobileView === "crm";
 
   return (
-    <div className="app-layout">
-      <MainNav activeTab={activeTab} setActiveTab={setActiveTab} />
+    <div className={`app-layout ${isMobile ? "layout-mobile" : isTablet ? "layout-tablet" : "layout-desktop"}`}>
+      <MainNav activeTab={activeTab} onChangeTab={handleTabChange} isMobile={isMobile} />
 
-      {activeTab === 'inbox' ? (
-        <>
-          <ChatList
-            conversations={conversations}
-            selectedPhone={selectedPhone}
-            onSelect={selectChat}
-            q={q}
-            setQ={setQ}
-            filterTakeover={filterTakeover}
-            setFilterTakeover={setFilterTakeover}
-            filterUnread={filterUnread}
-            setFilterUnread={setFilterUnread}
-            filterTags={filterTags}
-            setFilterTags={setFilterTags}
-            onClearFilters={onClearFilters}
-          />
+      <div className="app-content">
+        {activeTab === 'inbox' ? (
+          <div className={`inbox-layout ${isMobile ? "inbox-mobile" : isTablet ? "inbox-tablet" : "inbox-desktop"}`}>
+            {showInboxList && (
+              <ChatList
+                conversations={conversations}
+                selectedPhone={selectedPhone}
+                onSelect={selectChat}
+                q={q}
+                setQ={setQ}
+                filterTakeover={filterTakeover}
+                setFilterTakeover={setFilterTakeover}
+                filterUnread={filterUnread}
+                setFilterUnread={setFilterUnread}
+                filterTags={filterTags}
+                setFilterTags={setFilterTags}
+                onClearFilters={onClearFilters}
+              />
+            )}
 
-          <div className="chat-window">
-            <header className="chat-header">
-              <div className="header-info">
-                {selectedPhone && (
-                  <>
-                    <div className="avatar-circle">
-                      {initialsFromConversation(selectedConversation)}
-                    </div>
-                    <div>
-                      <h3 className="chat-title">{displayName(selectedConversation)}</h3>
-                      <div className="chat-subtitle">
-                        {selectedConversation?.updated_at ? `Último: ${fmtDateTime(selectedConversation.updated_at)}` : ''}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
+            {showInboxChat && (
+              <div className={`chat-window ${isMobile ? "chat-window-mobile" : ""}`}>
+                            <header className="chat-header">
+                  <div className="header-info">
+                    {isMobile && (
+                      <button type="button" className="mobile-nav-btn" onClick={() => setInboxMobileView("list")}>
+                        Inbox
+                      </button>
+                    )}
+                    {selectedPhone ? (
+                      <>
+                        <div className="avatar-circle">
+                          {initialsFromConversation(selectedConversation)}
+                        </div>
+                        <div>
+                          <h3 className="chat-title">{displayName(selectedConversation)}</h3>
+                          <div className="chat-subtitle">
+                            {selectedConversation?.updated_at ? `Ultimo: ${fmtDateTime(selectedConversation.updated_at)}` : ''}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <h3 className="chat-title">Selecciona una conversacion</h3>
+                    )}
+                  </div>
 
-              {selectedPhone && (
-                <button
-                  onClick={toggleTakeover}
-                  className={`takeover-btn ${selectedConversation?.takeover ? 'active' : ''}`}
-                >
-                  {selectedConversation?.takeover ? <IconUser /> : <IconBot />}
-                  <span>Takeover: {selectedConversation?.takeover ? 'ON' : 'OFF'}</span>
-                </button>
-              )}
-            </header>
+                  <div className="chat-header-actions">
+                    {isMobile && selectedPhone && (
+                      <button type="button" className="mobile-nav-btn" onClick={() => setInboxMobileView("crm")}>
+                        CRM
+                      </button>
+                    )}
+                    {selectedPhone && (
+                      <button
+                        onClick={toggleTakeover}
+                        className={`takeover-btn ${selectedConversation?.takeover ? 'active' : ''}`}
+                      >
+                        {selectedConversation?.takeover ? <IconUser /> : <IconBot />}
+                        <span className="takeover-label">Takeover: {selectedConversation?.takeover ? 'ON' : 'OFF'}</span>
+                      </button>
+                    )}
+                  </div>
+                </header>
 
             <div
               ref={messagesRef}
@@ -1479,13 +1531,18 @@ export default function App() {
               </div>
             )}
 
-          </div>
+              </div>
+            )}
 
-          <CustomerCardCRM
-            phone={selectedPhone}
-            takeover={selectedConversation?.takeover}
-          />
-        </>
+            {showInboxCRM && (
+              <CustomerCardCRM
+                phone={selectedPhone}
+                takeover={selectedConversation?.takeover}
+                isMobile={isMobile}
+                onBack={() => setInboxMobileView("chat")}
+              />
+            )}
+          </div>
       ) : activeTab === "dashboard" ? (
         <DashboardPanel apiBase={API_BASE} />
       ) : activeTab === "crm" ? (
@@ -1505,6 +1562,11 @@ export default function App() {
             </div>
       
       )}
+      </div>
     </div>
   );
 }
+
+
+
+

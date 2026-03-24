@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import EmojiPickerButton from "./EmojiPickerButton";
+import useViewport from "../hooks/useViewport";
 
 const shell = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -77,6 +78,7 @@ function defaultStageName(stepOrder) {
 
 export default function CustomersPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const { isMobile, isTablet } = useViewport();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -383,7 +385,18 @@ export default function CustomersPanel({ apiBase }) {
 
   return (
     <div className="placeholder-view" style={{ alignItems: "stretch", padding: 12 }}>
-      <div style={{ ...shell, width: "100%", minHeight: 620, display: "grid", gridTemplateColumns: "360px 1fr", gap: 12, overflow: "hidden" }}>
+      <div
+        style={{
+          ...shell,
+          width: "100%",
+          minHeight: 620,
+          display: "grid",
+          gridTemplateColumns: isMobile ? "1fr" : (isTablet ? "320px 1fr" : "360px 1fr"),
+          gridTemplateRows: isMobile ? "minmax(220px, 38vh) minmax(0, 1fr)" : undefined,
+          gap: 12,
+          overflow: "hidden",
+        }}
+      >
         <div style={{ ...pane, display: "flex", flexDirection: "column", minHeight: 0 }}>
           <div style={{ padding: 12, borderBottom: "1px solid rgba(255,255,255,0.08)", display: "grid", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -548,7 +561,7 @@ export default function CustomersPanel({ apiBase }) {
                   <div style={{ fontSize: 12, opacity: 0.8 }}>No hay flows activos para asignar.</div>
                 ) : (
                   <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr auto", gap: 8 }}>
                       <select style={inputStyle} value={rmkFlowId} onChange={(e) => setRmkFlowId(e.target.value)}>
                         <option value="">Flow</option>
                         {rmkCatalog.map((f) => (
@@ -598,7 +611,7 @@ export default function CustomersPanel({ apiBase }) {
                   <div style={{ fontSize: 12, opacity: 0.78 }}>Sin datos de intención.</div>
                 ) : (
                   <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 6 }}>
                       <div style={{ ...card, padding: 8 }}>
                         <div style={{ fontSize: 11, opacity: 0.75 }}>Entrantes</div>
                         <div style={{ fontSize: 18, fontWeight: 700 }}>{intentAnalysis.incoming_messages_analyzed || 0}</div>

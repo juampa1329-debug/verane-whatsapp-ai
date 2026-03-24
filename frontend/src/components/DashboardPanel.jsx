@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import useViewport from "../hooks/useViewport";
 
 const shell = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -72,6 +73,7 @@ function ProgressRow({ label, value, pctValue, tone = "#8ad9ff", suffix = "%" })
 
 export default function DashboardPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const { isMobile } = useViewport();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [overview, setOverview] = useState(null);
@@ -187,7 +189,7 @@ export default function DashboardPanel({ apiBase }) {
           <StatCard label="Response rate" value={`${overview?.response_rate_pct ?? 0}%`} sub="OUT vs IN" accent="rgba(96,165,250,0.14)" />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.35fr 1fr", gap: 10 }}>
           <div style={section}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <h3 style={{ margin: 0 }}>Funnel comercial</h3>
@@ -223,7 +225,7 @@ export default function DashboardPanel({ apiBase }) {
                 <ProgressRow label="Read rate" value={campaignRead.toFixed(1)} pctValue={campaignRead} tone="#34d399" />
                 <ProgressRow label="Reply rate" value={campaignReply.toFixed(1)} pctValue={campaignReply} tone="#fbbf24" />
               </div>
-              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
                 <div style={{ ...section, padding: 10 }}>
                   <div style={tiny}>Delivered</div>
                   <div style={{ fontSize: 20, fontWeight: 700 }}>{campaigns?.delivered ?? 0}</div>
@@ -237,7 +239,7 @@ export default function DashboardPanel({ apiBase }) {
 
             <div style={section}>
               <h3 style={{ marginTop: 0 }}>Remarketing</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: 8 }}>
                 <div style={{ ...section, padding: 10 }}>
                   <div style={tiny}>Flows</div>
                   <div style={{ fontSize: 22, fontWeight: 700 }}>{remarketing?.flows_total ?? 0}</div>
@@ -269,4 +271,3 @@ export default function DashboardPanel({ apiBase }) {
     </div>
   );
 }
-

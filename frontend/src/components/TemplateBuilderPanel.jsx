@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EmojiPickerButton from "./EmojiPickerButton";
+import useViewport from "../hooks/useViewport";
 
 const box = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -210,6 +211,16 @@ export default function TemplateBuilderPanel({
   onStatus,
 }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const { isMobile, isTablet } = useViewport();
+  const leftPaneCols = isMobile ? "1fr" : "420px 1fr";
+  const editorCols = isMobile ? "1fr" : (isTablet ? "1fr" : "minmax(520px, 1fr) minmax(320px, 0.9fr)");
+  const filterCols = isMobile ? "1fr" : "1fr 140px";
+  const templateListCols = isMobile ? "1fr 74px 120px" : "1fr 90px 170px";
+  const formCols = isMobile ? "1fr" : "1fr 1fr";
+  const paramsCols = isMobile ? "1fr" : "1fr 1fr auto";
+  const blockHeadCols = isMobile ? "1fr" : "auto 130px 1fr auto";
+  const insertCols = isMobile ? "1fr" : "1fr auto";
+  const panelMaxHeight = isMobile ? undefined : 740;
   const initialEditor = useMemo(() => buildEditorStateFromTemplate(null), []);
 
   const [paramsCatalog, setParamsCatalog] = useState([]);
@@ -681,14 +692,14 @@ export default function TemplateBuilderPanel({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12, alignItems: "start" }}>
-      <div style={{ ...box, display: "grid", gap: 10, maxHeight: 740, overflow: "auto" }}>
+    <div style={{ display: "grid", gridTemplateColumns: leftPaneCols, gap: 12, alignItems: "start" }}>
+      <div style={{ ...box, display: "grid", gap: 10, maxHeight: panelMaxHeight, overflow: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0 }}>Plantillas</h3>
           <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={handleNewTemplate}>+ Nueva</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: filterCols, gap: 8 }}>
           <input
             style={input}
             placeholder="Buscar..."
@@ -704,7 +715,7 @@ export default function TemplateBuilderPanel({
         </div>
 
         <div style={{ border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 170px", gap: 8, padding: "8px 10px", fontSize: 12, opacity: 0.8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: templateListCols, gap: 8, padding: "8px 10px", fontSize: 12, opacity: 0.8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
             <div>Nombre</div>
             <div>Mensajes</div>
             <div>Creado</div>
@@ -728,7 +739,7 @@ export default function TemplateBuilderPanel({
                     padding: "10px",
                     cursor: "pointer",
                     display: "grid",
-                    gridTemplateColumns: "1fr 90px 170px",
+                    gridTemplateColumns: templateListCols,
                     gap: 8,
                     alignItems: "center",
                   }}
@@ -750,8 +761,8 @@ export default function TemplateBuilderPanel({
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(520px, 1fr) minmax(320px, 0.9fr)", gap: 12, alignItems: "start" }}>
-        <div style={{ ...box, display: "grid", gap: 12, maxHeight: 740, overflow: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: editorCols, gap: 12, alignItems: "start" }}>
+        <div style={{ ...box, display: "grid", gap: 12, maxHeight: panelMaxHeight, overflow: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
             <div>
               <h3 style={{ margin: 0 }}>{isCreatingNew ? "Nueva plantilla" : (selectedTemplate?.name || "Plantilla")}</h3>
@@ -764,7 +775,7 @@ export default function TemplateBuilderPanel({
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: formCols, gap: 8 }}>
             <label>
               <div style={{ fontSize: 12, marginBottom: 4 }}>Nombre</div>
               <input style={input} value={templateForm.name} onChange={(e) => setTemplateForm((p) => ({ ...p, name: e.target.value }))} />
@@ -798,7 +809,7 @@ export default function TemplateBuilderPanel({
             </div>
             <div style={{ display: "grid", gap: 6 }}>
               {paramRows.map((row, idx) => (
-                <div key={`pr-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6 }}>
+                <div key={`pr-${idx}`} style={{ display: "grid", gridTemplateColumns: paramsCols, gap: 6 }}>
                   <select style={input} value={row.key} onChange={(e) => updateParamRow(idx, { key: e.target.value })}>
                     <option value="">Parametro...</option>
                     {(paramsCatalog || []).map((p) => (
@@ -838,7 +849,7 @@ export default function TemplateBuilderPanel({
                       padding: 10,
                     }}
                   >
-                    <div style={{ display: "grid", gridTemplateColumns: "auto 130px 1fr auto", gap: 6, marginBottom: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: blockHeadCols, gap: 6, marginBottom: 8 }}>
                       <button
                         style={{ ...smallBtn, cursor: "grab", whiteSpace: "nowrap" }}
                         title="Arrastrar para reordenar"
@@ -910,7 +921,7 @@ export default function TemplateBuilderPanel({
                       <button style={smallBtn} onClick={() => removeBlock(idx)}>Eliminar</button>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 6 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: insertCols, gap: 6, marginBottom: 6 }}>
                       <select style={input} value={b.insert_key || ""} onChange={(e) => updateBlock(idx, { insert_key: e.target.value })}>
                         <option value="">Insertar parametro...</option>
                         {(paramsCatalog || []).map((p) => (
@@ -990,7 +1001,7 @@ export default function TemplateBuilderPanel({
           </div>
         </div>
 
-        <div style={{ ...box, minHeight: 740, maxHeight: 740, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{ ...box, minHeight: isMobile ? undefined : 740, maxHeight: panelMaxHeight, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0 }}>Mensajes</h3>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>

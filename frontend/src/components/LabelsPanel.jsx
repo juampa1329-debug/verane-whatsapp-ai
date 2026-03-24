@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import useViewport from "../hooks/useViewport";
 
 const panel = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -56,6 +57,7 @@ function fmtDate(value) {
 
 export default function LabelsPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const { isMobile, isTablet } = useViewport();
 
   const [labels, setLabels] = useState([]);
   const [search, setSearch] = useState("");
@@ -66,6 +68,11 @@ export default function LabelsPanel({ apiBase }) {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
+  const tableCols = isMobile
+    ? "46px minmax(0, 1fr) 130px"
+    : (isTablet
+      ? "46px 1.1fr 0.7fr 0.6fr 0.6fr 1fr 170px"
+      : "46px 1.2fr 0.7fr 0.6fr 0.6fr 1fr 180px");
 
   const filtered = useMemo(() => {
     const q = String(search || "").trim().toLowerCase();
@@ -210,7 +217,7 @@ export default function LabelsPanel({ apiBase }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "46px 1.2fr 0.7fr 0.6fr 0.6fr 1fr 180px",
+              gridTemplateColumns: tableCols,
               gap: 8,
               padding: "10px 12px",
               fontSize: 12,
@@ -221,10 +228,10 @@ export default function LabelsPanel({ apiBase }) {
           >
             <div>Icono</div>
             <div>Nombre</div>
-            <div>Key</div>
-            <div>Color</div>
-            <div>Uso</div>
-            <div>Descripcion</div>
+            {!isMobile ? <div>Key</div> : null}
+            {!isMobile ? <div>Color</div> : null}
+            {!isMobile ? <div>Uso</div> : null}
+            {!isMobile ? <div>Descripcion</div> : null}
             <div>Acciones</div>
           </div>
 
@@ -236,7 +243,7 @@ export default function LabelsPanel({ apiBase }) {
                 key={label.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "46px 1.2fr 0.7fr 0.6fr 0.6fr 1fr 180px",
+                  gridTemplateColumns: tableCols,
                   gap: 8,
                   alignItems: "center",
                   padding: "10px 12px",
@@ -250,27 +257,36 @@ export default function LabelsPanel({ apiBase }) {
                     {label.name || "-"}
                   </div>
                   <div style={{ fontSize: 11, opacity: 0.65 }}>
-                    {label.is_active ? "Activa" : "Inactiva"} • {fmtDate(label.updated_at)}
+                    {label.is_active ? "Activa" : "Inactiva"} | {fmtDate(label.updated_at)}
                   </div>
+                  {isMobile ? (
+                    <div style={{ fontSize: 11, opacity: 0.72, marginTop: 4 }}>
+                      key: {label.label_key || "-"} | uso: {Number(label.usage_count || 0)}
+                    </div>
+                  ) : null}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.9 }}>{label.label_key || "-"}</div>
-                <div>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      width: 24,
-                      height: 24,
-                      borderRadius: 6,
-                      border: "1px solid rgba(255,255,255,0.25)",
-                      background: label.color || "#64748b",
-                    }}
-                    title={label.color || "#64748b"}
-                  />
-                </div>
-                <div>{Number(label.usage_count || 0)}</div>
-                <div style={{ fontSize: 12, opacity: 0.82, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {label.description || "-"}
-                </div>
+                {!isMobile ? <div style={{ fontSize: 12, opacity: 0.9 }}>{label.label_key || "-"}</div> : null}
+                {!isMobile ? (
+                  <div>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: "1px solid rgba(255,255,255,0.25)",
+                        background: label.color || "#64748b",
+                      }}
+                      title={label.color || "#64748b"}
+                    />
+                  </div>
+                ) : null}
+                {!isMobile ? <div>{Number(label.usage_count || 0)}</div> : null}
+                {!isMobile ? (
+                  <div style={{ fontSize: 12, opacity: 0.82, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {label.description || "-"}
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                   <button style={btn} onClick={() => openEdit(label)}>Editar</button>
                   <button style={dangerBtn} onClick={() => removeLabel(label)}>Borrar</button>
@@ -310,7 +326,7 @@ export default function LabelsPanel({ apiBase }) {
               <button style={btn} onClick={() => setShowModal(false)}>X</button>
             </div>
             <div style={{ padding: 14, display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 220px", gap: 10 }}>
                 <label>
                   <div style={{ fontSize: 12, marginBottom: 4 }}>Nombre</div>
                   <input style={input} value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
@@ -321,7 +337,7 @@ export default function LabelsPanel({ apiBase }) {
                 </label>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "220px 1fr", gap: 10 }}>
                 <label>
                   <div style={{ fontSize: 12, marginBottom: 4 }}>Color</div>
                   <input style={{ ...input, padding: 0, height: 40 }} type="color" value={form.color} onChange={(e) => setForm((p) => ({ ...p, color: e.target.value }))} />

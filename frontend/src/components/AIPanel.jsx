@@ -1488,8 +1488,8 @@ export default function AIPanel({ apiBase }) {
 
 const panelStyle = {
   width: "100%",
-  padding: 18,
-  height: "calc(100vh - 24px)",
+  padding: 14,
+  height: "100%",
   overflowY: "auto",
   overflowX: "hidden",
   boxSizing: "border-box",
@@ -1497,13 +1497,12 @@ const panelStyle = {
 
 const gridStyle = {
   display: "grid",
-  gridTemplateColumns: "repeat(12, 1fr)",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
   gap: 14,
   marginTop: 14,
 };
 
 const cardStyle = {
-  gridColumn: "span 6",
   border: "1px solid rgba(255,255,255,0.12)",
   borderRadius: 16,
   padding: 14,
@@ -1513,7 +1512,7 @@ const cardStyle = {
 
 const rowStyle = {
   display: "grid",
-  gridTemplateColumns: "160px 1fr",
+  gridTemplateColumns: "minmax(120px, 180px) minmax(0, 1fr)",
   gap: 10,
   alignItems: "center",
   marginTop: 10,

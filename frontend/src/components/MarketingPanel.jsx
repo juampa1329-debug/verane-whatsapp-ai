@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import TemplateBuilderPanel from "./TemplateBuilderPanel";
 import TriggerBuilderPanel from "./TriggerBuilderPanel";
+import useViewport from "../hooks/useViewport";
 
 const box = {
   border: "1px solid rgba(255,255,255,0.12)",
@@ -72,6 +73,7 @@ function asList(v) {
 
 export default function MarketingPanel({ apiBase }) {
   const API = (apiBase || "").replace(/\/$/, "");
+  const { isMobile, isTablet } = useViewport();
 
   const [tab, setTab] = useState("templates");
   const [status, setStatus] = useState("");
@@ -557,15 +559,20 @@ export default function MarketingPanel({ apiBase }) {
   const paymentOptions = asList(filterOptions?.payment_status);
   const cityOptions = asList(filterOptions?.city);
   const customerTypeOptions = asList(filterOptions?.customer_type);
+  const mainCols = isMobile ? "1fr" : (isTablet ? "360px 1fr" : "420px 1fr");
+  const splitCols = isMobile ? "1fr" : "1fr 1fr";
+  const flowDispatchCols = isMobile ? "1fr" : (isTablet ? "1fr 1fr" : "1fr 220px 180px");
+  const addStepCols = isMobile ? "1fr" : (isTablet ? "1fr 1fr" : "110px 190px 130px 1fr auto");
+  const editStepCols = isMobile ? "1fr" : (isTablet ? "120px 1fr 120px 1fr auto auto auto" : "90px 180px 130px 1fr auto auto auto");
 
   return (
     <div className="placeholder-view" style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>Marketing</h2>
         <button onClick={loadAll} style={smallBtn}>Recargar</button>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         {["templates", "campaigns", "triggers", "remarketing"].map((k) => (
           <button
             key={k}
@@ -594,7 +601,7 @@ export default function MarketingPanel({ apiBase }) {
       ) : null}
 
       {tab === "campaigns" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mainCols, gap: 12 }}>
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Nueva campaña</h3>
             <div style={{ display: "grid", gap: 8 }}>
@@ -661,7 +668,7 @@ export default function MarketingPanel({ apiBase }) {
       ) : null}
 
       {tab === "remarketing" ? (
-        <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: mainCols, gap: 12 }}>
           <div style={{ display: "grid", gap: 12 }}>
             <div style={box}>
               <h3 style={{ marginTop: 0 }}>Motor de remarketing</h3>
@@ -702,7 +709,7 @@ export default function MarketingPanel({ apiBase }) {
                 <input style={input} placeholder="Nombre del flow" value={flowForm.name} onChange={(e) => setFlowForm((p) => ({ ...p, name: e.target.value }))} />
                 <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de entrada al remarketing</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: splitCols, gap: 8 }}>
                     <select style={input} value={flowForm.entry_intent} onChange={(e) => setFlowForm((p) => ({ ...p, entry_intent: e.target.value }))}>
                       <option value="">Intento (todos)</option>
                       {intentOptions.map((v) => <option key={`entry_intent_${v}`} value={v}>{v}</option>)}
@@ -729,14 +736,14 @@ export default function MarketingPanel({ apiBase }) {
                       <option value="off">Takeover desactivado</option>
                     </select>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: splitCols, gap: 8 }}>
                     <input style={input} type="number" min={1} placeholder="Reanudar hold después de (min)" value={flowForm.resume_after_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, resume_after_minutes: e.target.value }))} />
                     <input style={input} type="number" min={1} placeholder="Reintento por error de envío (min)" value={flowForm.retry_minutes} onChange={(e) => setFlowForm((p) => ({ ...p, retry_minutes: e.target.value }))} />
                   </div>
                 </div>
                 <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.85 }}>Reglas de salida del flow</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: splitCols, gap: 8 }}>
                     <select style={input} value={flowForm.exit_intent} onChange={(e) => setFlowForm((p) => ({ ...p, exit_intent: e.target.value }))}>
                       <option value="">Intento (todos)</option>
                       {intentOptions.map((v) => <option key={`exit_intent_${v}`} value={v}>{v}</option>)}
@@ -806,7 +813,7 @@ export default function MarketingPanel({ apiBase }) {
 
             <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8, marginBottom: 12 }}>
               <div style={{ fontWeight: 600, fontSize: 13 }}>Disparar flow</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 220px 180px", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: flowDispatchCols, gap: 8 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={dispatchIncludeHold} onChange={(e) => setDispatchIncludeHold(e.target.checked)} />
                   Incluir contactos en hold
@@ -823,7 +830,7 @@ export default function MarketingPanel({ apiBase }) {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "110px 190px 130px 1fr auto", gap: 8, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: addStepCols, gap: 8, marginBottom: 12 }}>
               <input style={input} type="number" value={stepForm.step_order} onChange={(e) => setStepForm((p) => ({ ...p, step_order: e.target.value }))} placeholder="Orden" />
               <input style={input} value={stepForm.stage_name} onChange={(e) => setStepForm((p) => ({ ...p, stage_name: e.target.value }))} placeholder="Nombre de etapa" />
               <input style={input} type="number" value={stepForm.wait_minutes} onChange={(e) => setStepForm((p) => ({ ...p, wait_minutes: e.target.value }))} placeholder="Espera (min)" />
@@ -849,7 +856,7 @@ export default function MarketingPanel({ apiBase }) {
                 };
                 return (
                   <div key={s.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "90px 180px 130px 1fr auto auto auto", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: editStepCols, gap: 8 }}>
                       <input
                         style={input}
                         type="number"

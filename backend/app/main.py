@@ -69,6 +69,8 @@ except Exception:
 app = FastAPI()
 _campaign_engine_stop: Optional[asyncio.Event] = None
 _campaign_engine_task: Optional[asyncio.Task] = None
+_remarketing_engine_stop: Optional[asyncio.Event] = None
+_remarketing_engine_task: Optional[asyncio.Task] = None
 _wc_cache_sync_task: Optional[asyncio.Task] = None
 _kb_web_sync_task: Optional[asyncio.Task] = None
 
@@ -643,6 +645,20 @@ def _startup():
     ensure_schema()
 
 
+async def _run_remarketing_engine_forever(stop_event: asyncio.Event, interval_sec: int) -> None:
+    wait_sec = int(max(2, min(int(interval_sec or 8), 120)))
+    while not stop_event.is_set():
+        try:
+            await process_due_remarketing()
+        except Exception as e:
+            print("[REMARKETING_ENGINE] tick error:", str(e)[:900])
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait_sec)
+        except asyncio.TimeoutError:
+            pass
+
+
 @app.on_event("startup")
 async def _startup_campaign_engine():
     global _campaign_engine_stop, _campaign_engine_task
@@ -665,6 +681,35 @@ async def _startup_campaign_engine():
             "send_delay_ms": cfg.get("send_delay_ms"),
         },
     )
+
+
+@app.on_event("startup")
+async def _startup_remarketing_engine_standalone():
+    global _remarketing_engine_stop, _remarketing_engine_task
+
+    if _remarketing_engine_task and not _remarketing_engine_task.done():
+        return
+
+    rmk_cfg = remarketing_settings()
+    if not bool(rmk_cfg.get("enabled")):
+        print("[REMARKETING_ENGINE] disabled (REMARKETING_ENGINE_ENABLED=false)")
+        return
+
+    raw_interval = str(os.getenv("REMARKETING_ENGINE_INTERVAL_SEC", "8") or "8").strip()
+    try:
+        interval_sec = int(raw_interval)
+    except Exception:
+        interval_sec = 8
+
+    if interval_sec <= 0:
+        print("[REMARKETING_ENGINE] standalone disabled (REMARKETING_ENGINE_INTERVAL_SEC <= 0)")
+        return
+
+    _remarketing_engine_stop = asyncio.Event()
+    _remarketing_engine_task = asyncio.create_task(
+        _run_remarketing_engine_forever(_remarketing_engine_stop, interval_sec=interval_sec)
+    )
+    print("[REMARKETING_ENGINE] standalone started", {"interval_sec": interval_sec})
 
 
 @app.on_event("startup")
@@ -728,6 +773,23 @@ async def _shutdown_campaign_engine():
 
     _campaign_engine_task = None
     _campaign_engine_stop = None
+
+
+@app.on_event("shutdown")
+async def _shutdown_remarketing_engine_standalone():
+    global _remarketing_engine_stop, _remarketing_engine_task
+
+    if _remarketing_engine_stop:
+        _remarketing_engine_stop.set()
+
+    if _remarketing_engine_task:
+        try:
+            await _remarketing_engine_task
+        except Exception:
+            pass
+
+    _remarketing_engine_task = None
+    _remarketing_engine_stop = None
 
 
 @app.on_event("shutdown")
@@ -3518,7 +3580,6 @@ def campaign_stats(campaign_id: int):
 @app.get("/api/campaigns/engine/status")
 def campaign_engine_status():
     cfg = engine_settings()
-    rmk_cfg = remarketing_settings()
     running = bool(_campaign_engine_task and not _campaign_engine_task.done())
     return {
         "enabled": bool(cfg.get("enabled")),
@@ -3526,10 +3587,6 @@ def campaign_engine_status():
         "interval_sec": int(cfg.get("interval_sec") or 0),
         "batch_size": int(cfg.get("batch_size") or 0),
         "send_delay_ms": int(cfg.get("send_delay_ms") or 0),
-        "remarketing_enabled": bool(rmk_cfg.get("enabled")),
-        "remarketing_batch_size": int(rmk_cfg.get("batch_size") or 0),
-        "remarketing_resume_after_minutes": int(rmk_cfg.get("resume_after_minutes") or 0),
-        "remarketing_service_window_hours": int(rmk_cfg.get("service_window_hours") or 24),
     }
 
 
@@ -4422,6 +4479,25 @@ def assign_remarketing_stage(payload: RemarketingStageAssignIn):
         detail = str(result.get("error") or "cannot_assign_stage")
         raise HTTPException(status_code=400, detail=detail)
     return result
+
+
+@app.get("/api/remarketing/engine/status")
+def remarketing_engine_status():
+    cfg = remarketing_settings()
+    running = bool(_remarketing_engine_task and not _remarketing_engine_task.done())
+    campaign_running = bool(_campaign_engine_task and not _campaign_engine_task.done())
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "running": running,
+        "runner": ("standalone" if running else "stopped"),
+        "interval_sec": int(max(0, int(os.getenv("REMARKETING_ENGINE_INTERVAL_SEC", "8") or 0))),
+        "batch_size": int(cfg.get("batch_size") or 0),
+        "new_enrollments_per_flow": int(cfg.get("new_enrollments_per_flow") or 0),
+        "resume_after_minutes": int(cfg.get("resume_after_minutes") or 0),
+        "retry_minutes": int(cfg.get("retry_minutes") or 0),
+        "service_window_hours": int(cfg.get("service_window_hours") or 24),
+        "campaign_engine_running": campaign_running,
+    }
 
 
 @app.post("/api/remarketing/engine/tick")

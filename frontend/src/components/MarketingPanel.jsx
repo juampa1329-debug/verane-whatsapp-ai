@@ -84,6 +84,7 @@ export default function MarketingPanel({ apiBase }) {
   const [segments, setSegments] = useState([]);
   const [steps, setSteps] = useState([]);
   const [engineInfo, setEngineInfo] = useState(null);
+  const [remarketingEngineInfo, setRemarketingEngineInfo] = useState(null);
   const [filterOptions, setFilterOptions] = useState(EMPTY_FILTER_OPTIONS);
 
   const [selectedFlowId, setSelectedFlowId] = useState(null);
@@ -195,6 +196,13 @@ export default function MarketingPanel({ apiBase }) {
     setEngineInfo(d || null);
   };
 
+  const loadRemarketingEngineStatus = async () => {
+    const r = await fetch(`${API}/api/remarketing/engine/status`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Error remarketing engine status");
+    setRemarketingEngineInfo(d || null);
+  };
+
   const loadFilterOptions = async () => {
     const r = await fetch(`${API}/api/remarketing/filter-options?limit=500`);
     const d = await r.json();
@@ -226,6 +234,7 @@ export default function MarketingPanel({ apiBase }) {
         loadFlows(),
         loadSegments(),
         loadEngineStatus(),
+        loadRemarketingEngineStatus(),
         loadFilterOptions(),
       ]);
     } catch (e) {
@@ -611,9 +620,6 @@ export default function MarketingPanel({ apiBase }) {
               <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
                 Intervalo: {engineInfo?.interval_sec ?? "-"}s | Batch: {engineInfo?.batch_size ?? "-"} | Delay: {engineInfo?.send_delay_ms ?? "-"}ms
               </div>
-              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
-                Remarketing: enabled={String(engineInfo?.remarketing_enabled ?? false)} | batch={engineInfo?.remarketing_batch_size ?? "-"} | resume={engineInfo?.remarketing_resume_after_minutes ?? "-"} min | ventana={engineInfo?.remarketing_service_window_hours ?? 24}h
-              </div>
               <button onClick={tickEngineNow} style={smallBtn}>Procesar lote ahora</button>
             </div>
           </div>
@@ -657,6 +663,39 @@ export default function MarketingPanel({ apiBase }) {
       {tab === "remarketing" ? (
         <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 12 }}>
           <div style={{ display: "grid", gap: 12 }}>
+            <div style={box}>
+              <h3 style={{ marginTop: 0 }}>Motor de remarketing</h3>
+              <div style={{ fontSize: 12, opacity: 0.82, marginBottom: 8 }}>
+                Estado: {remarketingEngineInfo?.running ? "running" : "stopped"} | Enabled: {String(remarketingEngineInfo?.enabled ?? false)}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.82, marginBottom: 8 }}>
+                Intervalo: {remarketingEngineInfo?.interval_sec ?? "-"}s | Batch: {remarketingEngineInfo?.batch_size ?? "-"} | Runner: {remarketingEngineInfo?.runner ?? "-"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.82, marginBottom: 8 }}>
+                Nuevos/flow: {remarketingEngineInfo?.new_enrollments_per_flow ?? "-"} | Resume: {remarketingEngineInfo?.resume_after_minutes ?? "-"} min | Retry: {remarketingEngineInfo?.retry_minutes ?? "-"} min | Ventana: {remarketingEngineInfo?.service_window_hours ?? 24}h
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={loadRemarketingEngineStatus} style={smallBtn}>Refrescar estado</button>
+                <button
+                  onClick={async () => {
+                    setError("");
+                    try {
+                      const r = await fetch(`${API}/api/remarketing/engine/tick?limit=600&flow_id=0`, { method: "POST" });
+                      const d = await r.json();
+                      if (!r.ok) throw new Error(d?.detail || "No se pudo ejecutar engine remarketing");
+                      await Promise.all([loadRemarketingEngineStatus(), loadFlows(), selectedFlowId ? loadSteps(selectedFlowId) : Promise.resolve()]);
+                      setTempStatus(`Remarketing tick: sent=${d?.sent ?? 0} advanced=${d?.advanced ?? 0} held=${d?.held ?? 0}`);
+                    } catch (e) {
+                      setError(String(e.message || e));
+                    }
+                  }}
+                  style={smallBtn}
+                >
+                  Ejecutar tick remarketing
+                </button>
+              </div>
+            </div>
+
             <div style={box}>
               <h3 style={{ marginTop: 0 }}>Nuevo flow</h3>
               <div style={{ display: "grid", gap: 8 }}>

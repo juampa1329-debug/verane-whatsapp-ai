@@ -842,7 +842,11 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
 
     with engine.begin() as conn:
         enroll_where_flow = ""
-        enroll_params: Dict[str, Any] = {"limit": int(batch_limit)}
+        enroll_params: Dict[str, Any] = {
+            "limit": int(batch_limit),
+            "now": now,
+            "window_start": now - timedelta(minutes=service_window_minutes),
+        }
         if flow_filter_id is not None:
             enroll_where_flow = "AND e.flow_id = :flow_id"
             enroll_params["flow_id"] = int(flow_filter_id)
@@ -880,8 +884,27 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
                 LEFT JOIN conversations c ON c.phone = e.phone
                 WHERE f.is_active = TRUE
                   {enroll_where_flow}
-                  AND LOWER(e.state) IN ('active', 'hold')
-                ORDER BY e.updated_at ASC, e.id ASC
+                  AND (
+                        (
+                            LOWER(e.state) = 'active'
+                            AND COALESCE(e.next_run_at, e.step_started_at, e.enrolled_at, e.updated_at) <= :now
+                        )
+                        OR
+                        (
+                            LOWER(e.state) = 'hold'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM messages mi2
+                                WHERE mi2.phone = e.phone
+                                  AND mi2.direction = 'in'
+                                  AND mi2.created_at >= :window_start
+                            )
+                        )
+                  )
+                ORDER BY
+                    CASE WHEN LOWER(e.state) = 'active' THEN 0 ELSE 1 END ASC,
+                    COALESCE(e.next_run_at, e.step_started_at, e.enrolled_at, e.updated_at) ASC,
+                    e.id ASC
                 LIMIT :limit
                 """
             ),

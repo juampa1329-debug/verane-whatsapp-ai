@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import AIPanel from "./components/AIPanel";
+import SettingsPanel from "./components/SettingsPanel";
 import DashboardPanel from "./components/DashboardPanel";
 import CustomersPanel from "./components/CustomersPanel";
 import MarketingPanel from "./components/MarketingPanel";
@@ -9,7 +9,7 @@ import EmojiPickerButton from "./components/EmojiPickerButton";
 import useViewport from "./hooks/useViewport";
 
 
-// --- CONFIGURACIÓN ---
+// --- CONFIGURACIÃ“N ---
 const API_BASE = import.meta.env.VITE_API_BASE || "https://backend.perfumesverane.com";
 
 // --- ICONOS SVG (Nativos) ---
@@ -61,11 +61,11 @@ function formatDur(sec) {
 function waTicks(m) {
   if (!m || m.direction !== "out") return "";
   const st = (m.wa_status || "").toLowerCase();
-  if (st === "failed") return "⚠️";
-  if (st === "read") return "✓✓";
-  if (st === "delivered") return "✓✓";
-  if (st === "sent") return "✓";
-  return "✓";
+  if (st === "failed") return "âš ï¸";
+  if (st === "read") return "âœ“âœ“";
+  if (st === "delivered") return "âœ“âœ“";
+  if (st === "sent") return "âœ“";
+  return "âœ“";
 }
 
 function waTickClass(m) {
@@ -91,15 +91,15 @@ function displayName(c) {
 
 function initialsFromConversation(c) {
   const name = displayName(c);
-  if (!name) return "•";
+  if (!name) return "â€¢";
   if (/^\d+$/.test(name)) return name.slice(-2);
   const parts = name.split(" ").filter(Boolean);
   const a = (parts[0] || "").slice(0, 1).toUpperCase();
   const b = (parts[1] || "").slice(0, 1).toUpperCase();
-  return (a + b).trim() || "•";
+  return (a + b).trim() || "â€¢";
 }
 
-// --- 1. Barra de Navegación Lateral ---
+// --- 1. Barra de NavegaciÃ³n Lateral ---
 function stageFromEnrollment(enrollment) {
   if (!enrollment) return "";
   const st = String(enrollment.state || "").toLowerCase();
@@ -125,7 +125,7 @@ const MainNav = ({ activeTab, onChangeTab, isMobile }) => {
     { id: 'inbox', icon: IconMessage, label: 'Inbox' },
     { id: 'crm', icon: IconUsers, label: 'Clientes' },
     { id: 'labels', icon: IconTagNav, label: 'Etiquetas' },
-    { id: 'marketing', icon: IconZap, label: 'Campañas' },
+    { id: 'marketing', icon: IconZap, label: 'CampaÃ±as' },
     { id: 'settings', icon: IconSettings, label: 'Ajustes' },
   ];
 
@@ -177,7 +177,7 @@ const ChatList = ({
         <div className="search-box">
           <div className="search-icon"><IconSearch /></div>
           <input
-            placeholder="Buscar (teléfono o preview)..."
+            placeholder="Buscar (telÃ©fono o preview)..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -193,7 +193,7 @@ const ChatList = ({
 
           <select value={filterUnread} onChange={(e) => setFilterUnread(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10 }}>
             <option value="all">Unread: Todos</option>
-            <option value="yes">Unread: Sí</option>
+            <option value="yes">Unread: SÃ­</option>
             <option value="no">Unread: No</option>
           </select>
 
@@ -234,7 +234,7 @@ const ChatList = ({
                       <span className="unread-dot" title="Nuevo mensaje" />
                       {unreadCount > 0 && (
                         <span
-                          title={`No leídos: ${unreadCount}`}
+                          title={`No leÃ­dos: ${unreadCount}`}
                           style={{
                             fontSize: 11,
                             padding: "2px 8px",
@@ -457,9 +457,9 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
       });
       if (!r.ok) throw new Error("Error");
       setDirty(false);
-      setStatus("Guardado ✅");
+      setStatus("Guardado âœ…");
     } catch {
-      setStatus("Error al guardar ❌");
+      setStatus("Error al guardar âŒ");
     } finally {
       setSaving(false);
       setTimeout(() => setStatus(""), 2500);
@@ -499,7 +499,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
       <div className="crm-content custom-scrollbar">
         <div className="crm-card-info">
           <div className="crm-row">
-            <span className="crm-label">Teléfono</span>
+            <span className="crm-label">TelÃ©fono</span>
             <span className="crm-value mono">{phone}</span>
           </div>
           <div className="crm-row">
@@ -533,7 +533,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
                 className="notes-area"
                 value={memory.memory_summary}
                 readOnly
-                placeholder="La IA irá recapitulando aquí intención, perfumes consultados, estado de pago y contexto del cliente."
+                placeholder="La IA irÃ¡ recapitulando aquÃ­ intenciÃ³n, perfumes consultados, estado de pago y contexto del cliente."
               />
             </div>
 
@@ -555,7 +555,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
             <input
               value={form.last_name}
               onChange={e => handleChange('last_name', e.target.value)}
-              placeholder="Ej: Pérez"
+              placeholder="Ej: PÃ©rez"
             />
           </div>
         </div>
@@ -624,7 +624,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
                     }}
                     title={label.description || label.name || token}
                   >
-                    <span>{label.icon || "🏷️"}</span>
+                    <span>{label.icon || "ðŸ·ï¸"}</span>
                     <span>{label.name || token}</span>
                   </button>
                 );
@@ -717,7 +717,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
             className="notes-area"
             value={form.notes}
             onChange={e => handleChange('notes', e.target.value)}
-            placeholder="Escribe notas aquí..."
+            placeholder="Escribe notas aquÃ­..."
           />
         </div>
       </div>
@@ -767,7 +767,7 @@ export default function App() {
   const [prodError, setProdError] = useState("");
   const [sendingProductId, setSendingProductId] = useState(null);
 
-  // 🎤 Audio recorder (WhatsApp-style)
+  // ðŸŽ¤ Audio recorder (WhatsApp-style)
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const recorderRef = useRef(null);
@@ -826,14 +826,14 @@ export default function App() {
       const data = await r.json();
       const list = data.conversations || [];
 
-      // detectar nuevos mensajes (updated_at cambió)
+      // detectar nuevos mensajes (updated_at cambiÃ³)
       if (didFirstLoadRef.current) {
         const prev = prevConversationsRef.current;
         for (const c of list) {
           const prevTs = prev.get(c.phone) || 0;
           const curTs = c.updated_at ? new Date(c.updated_at).getTime() : 0;
 
-          // si subió y NO estás en ese chat -> ding
+          // si subiÃ³ y NO estÃ¡s en ese chat -> ding
           if (curTs && curTs > prevTs && c.phone !== selectedPhone) {
             await playDing();
             break;
@@ -884,7 +884,7 @@ export default function App() {
     setSelectedPhone(phone);
     if (isMobile) setInboxMobileView("chat");
     await markRead(phone);
-    // recargar para que el badge de unread se quite en el inbox (según last_read_at)
+    // recargar para que el badge de unread se quite en el inbox (segÃºn last_read_at)
     loadConversations();
   };
 
@@ -899,7 +899,7 @@ export default function App() {
       setProducts(data.products || []);
     } catch (e) {
       console.error(e);
-      setProdError("No se pudo cargar el catálogo (WooCommerce).");
+      setProdError("No se pudo cargar el catÃ¡logo (WooCommerce).");
       setProducts([]);
     } finally {
       setProdLoading(false);
@@ -931,7 +931,7 @@ export default function App() {
       const out = await r.json();
       if (out && out.sent === false) {
         console.error("WhatsApp send failed:", out);
-        alert("Se guardó en la plataforma, pero WhatsApp NO lo envió. Revisa consola/network.");
+        alert("Se guardÃ³ en la plataforma, pero WhatsApp NO lo enviÃ³. Revisa consola/network.");
         return;
       }
 
@@ -1074,7 +1074,7 @@ export default function App() {
 
     } catch (e) {
       console.error(e);
-      alert("No se pudo acceder al micrófono. Revisa permisos del navegador.");
+      alert("No se pudo acceder al micrÃ³fono. Revisa permisos del navegador.");
     }
   };
 
@@ -1142,7 +1142,7 @@ export default function App() {
     if (userNearBottomRef.current) scrollToBottom(true);
   }, [messages.length]);
 
-  // cada vez que se abre chat o llega update, marcamos leído
+  // cada vez que se abre chat o llega update, marcamos leÃ­do
   useEffect(() => {
     if (!selectedPhone) return;
     markRead(selectedPhone);
@@ -1294,7 +1294,7 @@ export default function App() {
                     {m.msg_type === "audio" && m.media_id && (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
-                          🎵 {m.file_name || "audio"} {m.duration_sec ? `• ${formatDur(m.duration_sec)}` : ""} {m.file_size ? `• ${formatBytes(m.file_size)}` : ""}
+                          ðŸŽµ {m.file_name || "audio"} {m.duration_sec ? `â€¢ ${formatDur(m.duration_sec)}` : ""} {m.file_size ? `â€¢ ${formatBytes(m.file_size)}` : ""}
                         </div>
                         <audio controls preload="metadata" style={{ width: 280 }} src={mediaProxyUrl(m.media_id)} />
                       </div>
@@ -1303,7 +1303,7 @@ export default function App() {
                     {m.msg_type === "document" && m.media_id && (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 6 }}>
-                          📄 {m.file_name || "documento"} {m.file_size ? `• ${formatBytes(m.file_size)}` : ""}
+                          ðŸ“„ {m.file_name || "documento"} {m.file_size ? `â€¢ ${formatBytes(m.file_size)}` : ""}
                         </div>
                         <a
                           href={mediaProxyUrl(m.media_id)}
@@ -1330,11 +1330,11 @@ export default function App() {
 
                   <div className="msg-meta">
                     <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
-                    <span>•</span>
+                    <span>â€¢</span>
                     <span>{fmtDateTime(m.created_at)}</span>
                     {m.direction === "out" && (
                       <>
-                        <span style={{ margin: "0 6px" }}>•</span>
+                        <span style={{ margin: "0 6px" }}>â€¢</span>
                         <span className={`wa-ticks ${waTickClass(m)}`} title={m.wa_error || m.wa_status || ""}>
                           {waTicks(m)}
                         </span>
@@ -1398,20 +1398,20 @@ export default function App() {
                     <IconImage /> Imagen
                   </button>
                   <button onClick={() => { setFilePickKind("video"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    🎥 Video
+                    ðŸŽ¥ Video
                   </button>
                   <button onClick={() => { setFilePickKind("document"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    📄 Documento
+                    ðŸ“„ Documento
                   </button>
                   <button onClick={() => { setFilePickKind("audio"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    🎙️ Audio
+                    ðŸŽ™ï¸ Audio
                   </button>
                   <button onClick={() => {
                     setShowProductModal(true);
                     setShowAttachMenu(false);
                     loadWCProducts(prodQ);
                   }}>
-                    🛍️ Producto (Catálogo)
+                    ðŸ›ï¸ Producto (CatÃ¡logo)
                   </button>
                 </div>
               )}
@@ -1430,9 +1430,9 @@ export default function App() {
                   className={`btn-attach ${isRecording ? "recording" : ""}`}
                   onClick={() => (isRecording ? stopRecording() : startRecording())}
                   disabled={!selectedPhone}
-                  title={isRecording ? "Detener grabación" : "Grabar audio"}
+                  title={isRecording ? "Detener grabaciÃ³n" : "Grabar audio"}
                 >
-                  🎤
+                  ðŸŽ¤
                 </button>
 
                 {isRecording ? (
@@ -1487,7 +1487,7 @@ export default function App() {
                 <div className="attach-preview">
                   <div className="ap-meta">
                     <p className="ap-title">
-                      {attachment.kind === "product" ? "Producto adjunto ✅" : "Archivo adjunto ✅"}
+                      {attachment.kind === "product" ? "Producto adjunto âœ…" : "Archivo adjunto âœ…"}
                     </p>
                     <p className="ap-sub">
                       {attachment.kind === "product"
@@ -1496,7 +1496,7 @@ export default function App() {
                       }
                     </p>
                   </div>
-                  <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">✕</button>
+                  <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">âœ•</button>
                 </div>
               )}
             </div>
@@ -1507,7 +1507,7 @@ export default function App() {
                 <div className="modal" onClick={(e) => e.stopPropagation()}>
                   <div className="modal-header">
                     <h4>Adjuntar producto</h4>
-                    <button className="modal-close" onClick={() => setShowProductModal(false)}>✕</button>
+                    <button className="modal-close" onClick={() => setShowProductModal(false)}>âœ•</button>
                   </div>
                   <div className="modal-body">
                     <div className="modal-search">
@@ -1524,7 +1524,7 @@ export default function App() {
                     </div>
 
                     <div className="product-grid">
-                      {prodLoading && <div style={{ color: "#94a3b8" }}>Cargando catálogo...</div>}
+                      {prodLoading && <div style={{ color: "#94a3b8" }}>Cargando catÃ¡logo...</div>}
                       {prodError && <div style={{ color: "#e74c3c" }}>{prodError}</div>}
 
                       {!prodLoading && !prodError && (products || []).map(p => (
@@ -1547,7 +1547,7 @@ export default function App() {
                       ))}
 
                       {!prodLoading && !prodError && (!products || products.length === 0) && (
-                        <div style={{ color: "#94a3b8" }}>No hay productos para esa búsqueda.</div>
+                        <div style={{ color: "#94a3b8" }}>No hay productos para esa bÃºsqueda.</div>
                       )}
                     </div>
                   </div>
@@ -1576,20 +1576,17 @@ export default function App() {
       ) : activeTab === "marketing" ? (
         <MarketingPanel apiBase={API_BASE} />
       ) : activeTab === "settings" ? (
-          <div className="placeholder-view" style={{ padding: 0 }}>
-            <AIPanel apiBase={API_BASE} />
-      
+        <SettingsPanel apiBase={API_BASE} />
+      ) : (
+        <div className="placeholder-view">
+          MÃ³dulo en construcciÃ³n
         </div>
-        ) : (
-            <div className="placeholder-view">
-              Módulo en construcción
-            </div>
-      
       )}
       </div>
     </div>
   );
 }
+
 
 
 

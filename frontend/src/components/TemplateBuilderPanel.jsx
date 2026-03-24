@@ -693,7 +693,7 @@ export default function TemplateBuilderPanel({
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: leftPaneCols, gap: 12, alignItems: "start" }}>
-      <div style={{ ...box, display: "grid", gap: 10, maxHeight: panelMaxHeight, overflow: "auto" }}>
+      <div className="custom-scrollbar" style={{ ...box, display: "grid", gap: 10, maxHeight: panelMaxHeight, overflow: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0 }}>Plantillas</h3>
           <button style={{ ...smallBtn, borderColor: "#2ecc71" }} onClick={handleNewTemplate}>+ Nueva</button>
@@ -721,7 +721,7 @@ export default function TemplateBuilderPanel({
             <div>Creado</div>
           </div>
 
-          <div style={{ maxHeight: 590, overflow: "auto", display: "grid" }}>
+          <div className="custom-scrollbar" style={{ maxHeight: 590, overflow: "auto", display: "grid" }}>
             {filteredTemplates.map((t) => {
               const count = normalizeTemplateBlocks(t.blocks_json, t.body || "").length;
               const selected = !isCreatingNew && selectedTemplateId === t.id;
@@ -762,7 +762,7 @@ export default function TemplateBuilderPanel({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: editorCols, gap: 12, alignItems: "start" }}>
-        <div style={{ ...box, display: "grid", gap: 12, maxHeight: panelMaxHeight, overflow: "auto" }}>
+        <div className="custom-scrollbar" style={{ ...box, display: "grid", gap: 12, maxHeight: panelMaxHeight, overflow: "auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
             <div>
               <h3 style={{ margin: 0 }}>{isCreatingNew ? "Nueva plantilla" : (selectedTemplate?.name || "Plantilla")}</h3>
@@ -1011,6 +1011,7 @@ export default function TemplateBuilderPanel({
           </div>
 
           <div
+            className="custom-scrollbar"
             style={{
               flex: 1,
               borderRadius: 10,

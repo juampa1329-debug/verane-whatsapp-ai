@@ -566,7 +566,10 @@ export default function MarketingPanel({ apiBase }) {
   const editStepCols = isMobile ? "1fr" : (isTablet ? "120px 1fr 120px 1fr auto auto auto" : "90px 180px 130px 1fr auto auto auto");
 
   return (
-    <div className="placeholder-view" style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start" }}>
+    <div
+      className="placeholder-view custom-scrollbar"
+      style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start", width: "100%", minHeight: 0, overflowY: "auto", padding: 12 }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>Marketing</h2>
         <button onClick={loadAll} style={smallBtn}>Recargar</button>
@@ -604,7 +607,7 @@ export default function MarketingPanel({ apiBase }) {
         <div style={{ display: "grid", gridTemplateColumns: mainCols, gap: 12 }}>
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Nueva campaña</h3>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div className="custom-scrollbar" style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               <input style={input} placeholder="Nombre" value={campaignForm.name} onChange={(e) => setCampaignForm((p) => ({ ...p, name: e.target.value }))} />
               <input style={input} placeholder="Objetivo" value={campaignForm.objective} onChange={(e) => setCampaignForm((p) => ({ ...p, objective: e.target.value }))} />
               <select style={input} value={campaignForm.segment_id} onChange={(e) => setCampaignForm((p) => ({ ...p, segment_id: e.target.value }))}>
@@ -633,7 +636,7 @@ export default function MarketingPanel({ apiBase }) {
 
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Campañas</h3>
-            <div style={{ display: "grid", gap: 8 }}>
+            <div className="custom-scrollbar" style={{ display: "grid", gap: 8, maxHeight: 560, overflowY: "auto", paddingRight: 4 }}>
               {campaigns.map((c) => (
                 <div key={c.id} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -846,7 +849,7 @@ export default function MarketingPanel({ apiBase }) {
               {flowWaitTotalMinutes > 1380 ? " | Recomendado: <= 1380 min para respetar ventana de 24h." : ""}
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
+            <div className="custom-scrollbar" style={{ display: "grid", gap: 8, maxHeight: 520, overflowY: "auto", paddingRight: 4 }}>
               {steps.map((s) => {
                 const edit = stepEdits?.[s.id] || {
                   step_order: Number(s.step_order || 1),

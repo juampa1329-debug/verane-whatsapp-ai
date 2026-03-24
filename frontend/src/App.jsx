@@ -1171,7 +1171,7 @@ export default function App() {
     <div className={`app-layout ${isMobile ? "layout-mobile" : isTablet ? "layout-tablet" : "layout-desktop"}`}>
       <MainNav activeTab={activeTab} onChangeTab={handleTabChange} isMobile={isMobile} />
 
-      <div className="app-content">
+      <div className={`app-content ${activeTab === "inbox" ? "app-content-inbox" : "app-content-page"}`}>
         {activeTab === 'inbox' ? (
           <div className={`inbox-layout ${isMobile ? "inbox-mobile" : isTablet ? "inbox-tablet" : "inbox-desktop"}`}>
             {showInboxList && (
@@ -1435,14 +1435,27 @@ export default function App() {
                   🎤
                 </button>
 
-                <input
-                  className="composer-input"
-                  placeholder={isRecording ? `Grabando... ${fmtTimer(recordSeconds)} (clic en 🎤 para detener)` : "Escribe un mensaje..."}
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  disabled={!selectedPhone || isRecording}
-                />
+                {isRecording ? (
+                  <div className="recording-wave-wrap" aria-live="polite">
+                    <span className="recording-dot" />
+                    <span className="recording-time">{fmtTimer(recordSeconds)}</span>
+                    <div className="recording-wave" aria-hidden="true">
+                      {Array.from({ length: 22 }).map((_, idx) => (
+                        <span key={`wave-${idx}`} style={{ animationDelay: `${(idx % 7) * 0.08}s` }} />
+                      ))}
+                    </div>
+                    <span className="recording-label">Grabando...</span>
+                  </div>
+                ) : (
+                  <input
+                    className="composer-input"
+                    placeholder="Escribe un mensaje..."
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                    disabled={!selectedPhone}
+                  />
+                )}
 
                 <EmojiPickerButton
                   disabled={!selectedPhone || isRecording}
@@ -1458,6 +1471,17 @@ export default function App() {
                   <IconSend />
                 </button>
               </div>
+
+              {!isRecording && selectedPhone && text.trim() && (
+                <div className="typing-indicator">
+                  <span>Escribiendo</span>
+                  <span className="typing-dots">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </div>
+              )}
 
               {attachment && (
                 <div className="attach-preview">
@@ -1566,6 +1590,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

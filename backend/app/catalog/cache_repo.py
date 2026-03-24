@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any, Optional
 
@@ -64,10 +65,11 @@ _ensure_schema()
 
 def _norm(s: str) -> str:
     s = (s or "").lower().strip()
-    s = re.sub(r"[^a-z0-9áéíóúñü\s]+", " ", s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^a-z0-9\s]+", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
-
 
 def build_search_blob(p: dict) -> str:
     parts = []
@@ -199,19 +201,40 @@ def search_cached_products(query: str, *, limit: int = 24) -> list[dict]:
     if not q:
         return []
 
-    tokens = [t for t in q.split() if len(t) >= 2]
+    stopwords = {
+        "de", "del", "la", "las", "el", "los", "un", "una", "unos", "unas",
+        "que", "para", "por", "con", "sin", "y", "o", "me", "mi", "tu",
+        "favor", "porfa", "hola", "buenas", "gracias",
+        "quiero", "busco", "tienes", "tienen", "hay", "dame", "muestrame",
+        "enviame", "mandame", "precio", "stock", "disponible", "opciones",
+        "perfume", "perfumes", "fragancia", "fragancias", "colonia", "colonias",
+        "hombre", "mujer", "unisex",
+    }
+    tokens = [t for t in q.split() if len(t) >= 2 and t not in stopwords]
+    if not tokens:
+        tokens = [t for t in q.split() if len(t) >= 2]
     if not tokens:
         return []
 
-    clauses = []
+    score_parts = []
     params: dict[str, Any] = {"limit": int(max(1, min(limit, 60)))}
+    params["q_phrase"] = f"%{q}%"
+    params["q_exact"] = q
+
+    score_parts.append("(CASE WHEN LOWER(COALESCE(name, '')) LIKE :q_phrase THEN 120 ELSE 0 END)")
+    score_parts.append("(CASE WHEN LOWER(COALESCE(search_blob, '')) LIKE :q_phrase THEN 35 ELSE 0 END)")
+    score_parts.append("(CASE WHEN LOWER(COALESCE(data->>'sku', '')) = :q_exact THEN 160 ELSE 0 END)")
 
     for i, tok in enumerate(tokens[:8]):
         k = f"t{i}"
         params[k] = f"%{tok}%"
-        clauses.append(f"(CASE WHEN search_blob LIKE :{k} THEN 1 ELSE 0 END)")
+        score_parts.append(f"(CASE WHEN LOWER(COALESCE(name, '')) LIKE :{k} THEN 18 ELSE 0 END)")
+        score_parts.append(f"(CASE WHEN LOWER(COALESCE(data->>'brand', '')) LIKE :{k} THEN 14 ELSE 0 END)")
+        score_parts.append(f"(CASE WHEN LOWER(COALESCE(data->>'sku', '')) LIKE :{k} THEN 24 ELSE 0 END)")
+        score_parts.append(f"(CASE WHEN LOWER(COALESCE(data->>'slug', '')) LIKE :{k} THEN 20 ELSE 0 END)")
+        score_parts.append(f"(CASE WHEN LOWER(COALESCE(search_blob, '')) LIKE :{k} THEN 5 ELSE 0 END)")
 
-    score_sql = " + ".join(clauses) if clauses else "0"
+    score_sql = " + ".join(score_parts) if score_parts else "0"
 
     with engine.begin() as conn:
         rows = conn.execute(text(f"""

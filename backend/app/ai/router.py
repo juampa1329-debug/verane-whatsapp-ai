@@ -271,6 +271,9 @@ def _get_settings_row(conn) -> Dict[str, Any]:
             COALESCE(reply_chunk_chars, 480) AS reply_chunk_chars,
             COALESCE(reply_delay_ms, 900) AS reply_delay_ms,
             COALESCE(typing_delay_ms, 450) AS typing_delay_ms,
+            COALESCE(inbound_cooldown_sec, 6) AS inbound_cooldown_sec,
+            COALESCE(inbound_post_activity_ms, 1400) AS inbound_post_activity_ms,
+            COALESCE(inbound_audio_extra_ms, 2500) AS inbound_audio_extra_ms,
 
             -- ✅ VOICE (texto + decisión de voz)
             COALESCE(voice_enabled, FALSE) AS voice_enabled,
@@ -327,6 +330,9 @@ class AISettingsOut(BaseModel):
     reply_chunk_chars: int = 480
     reply_delay_ms: int = 900
     typing_delay_ms: int = 450
+    inbound_cooldown_sec: int = 6
+    inbound_post_activity_ms: int = 1400
+    inbound_audio_extra_ms: int = 2500
 
     # ✅ VOICE (texto + decisión)
     voice_enabled: bool = False
@@ -370,6 +376,9 @@ class AISettingsUpdate(BaseModel):
     reply_chunk_chars: Optional[int] = Field(default=None, ge=120, le=2000)
     reply_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
     typing_delay_ms: Optional[int] = Field(default=None, ge=0, le=15000)
+    inbound_cooldown_sec: Optional[int] = Field(default=None, ge=0, le=30)
+    inbound_post_activity_ms: Optional[int] = Field(default=None, ge=0, le=15000)
+    inbound_audio_extra_ms: Optional[int] = Field(default=None, ge=0, le=15000)
 
     # ✅ VOICE (texto + decisión)
     voice_enabled: Optional[bool] = None
@@ -475,6 +484,9 @@ def update_ai_settings(payload: AISettingsUpdate):
             "reply_chunk_chars": current.get("reply_chunk_chars", 480) if payload.reply_chunk_chars is None else payload.reply_chunk_chars,
             "reply_delay_ms": current.get("reply_delay_ms", 900) if payload.reply_delay_ms is None else payload.reply_delay_ms,
             "typing_delay_ms": current.get("typing_delay_ms", 450) if payload.typing_delay_ms is None else payload.typing_delay_ms,
+            "inbound_cooldown_sec": current.get("inbound_cooldown_sec", 6) if payload.inbound_cooldown_sec is None else payload.inbound_cooldown_sec,
+            "inbound_post_activity_ms": current.get("inbound_post_activity_ms", 1400) if payload.inbound_post_activity_ms is None else payload.inbound_post_activity_ms,
+            "inbound_audio_extra_ms": current.get("inbound_audio_extra_ms", 2500) if payload.inbound_audio_extra_ms is None else payload.inbound_audio_extra_ms,
 
             # ✅ VOICE (texto + decisión)
             "voice_enabled": current.get("voice_enabled", False) if payload.voice_enabled is None else payload.voice_enabled,
@@ -565,6 +577,9 @@ def update_ai_settings(payload: AISettingsUpdate):
                 reply_chunk_chars = :reply_chunk_chars,
                 reply_delay_ms = :reply_delay_ms,
                 typing_delay_ms = :typing_delay_ms,
+                inbound_cooldown_sec = :inbound_cooldown_sec,
+                inbound_post_activity_ms = :inbound_post_activity_ms,
+                inbound_audio_extra_ms = :inbound_audio_extra_ms,
 
                 -- ✅ VOICE (texto + decisión)
                 voice_enabled = :voice_enabled,
@@ -658,6 +673,9 @@ def list_ai_models():
             "reply_chunk_chars": 480,
             "reply_delay_ms": 900,
             "typing_delay_ms": 450,
+            "inbound_cooldown_sec": 6,
+            "inbound_post_activity_ms": 1400,
+            "inbound_audio_extra_ms": 2500,
             "voice_tts_provider": "google",
             "voice_tts_voice_id": "",
             "voice_tts_model_id": "",
@@ -815,6 +833,9 @@ def debug_prompt(
             "reply_chunk_chars": int(s.get("reply_chunk_chars") or 480),
             "reply_delay_ms": int(s.get("reply_delay_ms") or 900),
             "typing_delay_ms": int(s.get("typing_delay_ms") or 450),
+            "inbound_cooldown_sec": int(s.get("inbound_cooldown_sec") or 6),
+            "inbound_post_activity_ms": int(s.get("inbound_post_activity_ms") or 1400),
+            "inbound_audio_extra_ms": int(s.get("inbound_audio_extra_ms") or 2500),
 
             "voice_enabled": bool(s.get("voice_enabled", False)),
             "voice_gender": str(s.get("voice_gender") or "neutral"),

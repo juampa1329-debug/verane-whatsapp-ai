@@ -25,7 +25,14 @@ from app.remarketing.engine import (
     get_phone_enrollments,
     assign_phone_stage,
 )
-from app.catalog.sync_service import start_periodic_sync
+from app.catalog.sync_service import (
+    start_periodic_sync,
+    get_sync_state as get_wc_sync_state,
+    sync_all_products_once,
+    sync_recent_products_once,
+)
+from app.ai.knowledge_router import start_web_sources_sync_loop
+from app.catalog.cache_repo import get_cache_stats
 
 # ✅ Pipeline core (nuevo flujo real)
 from app.pipeline.ingest_core import run_ingest, IngestMessage
@@ -63,6 +70,7 @@ app = FastAPI()
 _campaign_engine_stop: Optional[asyncio.Event] = None
 _campaign_engine_task: Optional[asyncio.Task] = None
 _wc_cache_sync_task: Optional[asyncio.Task] = None
+_kb_web_sync_task: Optional[asyncio.Task] = None
 
 origins = [
     "https://app.perfumesverane.com",
@@ -225,6 +233,9 @@ def ensure_schema():
                 reply_chunk_chars INTEGER,
                 reply_delay_ms INTEGER,
                 typing_delay_ms INTEGER,
+                inbound_cooldown_sec INTEGER,
+                inbound_post_activity_ms INTEGER,
+                inbound_audio_extra_ms INTEGER,
 
                 voice_enabled BOOLEAN,
                 voice_gender TEXT,
@@ -249,6 +260,9 @@ def ensure_schema():
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS inbound_cooldown_sec INTEGER"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS inbound_post_activity_ms INTEGER"""))
+        conn.execute(text("""ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS inbound_audio_extra_ms INTEGER"""))
 
         # Insertar 1 fila default si la tabla está vacía
         conn.execute(text("""
@@ -259,6 +273,7 @@ def ensure_schema():
                 timeout_sec, max_retries,
 
                 reply_chunk_chars, reply_delay_ms, typing_delay_ms,
+                inbound_cooldown_sec, inbound_post_activity_ms, inbound_audio_extra_ms,
 
                 voice_enabled, voice_prefer_voice, voice_max_notes_per_reply,
                 voice_tts_provider, voice_tts_voice_id, voice_tts_model_id,
@@ -272,6 +287,7 @@ def ensure_schema():
                 25, 1,
 
                 480, 900, 450,
+                6, 1400, 2500,
 
                 FALSE, FALSE, 1,
                 'google', '', '',
@@ -287,6 +303,9 @@ def ensure_schema():
                 reply_chunk_chars = COALESCE(reply_chunk_chars, 480),
                 reply_delay_ms = COALESCE(reply_delay_ms, 900),
                 typing_delay_ms = COALESCE(typing_delay_ms, 450),
+                inbound_cooldown_sec = COALESCE(inbound_cooldown_sec, 6),
+                inbound_post_activity_ms = COALESCE(inbound_post_activity_ms, 1400),
+                inbound_audio_extra_ms = COALESCE(inbound_audio_extra_ms, 2500),
 
                 voice_enabled = COALESCE(voice_enabled, FALSE),
                 voice_prefer_voice = COALESCE(voice_prefer_voice, FALSE),
@@ -673,6 +692,27 @@ async def _startup_wc_cache_sync():
     print("[WC_CACHE_SYNC] started", {"interval_sec": interval_sec})
 
 
+@app.on_event("startup")
+async def _startup_kb_web_sources_sync():
+    global _kb_web_sync_task
+
+    if _kb_web_sync_task and not _kb_web_sync_task.done():
+        return
+
+    raw_interval = str(os.getenv("KB_WEB_SYNC_INTERVAL_SEC", "180") or "180").strip()
+    try:
+        interval_sec = int(raw_interval)
+    except Exception:
+        interval_sec = 180
+
+    if interval_sec <= 0:
+        print("[KB_WEB_SYNC] disabled (KB_WEB_SYNC_INTERVAL_SEC <= 0)")
+        return
+
+    _kb_web_sync_task = asyncio.create_task(start_web_sources_sync_loop(interval_sec=interval_sec))
+    print("[KB_WEB_SYNC] started", {"interval_sec": interval_sec})
+
+
 @app.on_event("shutdown")
 async def _shutdown_campaign_engine():
     global _campaign_engine_stop, _campaign_engine_task
@@ -705,6 +745,23 @@ async def _shutdown_wc_cache_sync():
     except Exception:
         pass
     _wc_cache_sync_task = None
+
+
+@app.on_event("shutdown")
+async def _shutdown_kb_web_sources_sync():
+    global _kb_web_sync_task
+
+    if not _kb_web_sync_task:
+        return
+
+    _kb_web_sync_task.cancel()
+    try:
+        await _kb_web_sync_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+    _kb_web_sync_task = None
 
 
 # =========================================================
@@ -1373,6 +1430,41 @@ async def send_wc_product(payload: dict):
     )
 
     return {"ok": True, "sent": bool(wa.get("sent")), "wa": wa}
+
+
+@app.get("/api/wc/cache/sync-state")
+def wc_cache_sync_state():
+    return {
+        "sync": get_wc_sync_state(),
+        "cache": get_cache_stats(),
+        "auto_sync_interval_sec": int(max(0, int(os.getenv("WC_CACHE_SYNC_INTERVAL_SEC", "0") or 0))),
+        "full_sync_hours": int(max(1, int(os.getenv("WC_CACHE_FULL_SYNC_HOURS", "24") or 24))),
+    }
+
+
+@app.post("/api/wc/cache/sync-now")
+async def wc_cache_sync_now(
+    mode: str = Query("recent", description="recent|full"),
+    per_page: int = Query(100, ge=10, le=200),
+):
+    m = (mode or "recent").strip().lower()
+    if not wc_enabled():
+        raise HTTPException(status_code=400, detail="WooCommerce no está configurado")
+    if m not in {"recent", "full"}:
+        raise HTTPException(status_code=400, detail="mode must be recent|full")
+
+    if m == "full":
+        result = await sync_all_products_once(per_page=per_page, max_pages=2000)
+    else:
+        result = await sync_recent_products_once(per_page=per_page, max_pages=40)
+
+    return {
+        "ok": True,
+        "mode": m,
+        "result": result,
+        "sync": get_wc_sync_state(),
+        "cache": get_cache_stats(),
+    }
 
 
 # -------------------------

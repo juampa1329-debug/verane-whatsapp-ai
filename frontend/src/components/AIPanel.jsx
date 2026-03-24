@@ -25,6 +25,9 @@ export default function AIPanel({ apiBase }) {
     reply_chunk_chars: 480,
     reply_delay_ms: 900,
     typing_delay_ms: 450,
+    inbound_cooldown_sec: 6,
+    inbound_post_activity_ms: 1400,
+    inbound_audio_extra_ms: 2500,
 
     // ✅ VOZ / TTS
     voice_enabled: false,
@@ -48,6 +51,20 @@ export default function AIPanel({ apiBase }) {
   const [kbUploadLoading, setKbUploadLoading] = useState(false);
   const [kbNotes, setKbNotes] = useState("");
   const [kbActiveFilter, setKbActiveFilter] = useState("all"); // all|yes|no
+  const [webSources, setWebSources] = useState([]);
+  const [webLoading, setWebLoading] = useState(false);
+  const [webSaving, setWebSaving] = useState(false);
+  const [webSyncingId, setWebSyncingId] = useState("");
+  const [webActiveFilter, setWebActiveFilter] = useState("all");
+  const [webDraft, setWebDraft] = useState({
+    url: "",
+    source_name: "",
+    notes: "",
+    is_active: true,
+    auto_sync: true,
+    sync_interval_min: 360,
+    timeout_sec: 20,
+  });
 
   // QA
   const [qaPhone, setQaPhone] = useState("");
@@ -212,6 +229,9 @@ export default function AIPanel({ apiBase }) {
       reply_chunk_chars: clampNum(data.reply_chunk_chars ?? 480, 120, 2000, 480),
       reply_delay_ms: clampNum(data.reply_delay_ms ?? 900, 0, 15000, 900),
       typing_delay_ms: clampNum(data.typing_delay_ms ?? 450, 0, 15000, 450),
+      inbound_cooldown_sec: clampInt(data.inbound_cooldown_sec ?? 6, 0, 30, 6),
+      inbound_post_activity_ms: clampInt(data.inbound_post_activity_ms ?? 1400, 0, 15000, 1400),
+      inbound_audio_extra_ms: clampInt(data.inbound_audio_extra_ms ?? 2500, 0, 15000, 2500),
 
       // ✅ VOZ / TTS
       voice_enabled: !!(data.voice_enabled ?? false),
@@ -263,6 +283,9 @@ export default function AIPanel({ apiBase }) {
         reply_chunk_chars: clampNum(draft.reply_chunk_chars, 120, 2000, 480),
         reply_delay_ms: clampNum(draft.reply_delay_ms, 0, 15000, 900),
         typing_delay_ms: clampNum(draft.typing_delay_ms, 0, 15000, 450),
+        inbound_cooldown_sec: clampInt(draft.inbound_cooldown_sec, 0, 30, 6),
+        inbound_post_activity_ms: clampInt(draft.inbound_post_activity_ms, 0, 15000, 1400),
+        inbound_audio_extra_ms: clampInt(draft.inbound_audio_extra_ms, 0, 15000, 2500),
 
         // voz
         voice_enabled: !!draft.voice_enabled,
@@ -314,6 +337,118 @@ export default function AIPanel({ apiBase }) {
     }
   };
 
+  const loadWebSources = async () => {
+    setWebLoading(true);
+    try {
+      const url = `${API}/api/ai/knowledge/web-sources?active=${encodeURIComponent(webActiveFilter)}&limit=200`;
+      const r = await fetch(url);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || "No se pudieron cargar fuentes web");
+      setWebSources(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setStatus(`Web KB error: ${String(e.message || e)}`);
+    } finally {
+      setWebLoading(false);
+    }
+  };
+
+  const createWebSource = async () => {
+    const payload = {
+      url: String(webDraft.url || "").trim(),
+      source_name: String(webDraft.source_name || "").trim(),
+      notes: String(webDraft.notes || "").trim(),
+      is_active: !!webDraft.is_active,
+      auto_sync: !!webDraft.auto_sync,
+      sync_interval_min: clampInt(webDraft.sync_interval_min, 5, 10080, 360),
+      timeout_sec: clampInt(webDraft.timeout_sec, 5, 60, 20),
+    };
+    if (!payload.url) {
+      setStatus("Fuente web: URL requerida");
+      setTimeout(() => setStatus(""), 2500);
+      return;
+    }
+
+    setWebSaving(true);
+    setStatus("");
+    try {
+      const r = await fetch(`${API}/api/ai/knowledge/web-sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || "No se pudo crear la fuente web");
+      setStatus("Fuente web creada ✅");
+      setWebDraft((p) => ({ ...p, url: "", source_name: "", notes: "" }));
+      await loadWebSources();
+    } catch (e) {
+      setStatus(`Fuente web error: ${String(e.message || e)}`);
+    } finally {
+      setWebSaving(false);
+      setTimeout(() => setStatus(""), 2500);
+    }
+  };
+
+  const syncWebSource = async (sourceId) => {
+    if (!sourceId) return;
+    setWebSyncingId(sourceId);
+    setStatus("");
+    try {
+      const r = await fetch(`${API}/api/ai/knowledge/web-sources/${encodeURIComponent(sourceId)}/sync`, {
+        method: "POST",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || "No se pudo sincronizar");
+      setStatus(`Sync web ✅ chunks=${data?.chunks ?? "?"}`);
+      await Promise.all([loadWebSources(), loadKbFiles()]);
+    } catch (e) {
+      setStatus(`Sync web error: ${String(e.message || e)}`);
+    } finally {
+      setWebSyncingId("");
+      setTimeout(() => setStatus(""), 2500);
+    }
+  };
+
+  const toggleWebSourceField = async (sourceId, patch) => {
+    if (!sourceId) return;
+    setStatus("");
+    try {
+      const r = await fetch(`${API}/api/ai/knowledge/web-sources/${encodeURIComponent(sourceId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch || {}),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || "No se pudo actualizar fuente web");
+      setStatus("Fuente web actualizada ✅");
+      await Promise.all([loadWebSources(), loadKbFiles()]);
+    } catch (e) {
+      setStatus(`Update web error: ${String(e.message || e)}`);
+    } finally {
+      setTimeout(() => setStatus(""), 2500);
+    }
+  };
+
+  const deleteWebSource = async (sourceId) => {
+    if (!sourceId) return;
+    const ok = window.confirm("¿Eliminar esta fuente web? (Borra chunks y archivo cacheado)");
+    if (!ok) return;
+    setStatus("");
+    try {
+      const r = await fetch(`${API}/api/ai/knowledge/web-sources/${encodeURIComponent(sourceId)}`, {
+        method: "DELETE",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || "No se pudo eliminar la fuente web");
+      setStatus("Fuente web eliminada ✅");
+      await Promise.all([loadWebSources(), loadKbFiles()]);
+    } catch (e) {
+      setStatus(`Delete web error: ${String(e.message || e)}`);
+    } finally {
+      setTimeout(() => setStatus(""), 2500);
+    }
+  };
+
   const uploadKb = async (file) => {
     if (!file) return;
     setKbUploadLoading(true);
@@ -331,7 +466,7 @@ export default function AIPanel({ apiBase }) {
       if (!r.ok) throw new Error(data?.detail || "Upload KB falló");
 
       setKbNotes("");
-      setStatus("Archivo subido ✅ (si es PDF, se indexa solo)");
+      setStatus("Archivo subido ✅ (PDF/TXT se indexan solos)");
       await loadKbFiles();
     } catch (e) {
       setStatus(`Upload error: ${String(e.message || e)}`);
@@ -488,6 +623,11 @@ export default function AIPanel({ apiBase }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbActiveFilter]);
 
+  useEffect(() => {
+    loadWebSources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webActiveFilter]);
+
   // cargar modelos cuando cambie provider
   useEffect(() => {
     if (!draft?.provider) return;
@@ -525,8 +665,18 @@ export default function AIPanel({ apiBase }) {
     const c = clampNum(draft.reply_chunk_chars, 120, 2000, 480);
     const d = clampNum(draft.reply_delay_ms, 0, 15000, 900);
     const t = clampNum(draft.typing_delay_ms, 0, 15000, 450);
-    return `Chunks aprox: ${c} chars • Delay entre mensajes: ${d}ms • “Typing” inicial: ${t}ms`;
-  }, [draft.reply_chunk_chars, draft.reply_delay_ms, draft.typing_delay_ms]);
+    const cool = clampInt(draft.inbound_cooldown_sec, 0, 30, 6);
+    const post = clampInt(draft.inbound_post_activity_ms, 0, 15000, 1400);
+    const audio = clampInt(draft.inbound_audio_extra_ms, 0, 15000, 2500);
+    return `Chunks aprox: ${c} chars • Delay entre mensajes: ${d}ms • “Typing” inicial: ${t}ms • Espera entrada: ${cool}s • Post-actividad: ${post}ms • Extra audio: ${audio}ms`;
+  }, [
+    draft.reply_chunk_chars,
+    draft.reply_delay_ms,
+    draft.typing_delay_ms,
+    draft.inbound_cooldown_sec,
+    draft.inbound_post_activity_ms,
+    draft.inbound_audio_extra_ms,
+  ]);
 
   const voicePreview = useMemo(() => {
     const rate = clampNum(draft.voice_speaking_rate, 0.5, 2.0, 1.0);
@@ -771,6 +921,38 @@ export default function AIPanel({ apiBase }) {
               </div>
 
               {/* ✅ VOZ / TTS */}
+              <div style={rowStyle}>
+                <label style={labelStyle}>Cooldown entrada (seg)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  value={draft.inbound_cooldown_sec}
+                  onChange={(e) => setDraft((p) => ({ ...p, inbound_cooldown_sec: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Espera post-actividad (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15000}
+                  value={draft.inbound_post_activity_ms}
+                  onChange={(e) => setDraft((p) => ({ ...p, inbound_post_activity_ms: Number(e.target.value || 0) }))}
+                />
+              </div>
+
+              <div style={rowStyle}>
+                <label style={labelStyle}>Extra cuando es audio (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15000}
+                  value={draft.inbound_audio_extra_ms}
+                  onChange={(e) => setDraft((p) => ({ ...p, inbound_audio_extra_ms: Number(e.target.value || 0) }))}
+                />
+              </div>
               <hr style={hrStyle} />
               <h4 style={{ margin: "6px 0 0 0" }}>Voz / TTS (WhatsApp)</h4>
               <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{voicePreview}</div>
@@ -1040,7 +1222,7 @@ export default function AIPanel({ apiBase }) {
           <div style={{ marginTop: 10 }}>
             <input
               type="file"
-              accept=".pdf,application/pdf,image/*"
+              accept=".pdf,application/pdf,text/plain,.txt,image/*"
               disabled={kbUploadLoading}
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -1050,7 +1232,173 @@ export default function AIPanel({ apiBase }) {
               }}
             />
             <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-              PDF se indexa automático. Imágenes quedan guardadas pero sin “visión” por ahora (fase multimodal después).
+              PDF y TXT se indexan automático. Imágenes quedan guardadas pero sin “visión” por ahora (fase multimodal después).
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <hr style={hrStyle} />
+            <h4 style={{ margin: "0 0 8px 0" }}>Fuentes Web (Crawl)</h4>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <select
+                value={webActiveFilter}
+                onChange={(e) => setWebActiveFilter(e.target.value)}
+                style={{ padding: "8px 10px", borderRadius: 10 }}
+              >
+                <option value="all">Mostrar: Todas</option>
+                <option value="yes">Solo activas</option>
+                <option value="no">Solo inactivas</option>
+              </select>
+              <button onClick={loadWebSources} disabled={webLoading} style={btnGhost}>
+                {webLoading ? "Cargando..." : "Refrescar fuentes web"}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <input
+                value={webDraft.url}
+                onChange={(e) => setWebDraft((p) => ({ ...p, url: e.target.value }))}
+                placeholder="https://tutienda.com/pagina-o-blog"
+              />
+              <input
+                value={webDraft.source_name}
+                onChange={(e) => setWebDraft((p) => ({ ...p, source_name: e.target.value }))}
+                placeholder="Nombre corto de la fuente (opcional)"
+              />
+              <input
+                value={webDraft.notes}
+                onChange={(e) => setWebDraft((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Notas (opcional)"
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <label style={{ fontSize: 12, opacity: 0.85 }}>
+                  Intervalo (min)
+                  <input
+                    type="number"
+                    min={5}
+                    max={10080}
+                    value={webDraft.sync_interval_min}
+                    onChange={(e) => setWebDraft((p) => ({ ...p, sync_interval_min: Number(e.target.value || 0) }))}
+                    style={{ marginLeft: 8, width: 100 }}
+                  />
+                </label>
+                <label style={{ fontSize: 12, opacity: 0.85 }}>
+                  Timeout (seg)
+                  <input
+                    type="number"
+                    min={5}
+                    max={60}
+                    value={webDraft.timeout_sec}
+                    onChange={(e) => setWebDraft((p) => ({ ...p, timeout_sec: Number(e.target.value || 0) }))}
+                    style={{ marginLeft: 8, width: 100 }}
+                  />
+                </label>
+                <label style={{ fontSize: 12, opacity: 0.9 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!webDraft.is_active}
+                    onChange={(e) => setWebDraft((p) => ({ ...p, is_active: e.target.checked }))}
+                    style={{ marginRight: 6 }}
+                  />
+                  Activa
+                </label>
+                <label style={{ fontSize: 12, opacity: 0.9 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!webDraft.auto_sync}
+                    onChange={(e) => setWebDraft((p) => ({ ...p, auto_sync: e.target.checked }))}
+                    style={{ marginRight: 6 }}
+                  />
+                  Auto-sync
+                </label>
+                <button onClick={createWebSource} disabled={webSaving} style={btnPrimary}>
+                  {webSaving ? "Creando..." : "Añadir fuente web"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, display: "grid", gap: 8, maxHeight: 260, overflow: "auto", paddingRight: 6 }}>
+              {webSources.map((w) => (
+                <div key={w.id} style={fileRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {w.source_name || w.url}
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.84, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {w.url}
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.78, marginTop: 3 }}>
+                      estado={w.last_status || "never"} • última sync={String(w.last_synced_at || "nunca")} • intervalo={w.sync_interval_min}m
+                    </div>
+                    {!!w.last_error && (
+                      <div style={{ fontSize: 12, color: "#ff9494", marginTop: 3 }}>
+                        {String(w.last_error || "").slice(0, 180)}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                      <label style={{ fontSize: 12, opacity: 0.85 }}>
+                        Intervalo (min):
+                        <input
+                          type="number"
+                          min={5}
+                          max={10080}
+                          defaultValue={w.sync_interval_min}
+                          onBlur={(e) => {
+                            const next = clampInt(e.target.value, 5, 10080, 360);
+                            if (Number(next) !== Number(w.sync_interval_min)) {
+                              toggleWebSourceField(w.id, { sync_interval_min: next });
+                            }
+                          }}
+                          style={{ marginLeft: 6, width: 90 }}
+                        />
+                      </label>
+                      <label style={{ fontSize: 12, opacity: 0.85 }}>
+                        Timeout:
+                        <input
+                          type="number"
+                          min={5}
+                          max={60}
+                          defaultValue={w.timeout_sec}
+                          onBlur={(e) => {
+                            const next = clampInt(e.target.value, 5, 60, 20);
+                            if (Number(next) !== Number(w.timeout_sec)) {
+                              toggleWebSourceField(w.id, { timeout_sec: next });
+                            }
+                          }}
+                          style={{ marginLeft: 6, width: 80 }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button
+                      style={btnGhost}
+                      onClick={() => syncWebSource(w.id)}
+                      disabled={webSyncingId === w.id}
+                    >
+                      {webSyncingId === w.id ? "Sincronizando..." : "Sync ahora"}
+                    </button>
+                    <button
+                      style={btnGhost}
+                      onClick={() => toggleWebSourceField(w.id, { is_active: !w.is_active })}
+                    >
+                      {w.is_active ? "Pausar" : "Activar"}
+                    </button>
+                    <button
+                      style={btnGhost}
+                      onClick={() => toggleWebSourceField(w.id, { auto_sync: !w.auto_sync })}
+                    >
+                      {w.auto_sync ? "Auto ON" : "Auto OFF"}
+                    </button>
+                    <button style={btnDanger} onClick={() => deleteWebSource(w.id)}>
+                      Borrar
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!webLoading && webSources.length === 0 && (
+                <div style={{ fontSize: 12, opacity: 0.8 }}>No hay fuentes web registradas.</div>
+              )}
             </div>
           </div>
 

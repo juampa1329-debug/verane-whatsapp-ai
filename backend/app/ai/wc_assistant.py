@@ -735,6 +735,81 @@ def _build_menu_lines(items: list[dict]) -> tuple[str, list[dict]]:
     return "\n".join(lines), opts
 
 
+_QUERY_NOISE_PAT = re.compile(
+    r"\b("
+    r"hola|buenas|gracias|porfa|por favor|consulta|consultar|companero|bodega|"
+    r"quiero|busco|necesito|tienes|tienen|hay|muestrame|dame|enviame|mandame|"
+    r"precio|stock|disponible|opcion|opciones|rango|entre|presupuesto|"
+    r"para|hombre|mujer|unisex|linea|perfume|perfumes|fragancia|fragancias|colonia|colonias"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_query_candidate(raw: str) -> str:
+    t = _norm(raw)
+    if not t:
+        return ""
+    t = _QUERY_NOISE_PAT.sub(" ", t)
+    t = re.sub(r"[^a-z0-9\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return ""
+    return " ".join(t.split()[:8])
+
+
+def _build_query_candidates(text: str, wc_state: dict, slots: dict) -> list[str]:
+    out: list[str] = []
+    base = _clean_text(text)
+    if base:
+        out.append(base)
+
+    cleaned = _clean_query_candidate(text)
+    if cleaned:
+        out.append(cleaned)
+
+    last_q = _clean_text(str((wc_state or {}).get("last_query") or ""))
+    if last_q:
+        out.append(last_q)
+
+    brand = _clean_text(str((slots or {}).get("brand") or ""))
+    if brand:
+        out.append(brand)
+        if cleaned and _norm(brand) not in _norm(cleaned):
+            out.append(f"{brand} {cleaned}".strip())
+
+    seen = set()
+    dedup: list[str] = []
+    for q in out:
+        nq = _norm(q)
+        if not nq or nq in seen:
+            continue
+        seen.add(nq)
+        dedup.append(q)
+    return dedup[:8]
+
+
+def _build_soft_query_from_slots(slots: dict) -> str:
+    parts: list[str] = []
+    brand = _clean_text(str((slots or {}).get("brand") or ""))
+    gender = _clean_text(str((slots or {}).get("gender") or ""))
+    family = (slots or {}).get("family") or []
+    vibe = (slots or {}).get("vibe") or []
+
+    if brand:
+        parts.append(brand)
+    parts.append("perfume")
+    if gender in ("hombre", "mujer", "unisex"):
+        parts.append(gender)
+    if isinstance(family, list) and family:
+        parts.append(_clean_text(str(family[0] or "")))
+    if isinstance(vibe, list) and vibe:
+        parts.append(_clean_text(str(vibe[0] or "")))
+
+    merged = " ".join([p for p in parts if p]).strip()
+    return merged
+
+
 # -------------------------
 # MAIN
 # -------------------------
@@ -971,20 +1046,46 @@ async def handle_wc_if_applicable(
     # -----------------------------------------
     # 5) Retrieval
     # -----------------------------------------
-    query = text
+    query_seed = text
     if list_request and wc_state.get("last_query"):
-        query = _clean_text(str(wc_state.get("last_query") or "")) or text
-    wc_state["last_query"] = query
+        query_seed = _clean_text(str(wc_state.get("last_query") or "")) or text
 
-    try:
-        items = await wc_search_products(query, per_page=12)
-    except Exception:
-        return {"handled": False}
+    query_candidates = _build_query_candidates(query_seed, wc_state, slots)
+    items: list[dict] = []
+    used_query = ""
+
+    for q in query_candidates:
+        try:
+            trial = await wc_search_products(q, per_page=12)
+        except Exception:
+            trial = []
+        if trial:
+            items = trial
+            used_query = q
+            break
+
+    if not items:
+        soft_q = _build_soft_query_from_slots(slots)
+        if soft_q:
+            try:
+                trial = await wc_search_products(soft_q, per_page=10)
+            except Exception:
+                trial = []
+            if trial:
+                items = trial
+                used_query = soft_q
+
+    wc_state["last_query"] = used_query or (query_candidates[0] if query_candidates else _clean_text(text))
 
     if not items:
         wc_state["stage"] = "discovery"
         set_state(phone, _state_v2_pack(wc_state))
-        await send_text_fn(phone, f"No encontré resultados exactos con eso 😕\n{_pick_followup_question(slots)}")
+        await send_text_fn(
+            phone,
+            "No encontré coincidencias exactas con ese nombre 😕\n"
+            f"{_pick_followup_question(slots)}\n"
+            "Si quieres, mándame solo el nombre corto del perfume (ej: \"royale\" o \"game of spades royale\")."
+        )
         return {"handled": True, "wc": True, "reason": "no_results_v2", "slots": slots}
 
     # -----------------------------------------

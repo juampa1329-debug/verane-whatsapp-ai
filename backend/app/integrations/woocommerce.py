@@ -359,7 +359,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     # 2) DB cache
     cached = search_cached_products(base_q, limit=max(12, effective_per_page))
     if cached:
-        cached.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
         return cached[:max(1, effective_per_page)]
 
     if is_pref:
@@ -376,7 +375,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
     if q2 and q2 != q:
         cached2 = search_cached_products(q2, limit=max(12, effective_per_page))
         if cached2:
-            cached2.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
             return cached2[:max(1, effective_per_page)]
 
     toks = [t for t in q2.split() if len(t) >= 2]
@@ -384,7 +382,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
         q3 = " ".join(toks[:3])
         cached3 = search_cached_products(q3, limit=max(12, effective_per_page))
         if cached3:
-            cached3.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
             return cached3[:max(1, effective_per_page)]
 
     # Fuzzy ligero por prefijos de token para typos ("starwaker" -> "star")
@@ -393,7 +390,6 @@ async def wc_search_products(query: str, per_page: int = 8) -> List[dict]:
         q4 = " ".join(stems[:3])
         cached4 = search_cached_products(q4, limit=max(12, effective_per_page))
         if cached4:
-            cached4.sort(key=lambda x: (0 if (x.get("stock_status") == "instock") else 1, (x.get("name") or "")))
             return cached4[:max(1, effective_per_page)]
 
     return []

@@ -28,7 +28,8 @@ from app.ai.multimodal import (
 
 # Woo (assistant)
 from app.ai.wc_assistant import handle_wc_if_applicable
-from app.integrations.woocommerce import wc_enabled
+from app.integrations.woocommerce import wc_enabled, score_product_match
+from app.catalog.cache_repo import search_cached_products
 
 # ✅ Woo sender oficial (el bueno)
 from app.pipeline.wc_sender import wc_send_product
@@ -191,6 +192,35 @@ def _get_multimodal_settings() -> dict:
         return defaults
 
 
+def _get_inbound_wait_settings() -> dict:
+    defaults = {
+        "inbound_cooldown_sec": int(max(0, min(int(os.getenv("CONV_COOLDOWN_SEC", "6") or 6), 30))),
+        "inbound_post_activity_ms": 1400,
+        "inbound_audio_extra_ms": 2500,
+    }
+    try:
+        with engine.begin() as conn:
+            r = conn.execute(text("""
+                SELECT
+                    COALESCE(inbound_cooldown_sec, 6) AS inbound_cooldown_sec,
+                    COALESCE(inbound_post_activity_ms, 1400) AS inbound_post_activity_ms,
+                    COALESCE(inbound_audio_extra_ms, 2500) AS inbound_audio_extra_ms
+                FROM ai_settings
+                ORDER BY id ASC
+                LIMIT 1
+            """)).mappings().first()
+        if not r:
+            return defaults
+
+        d = dict(r)
+        d["inbound_cooldown_sec"] = int(max(0, min(int(d.get("inbound_cooldown_sec") or 6), 30)))
+        d["inbound_post_activity_ms"] = int(max(0, min(int(d.get("inbound_post_activity_ms") or 1400), 15000)))
+        d["inbound_audio_extra_ms"] = int(max(0, min(int(d.get("inbound_audio_extra_ms") or 2500), 15000)))
+        return d
+    except Exception:
+        return defaults
+
+
 # =========================================================
 # Whisper (Groq) para audios
 # =========================================================
@@ -299,8 +329,6 @@ _WC_KEYWORDS = {
     "stock", "disponible", "disponibilidad", "promoción", "promocion",
     "catálogo", "catalogo", "recomienda", "recomendación", "recomendacion",
     "para hombre", "para mujer", "unisex", "dulce", "amaderado", "cítrico", "citrico",
-    "dior", "versace", "armani", "azzaro", "rabanne", "carolina herrera",
-    "sauvage", "eros", "invictus", "one million", "212", "bleu de chanel",
     "50ml", "100ml", "200ml", "foto real", "mándame", "mandame",
 }
 
@@ -316,6 +344,14 @@ _SOCIAL_OPENING_WORDS = (
     "con quien hablo", "como te llamas", "quien eres", "quien me atiende",
 )
 
+_CATALOG_SIGNAL_STOPWORDS = {
+    "de", "del", "la", "las", "el", "los", "un", "una", "para", "con", "sin",
+    "que", "por", "favor", "hola", "buenas", "gracias",
+    "precio", "stock", "disponible", "opcion", "opciones",
+    "perfume", "perfumes", "fragancia", "fragancias", "colonia", "colonias",
+    "hombre", "mujer", "unisex",
+}
+
 
 def _is_social_opening(user_text: str) -> bool:
     t = _norm_text(user_text)
@@ -328,6 +364,52 @@ def _is_social_opening(user_text: str) -> bool:
     if re.search(r"\b\d{2,3}\s*ml\b", t):
         return False
     return True
+
+
+def _catalog_match_signal(user_text: str) -> tuple[bool, str]:
+    """
+    Señal data-driven contra catálogo cacheado (wc_products_cache).
+    """
+    q = (user_text or "").strip()
+    if len(q) < 3:
+        return False, "catalog_short_text"
+
+    try:
+        items = search_cached_products(q, limit=5)
+    except Exception:
+        return False, "catalog_search_error"
+
+    if not items:
+        return False, "catalog_no_hits"
+
+    scored: list[tuple[int, str]] = []
+    for p in items[:3]:
+        pname = str((p or {}).get("name") or "").strip()
+        if not pname:
+            continue
+        try:
+            pscore = int(score_product_match(q, pname))
+        except Exception:
+            pscore = 0
+        scored.append((pscore, pname))
+
+    if not scored:
+        return False, "catalog_hits_without_name"
+
+    best_score, best_name = max(scored, key=lambda x: x[0])
+    if best_score >= 28:
+        return True, f"catalog_match_score:{best_score}"
+
+    q_tokens = [
+        tok for tok in _norm_text(q).split()
+        if len(tok) >= 4 and tok not in _CATALOG_SIGNAL_STOPWORDS
+    ]
+    best_name_norm = _norm_text(best_name)
+    overlap = sum(1 for tok in q_tokens if tok in best_name_norm)
+    if q_tokens and overlap >= min(2, len(q_tokens)):
+        return True, f"catalog_overlap:{overlap}/{len(q_tokens)}"
+
+    return False, f"catalog_low_score:{best_score}"
 
 
 def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
@@ -356,6 +438,10 @@ def _should_call_wc_assistant(phone: str, user_text: str) -> tuple[bool, str]:
     for kw in _WC_KEYWORDS:
         if kw in t:
             return True, f"keyword:{kw}"
+
+    cat_ok, cat_reason = _catalog_match_signal(user_text)
+    if cat_ok:
+        return True, cat_reason
 
     return False, "no_intent"
 
@@ -498,10 +584,14 @@ async def run_ingest(msg: IngestMessage) -> dict:
     # ---------------------------------------------------------
     # Debounce
     # ---------------------------------------------------------
-    cooldown = int(os.getenv("CONV_COOLDOWN_SEC", "6") or 0)
-    if direction == "in" and cooldown > 0:
+    wait_cfg = _get_inbound_wait_settings()
+    cooldown = int(wait_cfg.get("inbound_cooldown_sec") or 0)
+    post_activity_sec = max(0.0, float(wait_cfg.get("inbound_post_activity_ms") or 0) / 1000.0)
+    audio_extra_sec = max(0.0, float(wait_cfg.get("inbound_audio_extra_ms") or 0) / 1000.0)
+    if direction == "in" and (cooldown > 0 or post_activity_sec > 0 or audio_extra_sec > 0):
         try:
-            await asyncio.sleep(cooldown)
+            if cooldown > 0:
+                await asyncio.sleep(cooldown)
 
             with engine.begin() as conn:
                 latest_in_id = conn.execute(text("""
@@ -562,6 +652,27 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 msg.mime_type = last.get("mime_type") or msg.mime_type
 
                 _log(trace_id, "BATCH_READY", combined_len=len(msg.text or ""), batch_count=len(rows))
+
+            final_msg_type = (msg.msg_type or msg_type or "").strip().lower()
+            tail_sec = post_activity_sec + (audio_extra_sec if final_msg_type == "audio" else 0.0)
+            if tail_sec > 0:
+                await asyncio.sleep(tail_sec)
+                with engine.begin() as conn:
+                    latest_in_id_2 = conn.execute(text("""
+                        SELECT id FROM messages
+                        WHERE phone=:phone AND direction='in'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """), {"phone": msg.phone}).scalar()
+                if int(latest_in_id_2 or 0) != int(local_id):
+                    _log(
+                        trace_id,
+                        "BATCH_SUPERSEDED_AFTER_TAIL",
+                        local_id=local_id,
+                        latest_in_id=int(latest_in_id_2 or 0),
+                        tail_sec=tail_sec,
+                    )
+                    return {"ok": True, "queued": True}
         except Exception as e:
             _log(trace_id, "BATCH_ERROR", error=str(e)[:500])
 
@@ -1102,3 +1213,4 @@ async def run_ingest(msg: IngestMessage) -> dict:
             return {"saved": True, "sent": False, "ai": False, "ai_error": str(e)[:900]}
 
     return {"saved": True, "sent": False}
+

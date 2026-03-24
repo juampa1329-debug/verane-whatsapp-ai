@@ -25,6 +25,7 @@ from app.remarketing.engine import (
     get_phone_enrollments,
     assign_phone_stage,
 )
+from app.catalog.sync_service import start_periodic_sync
 
 # ✅ Pipeline core (nuevo flujo real)
 from app.pipeline.ingest_core import run_ingest, IngestMessage
@@ -44,6 +45,7 @@ from app.routes.whatsapp import (
 from app.integrations.woocommerce import (
     wc_get,
     map_product_for_ui,
+    wc_enabled,
 )
 
 # ✅ Montar router IA (si existe)
@@ -60,6 +62,7 @@ except Exception:
 app = FastAPI()
 _campaign_engine_stop: Optional[asyncio.Event] = None
 _campaign_engine_task: Optional[asyncio.Task] = None
+_wc_cache_sync_task: Optional[asyncio.Task] = None
 
 origins = [
     "https://app.perfumesverane.com",
@@ -336,6 +339,19 @@ def ensure_schema():
             pass
 
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_wc_cache_synced_at ON wc_products_cache (synced_at)"""))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS wc_sync_state (
+                id INTEGER PRIMARY KEY,
+                last_sync_at TIMESTAMP NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO wc_sync_state (id, last_sync_at, updated_at)
+            VALUES (1, NULL, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """))
 
         # -------------------------
         # customer_segments
@@ -632,6 +648,31 @@ async def _startup_campaign_engine():
     )
 
 
+@app.on_event("startup")
+async def _startup_wc_cache_sync():
+    global _wc_cache_sync_task
+
+    if _wc_cache_sync_task and not _wc_cache_sync_task.done():
+        return
+
+    raw_interval = str(os.getenv("WC_CACHE_SYNC_INTERVAL_SEC", "0") or "0").strip()
+    try:
+        interval_sec = int(raw_interval)
+    except Exception:
+        interval_sec = 0
+
+    if interval_sec <= 0:
+        print("[WC_CACHE_SYNC] disabled (WC_CACHE_SYNC_INTERVAL_SEC <= 0)")
+        return
+
+    if not wc_enabled():
+        print("[WC_CACHE_SYNC] disabled (Woo env vars not set)")
+        return
+
+    _wc_cache_sync_task = asyncio.create_task(start_periodic_sync(interval_sec=interval_sec))
+    print("[WC_CACHE_SYNC] started", {"interval_sec": interval_sec})
+
+
 @app.on_event("shutdown")
 async def _shutdown_campaign_engine():
     global _campaign_engine_stop, _campaign_engine_task
@@ -647,6 +688,23 @@ async def _shutdown_campaign_engine():
 
     _campaign_engine_task = None
     _campaign_engine_stop = None
+
+
+@app.on_event("shutdown")
+async def _shutdown_wc_cache_sync():
+    global _wc_cache_sync_task
+
+    if not _wc_cache_sync_task:
+        return
+
+    _wc_cache_sync_task.cancel()
+    try:
+        await _wc_cache_sync_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+    _wc_cache_sync_task = None
 
 
 # =========================================================

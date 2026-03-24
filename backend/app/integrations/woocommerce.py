@@ -297,6 +297,8 @@ def map_product_for_ui(product: dict) -> dict:
     return {
         "id": product.get("id"),
         "name": name,
+        "sku": str(product.get("sku") or ""),
+        "slug": str(product.get("slug") or ""),
         "price": str(price),
         "permalink": product.get("permalink") or "",
         "featured_image": pick_first_image(product),
@@ -423,19 +425,28 @@ def looks_like_product_question(user_text: str) -> bool:
 
     generic_verbs = ["tienes", "tienen", "hay", "manej", "venden", "ofrecen"]
     has_generic_verb = any(v in t for v in generic_verbs)
-
-    strong_tokens = (
-        "gio", "armani", "dior", "versace", "azzaro", "carolina",
-        "nitro", "212", "one million", "paco", "rabanne",
-        "tom ford", "gucci", "prada", "ysl", "valentino", "gaultier",
-    )
-    has_brandish = any(tok in t for tok in strong_tokens)
-
-    if has_generic_verb and (has_domain or has_brandish):
+    if has_generic_verb and has_domain:
         return True
 
-    if len(t.split()) <= 6 and len(t) >= 6:
-        return has_brandish
+    if re.search(r"\b\d{2,3}\s*ml\b", t):
+        return True
+
+    # Data-driven: si el texto se parece a algo del catálogo cacheado,
+    # lo tratamos como consulta de producto aunque no contenga palabras fijas.
+    # Esto evita depender de listas hardcodeadas de marcas.
+    if len(t) >= 4:
+        try:
+            items = search_cached_products(user_text, limit=5)
+        except Exception:
+            items = []
+        if items:
+            top_name = str((items[0] or {}).get("name") or "").strip()
+            if top_name:
+                score = score_product_match(user_text, top_name)
+                if score >= 28:
+                    return True
+            # Si hay resultados por tokens del catálogo, igual cuenta como señal.
+            return True
 
     return False
 

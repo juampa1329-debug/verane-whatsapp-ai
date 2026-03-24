@@ -12,7 +12,24 @@ from app.integrations.woocommerce import wc_get, map_product_for_ui, wc_enabled
 from app.catalog.cache_repo import upsert_cached_product
 
 
+def _ensure_sync_state_schema() -> None:
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS wc_sync_state (
+                id INTEGER PRIMARY KEY,
+                last_sync_at TIMESTAMP NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO wc_sync_state (id, last_sync_at, updated_at)
+            VALUES (1, NULL, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """))
+
+
 def _get_last_sync_ts() -> Optional[datetime]:
+    _ensure_sync_state_schema()
     with engine.begin() as conn:
         row = conn.execute(text("""
             SELECT last_sync_at
@@ -23,7 +40,17 @@ def _get_last_sync_ts() -> Optional[datetime]:
     return ts if isinstance(ts, datetime) else None
 
 
+def get_sync_state() -> dict:
+    last_sync_at = _get_last_sync_ts()
+    return {
+        "last_sync_at": (
+            last_sync_at.isoformat() if isinstance(last_sync_at, datetime) else None
+        )
+    }
+
+
 def _set_last_sync_ts(ts: datetime) -> None:
+    _ensure_sync_state_schema()
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO wc_sync_state (id, last_sync_at, updated_at)
@@ -32,6 +59,35 @@ def _set_last_sync_ts(ts: datetime) -> None:
                 last_sync_at = EXCLUDED.last_sync_at,
                 updated_at = EXCLUDED.updated_at
         """), {"ts": ts, "now": datetime.utcnow()})
+
+
+def mark_sync_now() -> None:
+    _set_last_sync_ts(datetime.utcnow())
+
+
+def _parse_woo_modified_ts(product: dict) -> Optional[datetime]:
+    if not isinstance(product, dict):
+        return None
+    raw = (
+        product.get("date_modified_gmt")
+        or product.get("date_modified")
+        or product.get("date_created_gmt")
+        or product.get("date_created")
+        or ""
+    )
+    value = str(raw or "").strip()
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _upsert_from_woo_product(product: dict) -> None:
+    mapped = map_product_for_ui(product)
+    upsert_cached_product(mapped, updated_at_woo=_parse_woo_modified_ts(product))
 
 
 async def sync_all_products_once(per_page: int = 100, max_pages: int = 50) -> dict:
@@ -54,8 +110,7 @@ async def sync_all_products_once(per_page: int = 100, max_pages: int = 50) -> di
             break
 
         for p in items:
-            mapped = map_product_for_ui(p)
-            upsert_cached_product(mapped, updated_at_woo=None)
+            _upsert_from_woo_product(p)
             saved += 1
 
         page += 1
@@ -91,8 +146,7 @@ async def sync_recent_products_once(per_page: int = 100, max_pages: int = 20) ->
             break
 
         for p in items:
-            mapped = map_product_for_ui(p)
-            upsert_cached_product(mapped, updated_at_woo=None)
+            _upsert_from_woo_product(p)
             saved += 1
 
         page += 1

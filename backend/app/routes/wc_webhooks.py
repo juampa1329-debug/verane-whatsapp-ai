@@ -10,10 +10,21 @@ import json
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 
 from app.integrations.woocommerce import wc_enabled, wc_get, map_product_for_ui
-from app.catalog.cache_repo import upsert_cached_product
+from app.catalog.cache_repo import (
+    upsert_cached_product,
+    get_cache_stats,
+    list_cached_brands,
+    list_cached_references,
+)
+from app.catalog.sync_service import (
+    sync_all_products_once,
+    sync_recent_products_once,
+    get_sync_state,
+    mark_sync_now,
+)
 
 router = APIRouter()
 
@@ -155,6 +166,9 @@ async def wc_webhook_product_created(request: Request):
         if pid > 0:
             await _cache_one_product_by_id(pid)
 
+    if pid > 0:
+        mark_sync_now()
+
     return {"ok": True, "event": "product-created", "product_id": pid}
 
 
@@ -171,6 +185,9 @@ async def wc_webhook_product_updated(request: Request):
         if pid > 0:
             await _cache_one_product_by_id(pid)
 
+    if pid > 0:
+        mark_sync_now()
+
     return {"ok": True, "event": "product-updated", "product_id": pid}
 
 
@@ -185,7 +202,48 @@ async def wc_webhook_product_deleted(request: Request):
         raise HTTPException(status_code=400, detail="Missing product id")
 
     _cache_deleted(pid)
+    mark_sync_now()
     return {"ok": True, "event": "product-deleted", "product_id": pid}
+
+
+# =========================================================
+# Cache observability endpoints
+# =========================================================
+
+@router.get("/api/wc/cache/stats")
+async def wc_cache_stats():
+    return {
+        "ok": True,
+        "cache": get_cache_stats(),
+        "sync": get_sync_state(),
+    }
+
+
+@router.get("/api/wc/cache/brands")
+async def wc_cache_brands(
+    q: str = Query("", description="Filtro de marca"),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    brands = list_cached_brands(q=q, limit=limit)
+    return {"ok": True, "brands": brands, "total": len(brands)}
+
+
+@router.get("/api/wc/cache/references")
+async def wc_cache_references(
+    q: str = Query("", description="Texto de búsqueda por nombre/SKU/slug"),
+    brand: str = Query("", description="Marca"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    instock_only: bool = Query(False),
+):
+    data = list_cached_references(
+        q=q,
+        brand=brand,
+        page=page,
+        per_page=per_page,
+        instock_only=instock_only,
+    )
+    return {"ok": True, **data}
 
 
 # =========================================================
@@ -196,28 +254,22 @@ async def wc_webhook_product_deleted(request: Request):
 async def wc_cache_sync_full(request: Request):
     _admin_guard(request)
 
-    if not wc_enabled():
-        raise HTTPException(status_code=500, detail="Woo env vars not set")
+    result = await sync_all_products_once(per_page=100, max_pages=2000)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=str(result.get("reason") or "sync_full_failed"))
 
-    page = 1
-    total = 0
+    return {"ok": True, **result}
 
-    while True:
-        data = await wc_get("/products", params={"page": page, "per_page": 100, "status": "publish"})
-        if not data or not isinstance(data, list):
-            break
 
-        for p in data:
-            if isinstance(p, dict) and p.get("id"):
-                mapped = map_product_for_ui(p)
-                upsert_cached_product(mapped, updated_at_woo=None)
-                total += 1
+@router.post("/api/wc/cache/sync/recent")
+async def wc_cache_sync_recent(request: Request):
+    _admin_guard(request)
 
-        page += 1
-        if page > 2000:
-            break
+    result = await sync_recent_products_once(per_page=100, max_pages=30)
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=str(result.get("reason") or "sync_recent_failed"))
 
-    return {"ok": True, "synced": total}
+    return {"ok": True, **result}
 
 
 @router.post("/api/wc/cache/sync/product/{product_id}")
@@ -231,4 +283,5 @@ async def wc_cache_sync_one(product_id: int, request: Request):
     if pid <= 0:
         raise HTTPException(status_code=502, detail="Woo returned invalid product")
 
+    mark_sync_now()
     return {"ok": True, "product_id": pid}

@@ -41,6 +41,16 @@ def _ensure_schema() -> None:
                 CREATE INDEX IF NOT EXISTS idx_wc_cache_search
                 ON wc_products_cache USING GIN (to_tsvector('simple', search_blob))
             """))
+
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_wc_cache_brand_lower
+                ON wc_products_cache ((LOWER(COALESCE(data->>'brand', ''))))
+            """))
+
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_wc_cache_sku_lower
+                ON wc_products_cache ((LOWER(COALESCE(data->>'sku', ''))))
+            """))
     except Exception:
         pass
 
@@ -61,7 +71,7 @@ def _norm(s: str) -> str:
 
 def build_search_blob(p: dict) -> str:
     parts = []
-    for k in ("name", "short_description", "description", "brand", "gender", "size"):
+    for k in ("name", "short_description", "description", "brand", "gender", "size", "sku", "slug"):
         parts.append(str(p.get(k) or ""))
 
     cats = p.get("categories") or []
@@ -258,10 +268,141 @@ def clear_cache() -> None:
 def get_cache_stats() -> dict:
     with engine.begin() as conn:
         row = conn.execute(text("""
-            SELECT COUNT(*) AS total
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE stock_status = 'instock') AS total_instock,
+                COUNT(DISTINCT NULLIF(LOWER(TRIM(COALESCE(data->>'brand', ''))), '')) AS total_brands,
+                COUNT(*) FILTER (WHERE NULLIF(TRIM(COALESCE(data->>'sku', '')), '') IS NOT NULL) AS total_with_sku,
+                MAX(synced_at) AS last_synced_at
             FROM wc_products_cache
         """)).mappings().first()
 
     return {
-        "total_products": int((row or {}).get("total") or 0)
+        "total_products": int((row or {}).get("total") or 0),
+        "total_instock": int((row or {}).get("total_instock") or 0),
+        "total_brands": int((row or {}).get("total_brands") or 0),
+        "total_with_sku": int((row or {}).get("total_with_sku") or 0),
+        "last_synced_at": (
+            row.get("last_synced_at").isoformat()
+            if isinstance((row or {}).get("last_synced_at"), datetime)
+            else None
+        ),
+    }
+
+
+def list_cached_brands(*, q: str = "", limit: int = 200) -> list[str]:
+    q_norm = _norm(q or "")
+    params: dict[str, Any] = {"limit": int(max(1, min(limit, 1000)))}
+    where_sql = ""
+    if q_norm:
+        params["q"] = f"%{q_norm}%"
+        where_sql = """
+            WHERE LOWER(TRIM(COALESCE(data->>'brand', ''))) LIKE :q
+        """
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT DISTINCT TRIM(COALESCE(data->>'brand', '')) AS brand
+            FROM wc_products_cache
+            {where_sql}
+            ORDER BY brand ASC
+            LIMIT :limit
+        """), params).mappings().all()
+
+    out: list[str] = []
+    for row in rows:
+        value = str((row or {}).get("brand") or "").strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def list_cached_references(
+    *,
+    q: str = "",
+    brand: str = "",
+    page: int = 1,
+    per_page: int = 50,
+    instock_only: bool = False,
+) -> dict:
+    safe_page = int(max(1, page))
+    safe_per_page = int(max(1, min(per_page, 200)))
+    offset = (safe_page - 1) * safe_per_page
+
+    q_norm = _norm(q or "")
+    brand_norm = _norm(brand or "")
+
+    conds: list[str] = []
+    params: dict[str, Any] = {
+        "limit": safe_per_page,
+        "offset": offset,
+    }
+
+    if q_norm:
+        params["q"] = f"%{q_norm}%"
+        conds.append("""
+            (
+                LOWER(COALESCE(name, '')) LIKE :q
+                OR LOWER(COALESCE(data->>'sku', '')) LIKE :q
+                OR LOWER(COALESCE(data->>'slug', '')) LIKE :q
+            )
+        """)
+
+    if brand_norm:
+        params["brand"] = f"%{brand_norm}%"
+        conds.append("LOWER(COALESCE(data->>'brand', '')) LIKE :brand")
+
+    if instock_only:
+        conds.append("LOWER(COALESCE(stock_status, '')) = 'instock'")
+
+    where_sql = ("WHERE " + " AND ".join(conds)) if conds else ""
+
+    with engine.begin() as conn:
+        total_row = conn.execute(text(f"""
+            SELECT COUNT(*) AS total
+            FROM wc_products_cache
+            {where_sql}
+        """), params).mappings().first()
+
+        rows = conn.execute(text(f"""
+            SELECT
+                product_id,
+                name,
+                price,
+                permalink,
+                stock_status,
+                synced_at,
+                COALESCE(data->>'brand', '') AS brand,
+                COALESCE(data->>'sku', '') AS sku,
+                COALESCE(data->>'slug', '') AS slug
+            FROM wc_products_cache
+            {where_sql}
+            ORDER BY
+                CASE WHEN stock_status = 'instock' THEN 0 ELSE 1 END,
+                synced_at DESC,
+                product_id DESC
+            LIMIT :limit OFFSET :offset
+        """), params).mappings().all()
+
+    items: list[dict] = []
+    for row in rows:
+        synced_at = row.get("synced_at")
+        items.append({
+            "product_id": int((row or {}).get("product_id") or 0),
+            "name": str((row or {}).get("name") or ""),
+            "brand": str((row or {}).get("brand") or ""),
+            "sku": str((row or {}).get("sku") or ""),
+            "slug": str((row or {}).get("slug") or ""),
+            "price": str((row or {}).get("price") or ""),
+            "stock_status": str((row or {}).get("stock_status") or ""),
+            "permalink": str((row or {}).get("permalink") or ""),
+            "synced_at": synced_at.isoformat() if isinstance(synced_at, datetime) else None,
+        })
+
+    total = int((total_row or {}).get("total") or 0)
+    return {
+        "items": items,
+        "page": safe_page,
+        "per_page": safe_per_page,
+        "total": total,
     }

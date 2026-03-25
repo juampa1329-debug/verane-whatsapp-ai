@@ -2097,6 +2097,7 @@ def get_conversations(
             .replace("{channel_filter_sql}", channel_filter_sql)
             .replace("{channel_filter_sql_2}", channel_filter_sql.replace("mi.", "mi2."))
             .replace("{channel_filter_sql_3}", channel_filter_sql.replace("mi.", ""))
+            .replace("{where_sql}", where_sql)
         ), params).mappings().all()
 
     out = []

@@ -1,37 +1,30 @@
-# Build Stage
-FROM node:20-bookworm-slim AS build
+﻿# Build stage
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
-# 1. Definimos variables
+# 1) Build args/env
 ARG VITE_API_BASE
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# 2. --- CAMBIO CRUCIAL ---
-# Forzamos el entorno a 'development' para que 'npm install' descargue 
-# VITE y los PLUGINS. Si no hacemos esto, Coolify los ignora por defecto.
+# Keep dev dependencies for Vite build
 ENV NODE_ENV=development
 
-# 3. Copiamos y limpiamos dependencias previas
-COPY package*.json ./
-# Eliminamos package-lock.json para evitar conflictos de plataforma (Windows vs Linux)
-RUN rm -f package-lock.json
+# 2) Install dependencies deterministically
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --no-audit --no-fund
 
-# 4. Instalamos TODO (incluyendo devDependencies)
-RUN npm install
-
-# 5. Copiamos el código
+# 3) Copy source
 COPY . .
 
-# 6. Construimos la aplicación
-# Usamos 'npx vite build' para saltar chequeos estrictos de TypeScript
-RUN npx vite build
+# 4) Build frontend
+RUN npm run build
 
-# Serve Stage
+# Serve stage
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Configuración Nginx
+# Nginx config
 RUN printf '%s\n' \
 'server {' \
 '  listen 80;' \

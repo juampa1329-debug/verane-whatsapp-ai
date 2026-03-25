@@ -2041,7 +2041,7 @@ def get_conversations(
             where_sql = "WHERE 1=1 " + extra
 
     with engine.begin() as conn:
-        rows = conn.execute(text(f"""
+        rows = conn.execute(text("""
             SELECT
                 c.phone,
                 c.takeover,

@@ -1,15 +1,16 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import SettingsPanel from "./components/SettingsPanel";
 import DashboardPanel from "./components/DashboardPanel";
 import CustomersPanel from "./components/CustomersPanel";
 import MarketingPanel from "./components/MarketingPanel";
+import AdsManagerPanel from "./components/AdsManagerPanel";
 import LabelsPanel from "./components/LabelsPanel";
 import EmojiPickerButton from "./components/EmojiPickerButton";
 import useViewport from "./hooks/useViewport";
 
 
-// --- CONFIGURACIÃ“N ---
+// --- CONFIGURACION ---
 const API_BASE = import.meta.env.VITE_API_BASE || "https://backend.perfumesverane.com";
 
 // --- ICONOS SVG (Nativos) ---
@@ -30,6 +31,47 @@ const IconPaperclip = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21.44 11.05l-8.49 8.49a5 5 0 0 1-7.07-7.07l8.49-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.5 8.5a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  </svg>
+);
+const IconMic = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 1 0 6 0V4a3 3 0 0 0-3-3z" />
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+    <line x1="12" y1="19" x2="12" y2="23" />
+    <line x1="8" y1="23" x2="16" y2="23" />
+  </svg>
+);
+const IconVideo = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="6" width="15" height="12" rx="2" />
+    <path d="M17 10l5-3v10l-5-3z" />
+  </svg>
+);
+const IconFile = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+  </svg>
+);
+const IconAudio = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M18.5 6a9 9 0 0 1 0 12" />
+  </svg>
+);
+const IconAudioMessage = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M7 10v4" />
+    <path d="M11 7v10" />
+    <path d="M15 9v6" />
+    <path d="M19 6v12" />
+    <path d="M3 9v6" />
   </svg>
 );
 
@@ -61,11 +103,11 @@ function formatDur(sec) {
 function waTicks(m) {
   if (!m || m.direction !== "out") return "";
   const st = (m.wa_status || "").toLowerCase();
-  if (st === "failed") return "âš ï¸";
-  if (st === "read") return "âœ“âœ“";
-  if (st === "delivered") return "âœ“âœ“";
-  if (st === "sent") return "âœ“";
-  return "âœ“";
+  if (st === "failed") return "ERR";
+  if (st === "read") return "READ";
+  if (st === "delivered") return "DEL";
+  if (st === "sent") return "SENT";
+  return "SENT";
 }
 
 function waTickClass(m) {
@@ -81,6 +123,64 @@ function mediaProxyUrl(mediaId) {
   return `${API_BASE}/api/media/proxy/${encodeURIComponent(mediaId)}`;
 }
 
+function normalizeWaveBars(raw, bars = 48) {
+  const nBars = Math.max(8, Math.min(Number(bars) || 48, 96));
+  const src = Array.isArray(raw) ? raw.filter((x) => Number.isFinite(Number(x))) : [];
+  if (src.length === 0) return Array.from({ length: nBars }, () => 0.14);
+  if (src.length === nBars) return src.map((v) => Math.max(0.06, Math.min(1, Number(v))));
+
+  const out = [];
+  for (let i = 0; i < nBars; i++) {
+    const start = Math.floor((i * src.length) / nBars);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * src.length) / nBars));
+    let maxVal = 0;
+    for (let j = start; j < end; j++) {
+      const v = Number(src[j] || 0);
+      if (v > maxVal) maxVal = v;
+    }
+    out.push(Math.max(0.06, Math.min(1, maxVal)));
+  }
+  return out;
+}
+
+function defaultWaveBars(seed, bars = 48) {
+  const text = String(seed || "wave");
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  const out = [];
+  for (let i = 0; i < bars; i++) {
+    h = (h * 1664525 + 1013904223) >>> 0;
+    const base = ((h % 1000) / 1000) * 0.75 + 0.12;
+    out.push(Math.max(0.08, Math.min(1, base)));
+  }
+  return out;
+}
+
+function waveformFromAudioBuffer(audioBuffer, bars = 42) {
+  try {
+    const ch = audioBuffer?.numberOfChannels ? audioBuffer.getChannelData(0) : null;
+    if (!ch || !ch.length) return defaultWaveBars("audio", bars);
+    const blockSize = Math.max(1, Math.floor(ch.length / bars));
+    const peaks = [];
+    for (let i = 0; i < bars; i++) {
+      const start = i * blockSize;
+      const end = Math.min(ch.length, start + blockSize);
+      let peak = 0;
+      for (let j = start; j < end; j++) {
+        const amp = Math.abs(ch[j] || 0);
+        if (amp > peak) peak = amp;
+      }
+      peaks.push(Math.max(0.06, Math.min(1, peak)));
+    }
+    return normalizeWaveBars(peaks, bars);
+  } catch {
+    return defaultWaveBars("audio", bars);
+  }
+}
+
 // --- Inbox helpers (nombre CRM) ---
 function displayName(c) {
   const fn = (c?.first_name || "").trim();
@@ -91,15 +191,15 @@ function displayName(c) {
 
 function initialsFromConversation(c) {
   const name = displayName(c);
-  if (!name) return "â€¢";
+  if (!name) return "*";
   if (/^\d+$/.test(name)) return name.slice(-2);
   const parts = name.split(" ").filter(Boolean);
   const a = (parts[0] || "").slice(0, 1).toUpperCase();
   const b = (parts[1] || "").slice(0, 1).toUpperCase();
-  return (a + b).trim() || "â€¢";
+  return (a + b).trim() || "*";
 }
 
-// --- 1. Barra de NavegaciÃ³n Lateral ---
+// --- 1. Barra de Navegacion Lateral ---
 function stageFromEnrollment(enrollment) {
   if (!enrollment) return "";
   const st = String(enrollment.state || "").toLowerCase();
@@ -119,13 +219,20 @@ function defaultStageName(stepOrder) {
   return `Etapa ${n || 1}`;
 }
 
+function normalizeInboxChannel(raw, fallback = "all") {
+  const token = String(raw || "").trim().toLowerCase();
+  if (["all", "whatsapp", "facebook", "instagram", "tiktok"].includes(token)) return token;
+  return fallback;
+}
+
 const MainNav = ({ activeTab, onChangeTab, isMobile }) => {
   const navItems = [
     { id: 'dashboard', icon: IconChart, label: 'Dashboard' },
     { id: 'inbox', icon: IconMessage, label: 'Inbox' },
     { id: 'crm', icon: IconUsers, label: 'Clientes' },
     { id: 'labels', icon: IconTagNav, label: 'Etiquetas' },
-    { id: 'marketing', icon: IconZap, label: 'CampaÃ±as' },
+    { id: 'marketing', icon: IconZap, label: 'Campanas CRM' },
+    { id: 'ads_manager', icon: IconChart, label: 'Ads Manager' },
     { id: 'settings', icon: IconSettings, label: 'Ajustes' },
   ];
 
@@ -156,6 +263,8 @@ const ChatList = ({
   conversations,
   selectedPhone,
   onSelect,
+  channel,
+  setChannel,
   q,
   setQ,
   filterTakeover,
@@ -166,18 +275,40 @@ const ChatList = ({
   setFilterTags,
   onClearFilters,
 }) => {
+  const channelTabs = [
+    { id: "all", label: "Todos" },
+    { id: "whatsapp", label: "WhatsApp" },
+    { id: "facebook", label: "Facebook" },
+    { id: "instagram", label: "Instagram" },
+    { id: "tiktok", label: "TikTok" },
+  ];
+  const activeChannelLabel = channelTabs.find((tab) => tab.id === normalizeInboxChannel(channel))?.label || "Todos";
+
   return (
     <div className="chat-list-panel">
       <div className="chat-list-header">
         <div className="header-row">
           <h2>Inbox</h2>
-          <span className="badge">Local</span>
+          <span className="badge">{activeChannelLabel}</span>
+        </div>
+
+        <div className="inbox-channel-tabs">
+          {channelTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`inbox-channel-tab ${channel === tab.id ? "active" : ""}`}
+              onClick={() => setChannel(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         <div className="search-box">
           <div className="search-icon"><IconSearch /></div>
           <input
-            placeholder="Buscar (telÃ©fono o preview)..."
+            placeholder="Buscar (telefono o preview)..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -193,7 +324,7 @@ const ChatList = ({
 
           <select value={filterUnread} onChange={(e) => setFilterUnread(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10 }}>
             <option value="all">Unread: Todos</option>
-            <option value="yes">Unread: SÃ­</option>
+            <option value="yes">Unread: Si</option>
             <option value="no">Unread: No</option>
           </select>
 
@@ -234,7 +365,7 @@ const ChatList = ({
                       <span className="unread-dot" title="Nuevo mensaje" />
                       {unreadCount > 0 && (
                         <span
-                          title={`No leÃ­dos: ${unreadCount}`}
+                          title={`No leidos: ${unreadCount}`}
                           style={{
                             fontSize: 11,
                             padding: "2px 8px",
@@ -457,9 +588,9 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
       });
       if (!r.ok) throw new Error("Error");
       setDirty(false);
-      setStatus("Guardado âœ…");
+      setStatus("Guardado OK");
     } catch {
-      setStatus("Error al guardar âŒ");
+      setStatus("Error al guardar");
     } finally {
       setSaving(false);
       setTimeout(() => setStatus(""), 2500);
@@ -499,7 +630,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
       <div className="crm-content custom-scrollbar">
         <div className="crm-card-info">
           <div className="crm-row">
-            <span className="crm-label">TelÃ©fono</span>
+            <span className="crm-label">Telefono</span>
             <span className="crm-value mono">{phone}</span>
           </div>
           <div className="crm-row">
@@ -533,7 +664,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
                 className="notes-area"
                 value={memory.memory_summary}
                 readOnly
-                placeholder="La IA irÃ¡ recapitulando aquÃ­ intenciÃ³n, perfumes consultados, estado de pago y contexto del cliente."
+                placeholder="La IA ira recapitulando aqui intencion, perfumes consultados, estado de pago y contexto del cliente."
               />
             </div>
 
@@ -555,7 +686,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
             <input
               value={form.last_name}
               onChange={e => handleChange('last_name', e.target.value)}
-              placeholder="Ej: PÃ©rez"
+              placeholder="Ej: Perez"
             />
           </div>
         </div>
@@ -624,7 +755,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
                     }}
                     title={label.description || label.name || token}
                   >
-                    <span>{label.icon || "ðŸ·ï¸"}</span>
+                    <span>{label.icon || "tag"}</span>
                     <span>{label.name || token}</span>
                   </button>
                 );
@@ -717,7 +848,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
             className="notes-area"
             value={form.notes}
             onChange={e => handleChange('notes', e.target.value)}
-            placeholder="Escribe notas aquÃ­..."
+            placeholder="Escribe notas aqui..."
           />
         </div>
       </div>
@@ -751,6 +882,12 @@ export default function App() {
   const [filterTakeover, setFilterTakeover] = useState("all"); // all|on|off
   const [filterUnread, setFilterUnread] = useState("all");     // all|yes|no
   const [filterTags, setFilterTags] = useState("");            // "vip,pago pendiente"
+  const [inboxChannel, setInboxChannel] = useState("all");
+
+  useEffect(() => {
+    const normalized = normalizeInboxChannel(inboxChannel);
+    if (normalized !== inboxChannel) setInboxChannel(normalized);
+  }, [inboxChannel]);
 
   // Attachments
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -767,12 +904,20 @@ export default function App() {
   const [prodError, setProdError] = useState("");
   const [sendingProductId, setSendingProductId] = useState(null);
 
-  // ðŸŽ¤ Audio recorder (WhatsApp-style)
+  // Audio recorder (WhatsApp-style)
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordWaveBars, setRecordWaveBars] = useState(Array.from({ length: 22 }, () => 0.12));
+  const [audioWaveforms, setAudioWaveforms] = useState({});
   const recorderRef = useRef(null);
   const recChunksRef = useRef([]);
   const recTimerRef = useRef(null);
+  const recordLevelsRef = useRef([]);
+  const audioWaveformsRef = useRef({});
+  const waveLoadingRef = useRef(new Set());
+  const waveAnimRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
 
   const bottomRef = useRef(null);
   const messagesRef = useRef(null);
@@ -810,30 +955,46 @@ export default function App() {
     } catch { }
   };
 
-  const buildConversationsUrl = () => {
+  const buildConversationsUrl = (forcedChannel = null) => {
     const params = new URLSearchParams();
     params.set("search", q || "");
     params.set("takeover", filterTakeover || "all");
     params.set("unread", filterUnread || "all");
+    params.set("channel", normalizeInboxChannel(forcedChannel ?? inboxChannel));
     if ((filterTags || "").trim()) params.set("tags", filterTags.trim());
     return `${API_BASE}/api/conversations?${params.toString()}`;
   };
 
   const loadConversations = async () => {
     try {
-      const url = buildConversationsUrl();
+      const activeChannel = normalizeInboxChannel(inboxChannel);
+      const url = buildConversationsUrl(activeChannel);
       const r = await fetch(url);
+      if (!r.ok) throw new Error(`conversations_http_${r.status}`);
       const data = await r.json();
-      const list = data.conversations || [];
+      let list = Array.isArray(data?.conversations) ? data.conversations : [];
 
-      // detectar nuevos mensajes (updated_at cambiÃ³)
+      // Fallback defensivo: si el filtro de canal no trae datos, probamos "all".
+      if (!list.length && activeChannel !== "all") {
+        const fallback = await fetch(buildConversationsUrl("all"));
+        if (fallback.ok) {
+          const fallbackData = await fallback.json();
+          const fallbackList = Array.isArray(fallbackData?.conversations) ? fallbackData.conversations : [];
+          if (fallbackList.length) {
+            list = fallbackList;
+            setInboxChannel("all");
+          }
+        }
+      }
+
+      // detectar nuevos mensajes (updated_at cambio)
       if (didFirstLoadRef.current) {
         const prev = prevConversationsRef.current;
         for (const c of list) {
           const prevTs = prev.get(c.phone) || 0;
           const curTs = c.updated_at ? new Date(c.updated_at).getTime() : 0;
 
-          // si subiÃ³ y NO estÃ¡s en ese chat -> ding
+          // si subio y NO estas en ese chat -> ding
           if (curTs && curTs > prevTs && c.phone !== selectedPhone) {
             await playDing();
             break;
@@ -866,7 +1027,10 @@ export default function App() {
   const loadMessages = async (phone) => {
     if (!phone) return;
     try {
-      const r = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(phone)}/messages`);
+      const activeChannel = normalizeInboxChannel(inboxChannel);
+      const r = await fetch(
+        `${API_BASE}/api/conversations/${encodeURIComponent(phone)}/messages?channel=${encodeURIComponent(activeChannel)}`
+      );
       const data = await r.json();
       setMessages(data.messages || []);
       if (userNearBottomRef.current) scrollToBottom(false);
@@ -884,7 +1048,7 @@ export default function App() {
     setSelectedPhone(phone);
     if (isMobile) setInboxMobileView("chat");
     await markRead(phone);
-    // recargar para que el badge de unread se quite en el inbox (segÃºn last_read_at)
+    // recargar para que el badge de unread se quite en el inbox (segun last_read_at)
     loadConversations();
   };
 
@@ -899,7 +1063,7 @@ export default function App() {
       setProducts(data.products || []);
     } catch (e) {
       console.error(e);
-      setProdError("No se pudo cargar el catÃ¡logo (WooCommerce).");
+      setProdError("No se pudo cargar el catalogo (WooCommerce).");
       setProducts([]);
     } finally {
       setProdLoading(false);
@@ -931,7 +1095,7 @@ export default function App() {
       const out = await r.json();
       if (out && out.sent === false) {
         console.error("WhatsApp send failed:", out);
-        alert("Se guardÃ³ en la plataforma, pero WhatsApp NO lo enviÃ³. Revisa consola/network.");
+        alert("Se guardo en la plataforma, pero WhatsApp NO lo envio. Revisa consola/network.");
         return;
       }
 
@@ -956,8 +1120,18 @@ export default function App() {
     const hasAttachment = !!attachment;
     if (!hasText && !hasAttachment) return;
 
+    const resolveOutboundChannel = () => {
+      const current = normalizeInboxChannel(inboxChannel, "all");
+      if (current !== "all") return current;
+      const conv = (conversations || []).find((c) => c.phone === selectedPhone);
+      const last = normalizeInboxChannel(conv?.last_channel, "");
+      return last || "whatsapp";
+    };
+    const outboundChannel = resolveOutboundChannel();
+
     let payload = {
       phone: selectedPhone,
+      channel: outboundChannel,
       direction: "out",
       msg_type: "text",
       text: text.trim()
@@ -966,6 +1140,7 @@ export default function App() {
     if (hasAttachment && attachment.kind === "media") {
       payload = {
         phone: selectedPhone,
+        channel: outboundChannel,
         direction: "out",
         msg_type: attachment.msg_type,
         text: "",
@@ -981,6 +1156,7 @@ export default function App() {
     if (hasAttachment && attachment.kind === "product") {
       payload = {
         phone: selectedPhone,
+        channel: outboundChannel,
         direction: "out",
         msg_type: "product",
         text: attachment.text || "",
@@ -1016,12 +1192,69 @@ export default function App() {
     return `${m}:${s}`;
   };
 
+  const stopWaveMonitor = () => {
+    try {
+      if (waveAnimRef.current) {
+        cancelAnimationFrame(waveAnimRef.current);
+        waveAnimRef.current = null;
+      }
+      analyserRef.current = null;
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close?.();
+        audioCtxRef.current = null;
+      }
+    } catch { }
+  };
+
+  const startWaveMonitor = async (stream) => {
+    try {
+      stopWaveMonitor();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.78;
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+
+      const data = new Uint8Array(analyser.fftSize);
+      let bars = Array.from({ length: 22 }, () => 0.12);
+      const tick = () => {
+        if (!analyserRef.current) return;
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        const level = Math.max(0.08, Math.min(1, rms * 3.8));
+        recordLevelsRef.current.push(level);
+        if (recordLevelsRef.current.length > 4000) {
+          recordLevelsRef.current = recordLevelsRef.current.slice(-4000);
+        }
+        bars = [...bars.slice(1), level];
+        setRecordWaveBars(bars);
+        waveAnimRef.current = requestAnimationFrame(tick);
+      };
+      waveAnimRef.current = requestAnimationFrame(tick);
+    } catch {
+      setRecordWaveBars(Array.from({ length: 22 }, () => 0.12));
+    }
+  };
+
   const startRecording = async () => {
     if (!selectedPhone) return;
     setAttachment(null);
+    setRecordWaveBars(Array.from({ length: 22 }, () => 0.12));
+    recordLevelsRef.current = [];
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      startWaveMonitor(stream);
 
       const mr = new MediaRecorder(stream);
       recorderRef.current = mr;
@@ -1033,6 +1266,7 @@ export default function App() {
 
       mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
+        stopWaveMonitor();
 
         const blob = new Blob(recChunksRef.current, { type: mr.mimeType || "audio/webm" });
         const file = new File([blob], `audio_${Date.now()}.webm`, { type: blob.type });
@@ -1058,6 +1292,12 @@ export default function App() {
             duration_sec: recordSeconds || null,
             file_size: file.size || null,
           });
+
+          const compressed = normalizeWaveBars(recordLevelsRef.current, 48);
+          setAudioWaveforms((prev) => ({
+            ...prev,
+            [data.media_id]: compressed,
+          }));
         } catch (err) {
           console.error(err);
           alert("Error subiendo el audio grabado");
@@ -1074,7 +1314,7 @@ export default function App() {
 
     } catch (e) {
       console.error(e);
-      alert("No se pudo acceder al micrÃ³fono. Revisa permisos del navegador.");
+      alert("No se pudo acceder al microfono. Revisa permisos del navegador.");
     }
   };
 
@@ -1085,6 +1325,7 @@ export default function App() {
         recTimerRef.current = null;
       }
       setIsRecording(false);
+      stopWaveMonitor();
 
       const mr = recorderRef.current;
       recorderRef.current = null;
@@ -1126,7 +1367,7 @@ export default function App() {
     const interval = setInterval(loadConversations, 2500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPhone, filterTakeover, filterUnread, filterTags, q]);
+  }, [selectedPhone, filterTakeover, filterUnread, filterTags, q, inboxChannel]);
 
   // Poll messages for selected
   useEffect(() => {
@@ -1135,14 +1376,61 @@ export default function App() {
       const interval = setInterval(() => loadMessages(selectedPhone), 2500);
       return () => clearInterval(interval);
     }
-  }, [selectedPhone]);
+  }, [selectedPhone, inboxChannel]);
+
+  useEffect(() => {
+    audioWaveformsRef.current = audioWaveforms;
+  }, [audioWaveforms]);
+
+  useEffect(() => {
+    const ids = (messages || [])
+      .filter((m) => m?.msg_type === "audio" && m?.media_id)
+      .map((m) => String(m.media_id));
+    if (!ids.length) return;
+
+    const pendingIds = ids.filter((id) => !audioWaveformsRef.current[id] && !waveLoadingRef.current.has(id));
+    if (!pendingIds.length) return;
+
+    let cancelled = false;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+
+    const run = async () => {
+      for (const mediaId of pendingIds) {
+        if (cancelled) break;
+        waveLoadingRef.current.add(mediaId);
+        try {
+          const r = await fetch(mediaProxyUrl(mediaId));
+          if (!r.ok) throw new Error(`wave fetch failed: ${r.status}`);
+          const ab = await r.arrayBuffer();
+          const decoded = await ctx.decodeAudioData(ab.slice(0));
+          const bars = waveformFromAudioBuffer(decoded, 42);
+          if (!cancelled) {
+            setAudioWaveforms((prev) => (prev[mediaId] ? prev : { ...prev, [mediaId]: bars }));
+          }
+        } catch {
+          // no-op: fallback waveform will still render
+        } finally {
+          waveLoadingRef.current.delete(mediaId);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+      try { ctx.close?.(); } catch { }
+    };
+  }, [messages, inboxChannel]);
 
   // Auto-scroll on new messages if user near bottom
   useEffect(() => {
     if (userNearBottomRef.current) scrollToBottom(true);
   }, [messages.length]);
 
-  // cada vez que se abre chat o llega update, marcamos leÃ­do
+  // cada vez que se abre chat o llega update, marcamos leido
   useEffect(() => {
     if (!selectedPhone) return;
     markRead(selectedPhone);
@@ -1150,6 +1438,16 @@ export default function App() {
     loadConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPhone]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (recTimerRef.current) clearInterval(recTimerRef.current);
+      } catch { }
+      stopWaveMonitor();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isMobile) {
@@ -1179,6 +1477,8 @@ export default function App() {
                 conversations={conversations}
                 selectedPhone={selectedPhone}
                 onSelect={selectChat}
+                channel={inboxChannel}
+                setChannel={setInboxChannel}
                 q={q}
                 setQ={setQ}
                 filterTakeover={filterTakeover}
@@ -1208,6 +1508,9 @@ export default function App() {
                         <div>
                           <h3 className="chat-title">{displayName(selectedConversation)}</h3>
                           <div className="chat-subtitle">
+                            <span style={{ marginRight: 8, opacity: 0.9, fontWeight: 600 }}>
+                              Canal: {normalizeInboxChannel(inboxChannel)}
+                            </span>
                             {selectedConversation?.updated_at ? `Ultimo: ${fmtDateTime(selectedConversation.updated_at)}` : ''}
                           </div>
                         </div>
@@ -1294,7 +1597,17 @@ export default function App() {
                     {m.msg_type === "audio" && m.media_id && (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
-                          ðŸŽµ {m.file_name || "audio"} {m.duration_sec ? `â€¢ ${formatDur(m.duration_sec)}` : ""} {m.file_size ? `â€¢ ${formatBytes(m.file_size)}` : ""}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <IconAudioMessage />
+                            <span>
+                              {m.file_name || "audio"} {m.duration_sec ? `| ${formatDur(m.duration_sec)}` : ""} {m.file_size ? `| ${formatBytes(m.file_size)}` : ""}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="msg-audio-wave">
+                          {(audioWaveforms[m.media_id] || defaultWaveBars(m.media_id, 42)).map((v, idx) => (
+                            <span key={`msg-wave-${m.id}-${idx}`} style={{ height: `${Math.max(5, Math.round(16 * Number(v || 0.2)))}px` }} />
+                          ))}
                         </div>
                         <audio controls preload="metadata" style={{ width: 280 }} src={mediaProxyUrl(m.media_id)} />
                       </div>
@@ -1303,7 +1616,10 @@ export default function App() {
                     {m.msg_type === "document" && m.media_id && (
                       <div style={{ marginTop: 10 }}>
                         <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 6 }}>
-                          ðŸ“„ {m.file_name || "documento"} {m.file_size ? `â€¢ ${formatBytes(m.file_size)}` : ""}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <IconFile />
+                            <span>{m.file_name || "documento"} {m.file_size ? `| ${formatBytes(m.file_size)}` : ""}</span>
+                          </span>
                         </div>
                         <a
                           href={mediaProxyUrl(m.media_id)}
@@ -1330,11 +1646,11 @@ export default function App() {
 
                   <div className="msg-meta">
                     <span>{m.direction === 'out' ? 'Asesor/Bot' : 'Cliente'}</span>
-                    <span>â€¢</span>
+                    <span>|</span>
                     <span>{fmtDateTime(m.created_at)}</span>
                     {m.direction === "out" && (
                       <>
-                        <span style={{ margin: "0 6px" }}>â€¢</span>
+                        <span style={{ margin: "0 6px" }}>|</span>
                         <span className={`wa-ticks ${waTickClass(m)}`} title={m.wa_error || m.wa_status || ""}>
                           {waTicks(m)}
                         </span>
@@ -1398,20 +1714,20 @@ export default function App() {
                     <IconImage /> Imagen
                   </button>
                   <button onClick={() => { setFilePickKind("video"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    ðŸŽ¥ Video
+                    <IconVideo /> Video
                   </button>
                   <button onClick={() => { setFilePickKind("document"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    ðŸ“„ Documento
+                    <IconFile /> Documento
                   </button>
                   <button onClick={() => { setFilePickKind("audio"); fileInputRef.current?.click(); setShowAttachMenu(false); }}>
-                    ðŸŽ™ï¸ Audio
+                    <IconAudio /> Audio
                   </button>
                   <button onClick={() => {
                     setShowProductModal(true);
                     setShowAttachMenu(false);
                     loadWCProducts(prodQ);
                   }}>
-                    ðŸ›ï¸ Producto (CatÃ¡logo)
+                    <IconBag /> Producto (Catalogo)
                   </button>
                 </div>
               )}
@@ -1430,9 +1746,9 @@ export default function App() {
                   className={`btn-attach ${isRecording ? "recording" : ""}`}
                   onClick={() => (isRecording ? stopRecording() : startRecording())}
                   disabled={!selectedPhone}
-                  title={isRecording ? "Detener grabaciÃ³n" : "Grabar audio"}
+                  title={isRecording ? "Detener grabacion" : "Grabar audio"}
                 >
-                  ðŸŽ¤
+                  <IconMic />
                 </button>
 
                 {isRecording ? (
@@ -1440,8 +1756,11 @@ export default function App() {
                     <span className="recording-dot" />
                     <span className="recording-time">{fmtTimer(recordSeconds)}</span>
                     <div className="recording-wave" aria-hidden="true">
-                      {Array.from({ length: 22 }).map((_, idx) => (
-                        <span key={`wave-${idx}`} style={{ animationDelay: `${(idx % 7) * 0.08}s` }} />
+                      {recordWaveBars.map((level, idx) => (
+                        <span
+                          key={`wave-${idx}`}
+                          style={{ height: `${Math.max(12, Math.round(24 * Number(level || 0.12)))}px` }}
+                        />
                       ))}
                     </div>
                     <span className="recording-label">Grabando...</span>
@@ -1487,7 +1806,7 @@ export default function App() {
                 <div className="attach-preview">
                   <div className="ap-meta">
                     <p className="ap-title">
-                      {attachment.kind === "product" ? "Producto adjunto âœ…" : "Archivo adjunto âœ…"}
+                      {attachment.kind === "product" ? "Producto adjunto OK" : "Archivo adjunto OK"}
                     </p>
                     <p className="ap-sub">
                       {attachment.kind === "product"
@@ -1496,7 +1815,7 @@ export default function App() {
                       }
                     </p>
                   </div>
-                  <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">âœ•</button>
+                  <button className="ap-remove" onClick={() => setAttachment(null)} title="Quitar">X</button>
                 </div>
               )}
             </div>
@@ -1507,7 +1826,7 @@ export default function App() {
                 <div className="modal" onClick={(e) => e.stopPropagation()}>
                   <div className="modal-header">
                     <h4>Adjuntar producto</h4>
-                    <button className="modal-close" onClick={() => setShowProductModal(false)}>âœ•</button>
+                    <button className="modal-close" onClick={() => setShowProductModal(false)}>X</button>
                   </div>
                   <div className="modal-body">
                     <div className="modal-search">
@@ -1524,7 +1843,7 @@ export default function App() {
                     </div>
 
                     <div className="product-grid">
-                      {prodLoading && <div style={{ color: "#94a3b8" }}>Cargando catÃ¡logo...</div>}
+                      {prodLoading && <div style={{ color: "#94a3b8" }}>Cargando catalogo...</div>}
                       {prodError && <div style={{ color: "#e74c3c" }}>{prodError}</div>}
 
                       {!prodLoading && !prodError && (products || []).map(p => (
@@ -1547,7 +1866,7 @@ export default function App() {
                       ))}
 
                       {!prodLoading && !prodError && (!products || products.length === 0) && (
-                        <div style={{ color: "#94a3b8" }}>No hay productos para esa bÃºsqueda.</div>
+                        <div style={{ color: "#94a3b8" }}>No hay productos para esa busqueda.</div>
                       )}
                     </div>
                   </div>
@@ -1575,17 +1894,21 @@ export default function App() {
         <LabelsPanel apiBase={API_BASE} />
       ) : activeTab === "marketing" ? (
         <MarketingPanel apiBase={API_BASE} />
+      ) : activeTab === "ads_manager" ? (
+        <AdsManagerPanel apiBase={API_BASE} />
       ) : activeTab === "settings" ? (
         <SettingsPanel apiBase={API_BASE} />
       ) : (
         <div className="placeholder-view">
-          MÃ³dulo en construcciÃ³n
+          Modulo en construccion
         </div>
       )}
       </div>
     </div>
   );
 }
+
+
 
 
 

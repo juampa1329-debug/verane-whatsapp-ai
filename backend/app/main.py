@@ -1982,7 +1982,7 @@ def get_conversations(
     takeover: str = Query("all", description="all|on|off"),
     unread: str = Query("all", description="all|yes|no"),
     tags: str = Query("", description="Filtro por tags CRM. Ej: vip,pago pendiente"),
-    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+    channel: str = Query("all", description="whatsapp|facebook|instagram|tiktok|all"),
 ):
     takeover = (takeover or "all").strip().lower()
     unread = (unread or "all").strip().lower()
@@ -2058,6 +2058,7 @@ def get_conversations(
                 m.text AS last_text,
                 m.msg_type AS last_msg_type,
                 m.direction AS last_direction,
+                m.channel AS last_channel,
                 m.created_at AS last_created_at,
 
                 EXISTS (
@@ -2080,7 +2081,7 @@ def get_conversations(
 
             FROM conversations c
             LEFT JOIN LATERAL (
-                SELECT text, msg_type, direction, created_at
+                SELECT text, msg_type, direction, channel, created_at
                 FROM messages
                 WHERE phone = c.phone
                   {channel_filter_sql_3}
@@ -2115,7 +2116,7 @@ def get_conversations(
 @app.get("/api/conversations/{phone}/messages")
 def get_messages(
     phone: str,
-    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+    channel: str = Query("all", description="whatsapp|facebook|instagram|tiktok|all"),
 ):
     channel = (channel or "whatsapp").strip().lower()
     params: Dict[str, Any] = {"phone": phone}

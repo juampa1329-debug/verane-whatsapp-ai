@@ -50,6 +50,7 @@ from app.routes.whatsapp import (
     router as whatsapp_router,
     upload_whatsapp_media,
 )
+from app.routes.social import router as social_router
 
 # ✅ Woo utils (búsqueda UI)
 from app.integrations.woocommerce import (
@@ -96,6 +97,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(whatsapp_router)
+app.include_router(social_router)
 if ai_router is not None:
     app.include_router(ai_router, prefix="/api/ai")
 
@@ -182,6 +184,7 @@ def ensure_schema():
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
                 phone TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'whatsapp',
                 direction TEXT NOT NULL,
                 msg_type TEXT NOT NULL DEFAULT 'text',
                 text TEXT NOT NULL DEFAULT '',
@@ -212,9 +215,12 @@ def ensure_schema():
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE messages ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'"""))
 
         # Índices útiles para tu UI
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_created_at ON messages (phone, created_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_channel_created_at ON messages (phone, channel, created_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_channel_created_at ON messages (channel, created_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_messages_phone_direction_created_at ON messages (phone, direction, created_at)"""))
 
         # -------------------------
@@ -453,6 +459,7 @@ def ensure_schema():
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 category TEXT NOT NULL DEFAULT 'general',
+                channel TEXT NOT NULL DEFAULT 'whatsapp',
                 body TEXT NOT NULL DEFAULT '',
                 variables_json JSONB NOT NULL DEFAULT '[]'::jsonb,
                 blocks_json JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -463,9 +470,11 @@ def ensure_schema():
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'"""))
         conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS blocks_json JSONB NOT NULL DEFAULT '[]'::jsonb"""))
         conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS params_json JSONB NOT NULL DEFAULT '{}'::jsonb"""))
         conn.execute(text("""ALTER TABLE message_templates ADD COLUMN IF NOT EXISTS render_mode TEXT NOT NULL DEFAULT 'chat'"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_message_templates_channel ON message_templates (channel)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_message_templates_status ON message_templates (status)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_message_templates_updated_at ON message_templates (updated_at DESC)"""))
 
@@ -520,6 +529,7 @@ def ensure_schema():
             CREATE TABLE IF NOT EXISTS automation_triggers (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'whatsapp',
                 event_type TEXT NOT NULL,
                 trigger_type TEXT NOT NULL DEFAULT 'message_flow',
                 flow_event TEXT NOT NULL DEFAULT 'received',
@@ -538,6 +548,7 @@ def ensure_schema():
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'"""))
         conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'message_flow'"""))
         conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS flow_event TEXT NOT NULL DEFAULT 'received'"""))
         conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE"""))
@@ -548,6 +559,7 @@ def ensure_schema():
         conn.execute(text("""ALTER TABLE automation_triggers ADD COLUMN IF NOT EXISTS only_when_no_takeover BOOLEAN NOT NULL DEFAULT TRUE"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_active ON automation_triggers (is_active)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_event_type ON automation_triggers (event_type)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_channel ON automation_triggers (channel)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_trigger_type ON automation_triggers (trigger_type)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_flow_event ON automation_triggers (flow_event)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_automation_triggers_priority ON automation_triggers (priority, id)"""))
@@ -592,6 +604,7 @@ def ensure_schema():
             CREATE TABLE IF NOT EXISTS remarketing_flows (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'whatsapp',
                 entry_rules_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 exit_rules_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 is_active BOOLEAN NOT NULL DEFAULT FALSE,
@@ -599,7 +612,9 @@ def ensure_schema():
                 updated_at TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """))
+        conn.execute(text("""ALTER TABLE remarketing_flows ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_flows_active ON remarketing_flows (is_active)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_flows_channel ON remarketing_flows (channel)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_flows_updated_at ON remarketing_flows (updated_at DESC)"""))
 
         conn.execute(text("""
@@ -1223,6 +1238,7 @@ class LabelPatch(BaseModel):
 class TemplateIn(BaseModel):
     name: str
     category: str = "general"
+    channel: str = "whatsapp"
     body: str = ""
     variables_json: List[str] = Field(default_factory=list)
     blocks_json: List[Dict[str, Any]] = Field(default_factory=list)
@@ -1234,6 +1250,7 @@ class TemplateIn(BaseModel):
 class TemplatePatch(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
+    channel: Optional[str] = None
     body: Optional[str] = None
     variables_json: Optional[List[str]] = None
     blocks_json: Optional[List[Dict[str, Any]]] = None
@@ -1274,6 +1291,7 @@ class CampaignPatch(BaseModel):
 
 class TriggerIn(BaseModel):
     name: str
+    channel: str = "whatsapp"
     event_type: str = "message_in"
     trigger_type: str = "message_flow"
     flow_event: str = "received"
@@ -1291,6 +1309,7 @@ class TriggerIn(BaseModel):
 
 class TriggerPatch(BaseModel):
     name: Optional[str] = None
+    channel: Optional[str] = None
     event_type: Optional[str] = None
     trigger_type: Optional[str] = None
     flow_event: Optional[str] = None
@@ -1308,6 +1327,7 @@ class TriggerPatch(BaseModel):
 
 class RemarketingFlowIn(BaseModel):
     name: str
+    channel: str = "whatsapp"
     entry_rules_json: Dict[str, Any] = Field(default_factory=dict)
     exit_rules_json: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = False
@@ -1315,9 +1335,15 @@ class RemarketingFlowIn(BaseModel):
 
 class RemarketingFlowPatch(BaseModel):
     name: Optional[str] = None
+    channel: Optional[str] = None
     entry_rules_json: Optional[Dict[str, Any]] = None
     exit_rules_json: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
+
+
+class ChannelCopyIn(BaseModel):
+    target_channel: str
+    name_suffix: str = ""
 
 
 class RemarketingStepIn(BaseModel):
@@ -1520,6 +1546,16 @@ def _remove_tag_key_everywhere(conn, key: str) -> int:
 def _normalize_status(raw: str, allowed: set[str], default: str) -> str:
     v = (raw or "").strip().lower()
     if v in allowed:
+        return v
+    return default
+
+
+SUPPORTED_CHANNELS = {"whatsapp", "facebook", "instagram", "tiktok"}
+
+
+def _normalize_channel(raw: str, default: str = "whatsapp") -> str:
+    v = (raw or "").strip().lower()
+    if v in SUPPORTED_CHANNELS:
         return v
     return default
 
@@ -1946,14 +1982,20 @@ def get_conversations(
     takeover: str = Query("all", description="all|on|off"),
     unread: str = Query("all", description="all|yes|no"),
     tags: str = Query("", description="Filtro por tags CRM. Ej: vip,pago pendiente"),
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
 ):
     takeover = (takeover or "all").strip().lower()
     unread = (unread or "all").strip().lower()
+    channel = (channel or "whatsapp").strip().lower()
     term = (search or "").strip().lower()
     tag_list = _parse_tags_param(tags)
 
     where = []
-    params = {}
+    params: Dict[str, Any] = {}
+    channel_filter_sql = ""
+    if channel != "all":
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
+        channel_filter_sql = "AND LOWER(COALESCE(mi.channel, 'whatsapp')) = :channel"
 
     if takeover == "on":
         where.append("c.takeover = TRUE")
@@ -1986,10 +2028,11 @@ def get_conversations(
                 SELECT 1
                 FROM messages mi
                 WHERE mi.phone = c.phone
+                  {channel_filter_sql}
                   AND mi.direction = 'in'
                   AND mi.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
             )
-        """
+        """.replace("{channel_filter_sql}", channel_filter_sql)
         extra = f" AND {unread_cond} " if unread == "yes" else f" AND NOT ({unread_cond}) "
 
         if where_sql:
@@ -2021,6 +2064,7 @@ def get_conversations(
                     SELECT 1
                     FROM messages mi
                     WHERE mi.phone = c.phone
+                      {channel_filter_sql}
                       AND mi.direction = 'in'
                       AND mi.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
                 ) AS has_unread,
@@ -2029,6 +2073,7 @@ def get_conversations(
                     SELECT COUNT(*)
                     FROM messages mi2
                     WHERE mi2.phone = c.phone
+                      {channel_filter_sql_2}
                       AND mi2.direction = 'in'
                       AND mi2.created_at > COALESCE(c.last_read_at, TIMESTAMP 'epoch')
                 ) AS unread_count
@@ -2038,6 +2083,7 @@ def get_conversations(
                 SELECT text, msg_type, direction, created_at
                 FROM messages
                 WHERE phone = c.phone
+                  {channel_filter_sql_3}
                 ORDER BY created_at DESC
                 LIMIT 1
             ) m ON TRUE
@@ -2046,7 +2092,11 @@ def get_conversations(
 
             ORDER BY c.updated_at DESC
             LIMIT 200
-        """), params).mappings().all()
+        """
+            .replace("{channel_filter_sql}", channel_filter_sql)
+            .replace("{channel_filter_sql_2}", channel_filter_sql.replace("mi.", "mi2."))
+            .replace("{channel_filter_sql_3}", channel_filter_sql.replace("mi.", ""))
+        ), params).mappings().all()
 
     out = []
     for r in rows:
@@ -2063,7 +2113,17 @@ def get_conversations(
 
 
 @app.get("/api/conversations/{phone}/messages")
-def get_messages(phone: str):
+def get_messages(
+    phone: str,
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+):
+    channel = (channel or "whatsapp").strip().lower()
+    params: Dict[str, Any] = {"phone": phone}
+    where_channel = ""
+    if channel != "all":
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
+        where_channel = "AND LOWER(COALESCE(channel, 'whatsapp')) = :channel"
+
     with engine.begin() as conn:
         rows = conn.execute(text("""
             WITH latest AS (
@@ -2075,13 +2135,14 @@ def get_messages(phone: str):
                     wa_message_id, wa_status, wa_error, wa_ts_sent, wa_ts_delivered, wa_ts_read
                 FROM messages
                 WHERE phone = :phone
+                  {where_channel}
                 ORDER BY created_at DESC
                 LIMIT 500
             )
             SELECT *
             FROM latest
             ORDER BY created_at ASC
-        """), {"phone": phone}).mappings().all()
+        """.replace("{where_channel}", where_channel)), params).mappings().all()
 
     return {"messages": [dict(r) for r in rows]}
 
@@ -3191,10 +3252,12 @@ def customer_intent_analysis(
 @app.get("/api/templates")
 def list_templates(
     status: str = Query("all", description="all|draft|approved|archived"),
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
     category: str = Query("", description="Categoria"),
     search: str = Query("", description="Buscar por nombre/body"),
 ):
     status = (status or "all").strip().lower()
+    channel = (channel or "whatsapp").strip().lower()
     category = (category or "").strip().lower()
     search = (search or "").strip().lower()
 
@@ -3204,6 +3267,10 @@ def list_templates(
     if status != "all":
         where.append("LOWER(t.status) = :status")
         params["status"] = status
+
+    if channel != "all":
+        where.append("LOWER(COALESCE(t.channel, 'whatsapp')) = :channel")
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
 
     if category:
         where.append("LOWER(t.category) = :category")
@@ -3218,7 +3285,7 @@ def list_templates(
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
             SELECT
-                t.id, t.name, t.category, t.body, t.variables_json, t.blocks_json, t.params_json, t.render_mode, t.status, t.created_at, t.updated_at
+                t.id, t.name, t.category, t.channel, t.body, t.variables_json, t.blocks_json, t.params_json, t.render_mode, t.status, t.created_at, t.updated_at
             FROM message_templates t
             {where_sql}
             ORDER BY t.updated_at DESC, t.id DESC
@@ -3270,15 +3337,16 @@ def create_template(payload: TemplateIn):
     with engine.begin() as conn:
         row = conn.execute(text("""
             INSERT INTO message_templates (
-                name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
+                name, category, channel, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
             )
             VALUES (
-                :name, :category, :body, CAST(:variables_json AS jsonb), CAST(:blocks_json AS jsonb), CAST(:params_json AS jsonb), :render_mode, :status, NOW(), NOW()
+                :name, :category, :channel, :body, CAST(:variables_json AS jsonb), CAST(:blocks_json AS jsonb), CAST(:params_json AS jsonb), :render_mode, :status, NOW(), NOW()
             )
-            RETURNING id, name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
+            RETURNING id, name, category, channel, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
         """), {
             "name": name,
             "category": (payload.category or "general").strip().lower() or "general",
+            "channel": _normalize_channel(payload.channel, default="whatsapp"),
             "body": body,
             "variables_json": json.dumps(vars_clean, ensure_ascii=False),
             "blocks_json": json.dumps(blocks_clean, ensure_ascii=False),
@@ -3309,6 +3377,10 @@ def update_template(template_id: int, payload: TemplatePatch):
     if "category" in data:
         sets.append("category = :category")
         params["category"] = (str(data.get("category") or "").strip().lower() or "general")
+
+    if "channel" in data:
+        sets.append("channel = :channel")
+        params["channel"] = _normalize_channel(str(data.get("channel") or ""), default="whatsapp")
 
     if "body" in data:
         sets.append("body = :body")
@@ -3365,7 +3437,7 @@ def update_template(template_id: int, payload: TemplatePatch):
             UPDATE message_templates
             SET {", ".join(sets)}
             WHERE id = :template_id
-            RETURNING id, name, category, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
+            RETURNING id, name, category, channel, body, variables_json, blocks_json, params_json, render_mode, status, created_at, updated_at
         """), params).mappings().first()
 
     if not row:
@@ -3427,6 +3499,92 @@ def delete_template(template_id: int):
             "trigger_scheduled_pending": int((usage or {}).get("trigger_scheduled_pending_count") or 0),
         },
     }
+
+
+@app.post("/api/templates/{template_id}/copy")
+def copy_template_to_channel(template_id: int, payload: ChannelCopyIn):
+    target_channel = _normalize_channel(payload.target_channel, default="")
+    if not target_channel:
+        raise HTTPException(status_code=400, detail="target_channel invalid")
+
+    suffix = str(payload.name_suffix or "").strip()
+
+    with engine.begin() as conn:
+        src = conn.execute(
+            text(
+                """
+                SELECT
+                    id, name, category, channel, body, variables_json, blocks_json,
+                    params_json, render_mode, status
+                FROM message_templates
+                WHERE id = :template_id
+                LIMIT 1
+                """
+            ),
+            {"template_id": int(template_id)},
+        ).mappings().first()
+        if not src:
+            raise HTTPException(status_code=404, detail="template not found")
+
+        src_channel = _normalize_channel(str(src.get("channel") or "whatsapp"), default="whatsapp")
+        if src_channel == target_channel:
+            raise HTTPException(status_code=409, detail="template already in target channel")
+
+        base_name = str(src.get("name") or "").strip() or f"Template {int(template_id)}"
+        new_name = f"{base_name} {suffix}".strip() if suffix else f"{base_name} [{target_channel}]"
+
+        new_row = conn.execute(
+            text(
+                """
+                INSERT INTO message_templates (
+                    name,
+                    category,
+                    channel,
+                    body,
+                    variables_json,
+                    blocks_json,
+                    params_json,
+                    render_mode,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :name,
+                    :category,
+                    :channel,
+                    :body,
+                    CAST(:variables_json AS jsonb),
+                    CAST(:blocks_json AS jsonb),
+                    CAST(:params_json AS jsonb),
+                    :render_mode,
+                    :status,
+                    NOW(),
+                    NOW()
+                )
+                RETURNING
+                    id, name, category, channel, body, variables_json, blocks_json,
+                    params_json, render_mode, status, created_at, updated_at
+                """
+            ),
+            {
+                "name": new_name[:180],
+                "category": str(src.get("category") or "general").strip().lower() or "general",
+                "channel": target_channel,
+                "body": str(src.get("body") or ""),
+                "variables_json": json.dumps(src.get("variables_json") or [], ensure_ascii=False),
+                "blocks_json": json.dumps(src.get("blocks_json") or [], ensure_ascii=False),
+                "params_json": json.dumps(_safe_json_dict(src.get("params_json")), ensure_ascii=False),
+                "render_mode": (str(src.get("render_mode") or "chat").strip().lower() or "chat"),
+                "status": _normalize_status(
+                    str(src.get("status") or ""),
+                    allowed={"draft", "approved", "archived"},
+                    default="draft",
+                ),
+            },
+        ).mappings().first()
+
+    return {"ok": True, "source_template_id": int(template_id), "template": dict(new_row or {})}
 
 
 @app.post("/api/templates/{template_id}/preview")
@@ -3633,13 +3791,20 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
 @app.get("/api/campaigns")
 def list_campaigns(
     status: str = Query("all", description="all|draft|scheduled|running|paused|completed|archived"),
+    channel: str = Query("all", description="whatsapp|facebook|instagram|tiktok|all"),
 ):
     status = (status or "all").strip().lower()
+    channel = (channel or "all").strip().lower()
     params: Dict[str, Any] = {}
-    where_sql = ""
+    where: List[str] = []
     if status != "all":
-        where_sql = "WHERE LOWER(c.status) = :status"
+        where.append("LOWER(c.status) = :status")
         params["status"] = status
+    if channel != "all":
+        where.append("LOWER(COALESCE(c.channel, 'whatsapp')) = :channel")
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
@@ -3670,8 +3835,30 @@ def create_campaign(payload: CampaignIn):
         allowed={"draft", "scheduled", "running", "paused", "completed", "archived"},
         default="draft",
     )
+    channel = _normalize_channel(payload.channel, default="whatsapp")
 
     with engine.begin() as conn:
+        if payload.template_id:
+            tpl = conn.execute(
+                text(
+                    """
+                    SELECT channel
+                    FROM message_templates
+                    WHERE id = :template_id
+                    LIMIT 1
+                    """
+                ),
+                {"template_id": int(payload.template_id)},
+            ).mappings().first()
+            if not tpl:
+                raise HTTPException(status_code=404, detail="template not found")
+            tpl_channel = _normalize_channel(str(tpl.get("channel") or "whatsapp"), default="whatsapp")
+            if tpl_channel != channel:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"template channel mismatch: template={tpl_channel}, campaign={channel}",
+                )
+
         row = conn.execute(text("""
             INSERT INTO campaigns (
                 name, objective, segment_id, template_id, status, scheduled_at, channel, created_at, updated_at
@@ -3688,7 +3875,7 @@ def create_campaign(payload: CampaignIn):
             "template_id": payload.template_id,
             "status": status,
             "scheduled_at": payload.scheduled_at,
-            "channel": (payload.channel or "whatsapp").strip().lower() or "whatsapp",
+            "channel": channel,
         }).mappings().first()
 
     return {"campaign": dict(row or {})}
@@ -3734,11 +3921,49 @@ def update_campaign(campaign_id: int, payload: CampaignPatch):
         sets.append("scheduled_at = :scheduled_at")
         params["scheduled_at"] = data.get("scheduled_at")
 
-    if "channel" in data:
-        sets.append("channel = :channel")
-        params["channel"] = (str(data.get("channel") or "").strip().lower() or "whatsapp")
-
     with engine.begin() as conn:
+        current = conn.execute(
+            text(
+                """
+                SELECT id, channel, template_id
+                FROM campaigns
+                WHERE id = :campaign_id
+                LIMIT 1
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        ).mappings().first()
+        if not current:
+            raise HTTPException(status_code=404, detail="campaign not found")
+
+        next_channel = _normalize_channel(str(current.get("channel") or "whatsapp"), default="whatsapp")
+        if "channel" in data:
+            next_channel = _normalize_channel(str(data.get("channel") or ""), default="whatsapp")
+            sets.append("channel = :channel")
+            params["channel"] = next_channel
+
+        template_id_for_validation = data.get("template_id", current.get("template_id"))
+        if template_id_for_validation:
+            tpl = conn.execute(
+                text(
+                    """
+                    SELECT channel
+                    FROM message_templates
+                    WHERE id = :template_id
+                    LIMIT 1
+                    """
+                ),
+                {"template_id": int(template_id_for_validation)},
+            ).mappings().first()
+            if not tpl:
+                raise HTTPException(status_code=404, detail="template not found")
+            tpl_channel = _normalize_channel(str(tpl.get("channel") or "whatsapp"), default="whatsapp")
+            if tpl_channel != next_channel:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"template channel mismatch: template={tpl_channel}, campaign={next_channel}",
+                )
+
         row = conn.execute(text(f"""
             UPDATE campaigns
             SET {", ".join(sets)}
@@ -3803,7 +4028,7 @@ def launch_campaign(campaign_id: int, max_recipients: int = Query(300, ge=1, le=
     now = datetime.utcnow()
     with engine.begin() as conn:
         campaign = conn.execute(text("""
-            SELECT id, segment_id, scheduled_at
+            SELECT id, segment_id, scheduled_at, channel
             FROM campaigns
             WHERE id = :campaign_id
             LIMIT 1
@@ -3811,6 +4036,8 @@ def launch_campaign(campaign_id: int, max_recipients: int = Query(300, ge=1, le=
 
         if not campaign:
             raise HTTPException(status_code=404, detail="campaign not found")
+        if _normalize_channel(str(campaign.get("channel") or "whatsapp"), default="whatsapp") != "whatsapp":
+            raise HTTPException(status_code=409, detail="channel_not_supported_for_launch_yet")
 
         rules: Dict[str, Any] = {}
         if campaign.get("segment_id"):
@@ -3941,18 +4168,30 @@ def triggers_catalog():
 
 
 @app.get("/api/triggers")
-def list_triggers(active: str = Query("all", description="all|yes|no")):
+def list_triggers(
+    active: str = Query("all", description="all|yes|no"),
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+):
     active = (active or "all").strip().lower()
-    where_sql = ""
+    channel = (channel or "whatsapp").strip().lower()
+    where: List[str] = []
     if active == "yes":
-        where_sql = "WHERE t.is_active = TRUE"
+        where.append("t.is_active = TRUE")
     elif active == "no":
-        where_sql = "WHERE t.is_active = FALSE"
+        where.append("t.is_active = FALSE")
+
+    params: Dict[str, Any] = {}
+    if channel != "all":
+        where.append("LOWER(COALESCE(t.channel, 'whatsapp')) = :channel")
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     with engine.begin() as conn:
         rows = conn.execute(text(f"""
             SELECT
                 t.id, t.name, t.event_type, t.trigger_type, t.flow_event,
+                t.channel,
                 t.conditions_json, t.action_json,
                 t.cooldown_minutes, t.is_active, t.last_run_at, t.created_at, t.updated_at,
                 t.assistant_enabled, t.assistant_message_type,
@@ -3970,7 +4209,7 @@ def list_triggers(active: str = Query("all", description="all|yes|no")):
             FROM automation_triggers t
             {where_sql}
             ORDER BY t.priority ASC, t.updated_at DESC, t.id DESC
-        """)).mappings().all()
+        """), params).mappings().all()
 
     return {"triggers": [dict(r) for r in rows]}
 
@@ -3989,6 +4228,7 @@ def create_trigger(payload: TriggerIn):
     with engine.begin() as conn:
         row = conn.execute(text("""
             INSERT INTO automation_triggers (
+                channel,
                 name, event_type, trigger_type, flow_event,
                 conditions_json, action_json,
                 cooldown_minutes, is_active,
@@ -3997,6 +4237,7 @@ def create_trigger(payload: TriggerIn):
                 created_at, updated_at
             )
             VALUES (
+                :channel,
                 :name, :event_type, :trigger_type, :flow_event,
                 CAST(:conditions_json AS jsonb), CAST(:action_json AS jsonb),
                 :cooldown_minutes, :is_active,
@@ -4006,10 +4247,12 @@ def create_trigger(payload: TriggerIn):
             )
             RETURNING
                 id, name, event_type, trigger_type, flow_event,
+                channel,
                 conditions_json, action_json, cooldown_minutes, is_active, last_run_at, created_at, updated_at,
                 assistant_enabled, assistant_message_type,
                 priority, block_ai, stop_on_match, only_when_no_takeover
         """), {
+            "channel": _normalize_channel(payload.channel, default="whatsapp"),
             "name": name,
             "event_type": event_type,
             "trigger_type": trigger_type,
@@ -4044,6 +4287,10 @@ def update_trigger(trigger_id: int, payload: TriggerPatch):
             raise HTTPException(status_code=400, detail="name cannot be empty")
         sets.append("name = :name")
         params["name"] = name
+
+    if "channel" in data:
+        sets.append("channel = :channel")
+        params["channel"] = _normalize_channel(str(data.get("channel") or ""), default="whatsapp")
 
     if "event_type" in data:
         event_type = _normalize_event_type(str(data.get("event_type") or ""))
@@ -4107,6 +4354,7 @@ def update_trigger(trigger_id: int, payload: TriggerPatch):
             WHERE id = :trigger_id
             RETURNING
                 id, name, event_type, trigger_type, flow_event,
+                channel,
                 conditions_json, action_json, cooldown_minutes, is_active, last_run_at, created_at, updated_at,
                 assistant_enabled, assistant_message_type,
                 priority, block_ai, stop_on_match, only_when_no_takeover
@@ -4186,24 +4434,116 @@ def delete_trigger(trigger_id: int):
     }
 
 
+@app.post("/api/triggers/{trigger_id}/copy")
+def copy_trigger_to_channel(trigger_id: int, payload: ChannelCopyIn):
+    target_channel = _normalize_channel(payload.target_channel, default="")
+    if not target_channel:
+        raise HTTPException(status_code=400, detail="target_channel invalid")
+
+    suffix = str(payload.name_suffix or "").strip()
+
+    with engine.begin() as conn:
+        src = conn.execute(
+            text(
+                """
+                SELECT
+                    id, name, channel, event_type, trigger_type, flow_event,
+                    conditions_json, action_json, cooldown_minutes, is_active,
+                    assistant_enabled, assistant_message_type,
+                    priority, block_ai, stop_on_match, only_when_no_takeover
+                FROM automation_triggers
+                WHERE id = :trigger_id
+                LIMIT 1
+                """
+            ),
+            {"trigger_id": int(trigger_id)},
+        ).mappings().first()
+        if not src:
+            raise HTTPException(status_code=404, detail="trigger not found")
+
+        src_channel = _normalize_channel(str(src.get("channel") or "whatsapp"), default="whatsapp")
+        if src_channel == target_channel:
+            raise HTTPException(status_code=409, detail="trigger already in target channel")
+
+        base_name = str(src.get("name") or "").strip() or f"Trigger {int(trigger_id)}"
+        new_name = f"{base_name} {suffix}".strip() if suffix else f"{base_name} [{target_channel}]"
+
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO automation_triggers (
+                    name, channel, event_type, trigger_type, flow_event,
+                    conditions_json, action_json,
+                    cooldown_minutes, is_active,
+                    assistant_enabled, assistant_message_type,
+                    priority, block_ai, stop_on_match, only_when_no_takeover,
+                    created_at, updated_at
+                )
+                VALUES (
+                    :name, :channel, :event_type, :trigger_type, :flow_event,
+                    CAST(:conditions_json AS jsonb), CAST(:action_json AS jsonb),
+                    :cooldown_minutes, :is_active,
+                    :assistant_enabled, :assistant_message_type,
+                    :priority, :block_ai, :stop_on_match, :only_when_no_takeover,
+                    NOW(), NOW()
+                )
+                RETURNING
+                    id, name, channel, event_type, trigger_type, flow_event,
+                    conditions_json, action_json, cooldown_minutes, is_active,
+                    assistant_enabled, assistant_message_type,
+                    priority, block_ai, stop_on_match, only_when_no_takeover, created_at, updated_at
+                """
+            ),
+            {
+                "name": new_name[:180],
+                "channel": target_channel,
+                "event_type": _normalize_event_type(str(src.get("event_type") or "message_in")),
+                "trigger_type": _normalize_trigger_type(str(src.get("trigger_type") or "message_flow")),
+                "flow_event": _normalize_flow_event(str(src.get("flow_event") or "received")),
+                "conditions_json": json.dumps(_safe_json_dict(src.get("conditions_json")), ensure_ascii=False),
+                "action_json": json.dumps(_safe_json_dict(src.get("action_json")), ensure_ascii=False),
+                "cooldown_minutes": max(0, min(int(src.get("cooldown_minutes") or 0), 10080)),
+                "is_active": bool(src.get("is_active")),
+                "assistant_enabled": bool(src.get("assistant_enabled")),
+                "assistant_message_type": _normalize_assistant_message_type(str(src.get("assistant_message_type") or "auto")),
+                "priority": max(1, min(int(src.get("priority") or 100), 9999)),
+                "block_ai": bool(src.get("block_ai")),
+                "stop_on_match": bool(src.get("stop_on_match")),
+                "only_when_no_takeover": bool(src.get("only_when_no_takeover")),
+            },
+        ).mappings().first()
+
+    return {"ok": True, "source_trigger_id": int(trigger_id), "trigger": dict(row or {})}
+
+
 # =========================================================
 # Remarketing
 # =========================================================
 
 @app.get("/api/remarketing/flows")
-def list_remarketing_flows():
+def list_remarketing_flows(
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+):
+    channel = (channel or "whatsapp").strip().lower()
+    where_sql = ""
+    params: Dict[str, Any] = {}
+    if channel != "all":
+        where_sql = "WHERE LOWER(COALESCE(f.channel, 'whatsapp')) = :channel"
+        params["channel"] = _normalize_channel(channel, default="whatsapp")
+
     with engine.begin() as conn:
         rows = conn.execute(text("""
             SELECT
-                f.id, f.name, f.entry_rules_json, f.exit_rules_json, f.is_active, f.created_at, f.updated_at,
+                f.id, f.name, f.channel, f.entry_rules_json, f.exit_rules_json, f.is_active, f.created_at, f.updated_at,
                 (
                     SELECT COUNT(*)
                     FROM remarketing_steps s
                     WHERE s.flow_id = f.id
                 ) AS steps_count
             FROM remarketing_flows f
+            {where_sql}
             ORDER BY f.updated_at DESC, f.id DESC
-        """)).mappings().all()
+        """.replace("{where_sql}", where_sql)), params).mappings().all()
 
     return {"flows": [dict(r) for r in rows]}
 
@@ -4217,14 +4557,15 @@ def create_remarketing_flow(payload: RemarketingFlowIn):
     with engine.begin() as conn:
         row = conn.execute(text("""
             INSERT INTO remarketing_flows (
-                name, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
+                name, channel, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
             )
             VALUES (
-                :name, CAST(:entry_rules_json AS jsonb), CAST(:exit_rules_json AS jsonb), :is_active, NOW(), NOW()
+                :name, :channel, CAST(:entry_rules_json AS jsonb), CAST(:exit_rules_json AS jsonb), :is_active, NOW(), NOW()
             )
-            RETURNING id, name, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
+            RETURNING id, name, channel, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
         """), {
             "name": name,
+            "channel": _normalize_channel(payload.channel, default="whatsapp"),
             "entry_rules_json": json.dumps(_safe_json_dict(payload.entry_rules_json), ensure_ascii=False),
             "exit_rules_json": json.dumps(_safe_json_dict(payload.exit_rules_json), ensure_ascii=False),
             "is_active": bool(payload.is_active),
@@ -4249,6 +4590,10 @@ def update_remarketing_flow(flow_id: int, payload: RemarketingFlowPatch):
         sets.append("name = :name")
         params["name"] = name
 
+    if "channel" in data:
+        sets.append("channel = :channel")
+        params["channel"] = _normalize_channel(str(data.get("channel") or ""), default="whatsapp")
+
     if "entry_rules_json" in data:
         sets.append("entry_rules_json = CAST(:entry_rules_json AS jsonb)")
         params["entry_rules_json"] = json.dumps(_safe_json_dict(data.get("entry_rules_json")), ensure_ascii=False)
@@ -4266,7 +4611,7 @@ def update_remarketing_flow(flow_id: int, payload: RemarketingFlowPatch):
             UPDATE remarketing_flows
             SET {", ".join(sets)}
             WHERE id = :flow_id
-            RETURNING id, name, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
+            RETURNING id, name, channel, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
         """), params).mappings().first()
 
     if not row:
@@ -4380,6 +4725,136 @@ def delete_remarketing_flow(flow_id: int):
             "enrollments": int((stats or {}).get("enrollments_count") or 0),
             "conversation_tags_cleaned": int(tags_cleaned),
         },
+    }
+
+
+@app.post("/api/remarketing/flows/{flow_id}/copy")
+def copy_remarketing_flow_to_channel(flow_id: int, payload: ChannelCopyIn):
+    target_channel = _normalize_channel(payload.target_channel, default="")
+    if not target_channel:
+        raise HTTPException(status_code=400, detail="target_channel invalid")
+
+    suffix = str(payload.name_suffix or "").strip()
+
+    with engine.begin() as conn:
+        flow = conn.execute(
+            text(
+                """
+                SELECT id, name, channel, entry_rules_json, exit_rules_json, is_active
+                FROM remarketing_flows
+                WHERE id = :flow_id
+                LIMIT 1
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().first()
+        if not flow:
+            raise HTTPException(status_code=404, detail="flow not found")
+
+        src_channel = _normalize_channel(str(flow.get("channel") or "whatsapp"), default="whatsapp")
+        if src_channel == target_channel:
+            raise HTTPException(status_code=409, detail="flow already in target channel")
+
+        steps = conn.execute(
+            text(
+                """
+                SELECT
+                    s.step_order,
+                    s.stage_name,
+                    s.wait_minutes,
+                    s.template_id,
+                    t.name AS template_name
+                FROM remarketing_steps s
+                LEFT JOIN message_templates t ON t.id = s.template_id
+                WHERE s.flow_id = :flow_id
+                ORDER BY s.step_order ASC
+                """
+            ),
+            {"flow_id": int(flow_id)},
+        ).mappings().all()
+
+        base_name = str(flow.get("name") or "").strip() or f"Flow {int(flow_id)}"
+        new_name = f"{base_name} {suffix}".strip() if suffix else f"{base_name} [{target_channel}]"
+
+        new_flow = conn.execute(
+            text(
+                """
+                INSERT INTO remarketing_flows (
+                    name, channel, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
+                )
+                VALUES (
+                    :name, :channel, CAST(:entry_rules_json AS jsonb), CAST(:exit_rules_json AS jsonb), :is_active, NOW(), NOW()
+                )
+                RETURNING id, name, channel, entry_rules_json, exit_rules_json, is_active, created_at, updated_at
+                """
+            ),
+            {
+                "name": new_name[:180],
+                "channel": target_channel,
+                "entry_rules_json": json.dumps(_safe_json_dict(flow.get("entry_rules_json")), ensure_ascii=False),
+                "exit_rules_json": json.dumps(_safe_json_dict(flow.get("exit_rules_json")), ensure_ascii=False),
+                "is_active": False,
+            },
+        ).mappings().first()
+
+        new_flow_id = int((new_flow or {}).get("id") or 0)
+        step_copies: List[Dict[str, Any]] = []
+        for step in steps:
+            template_id = step.get("template_id")
+            mapped_template_id = None
+            template_name = str(step.get("template_name") or "").strip()
+            if template_name:
+                tr = conn.execute(
+                    text(
+                        """
+                        SELECT id
+                        FROM message_templates
+                        WHERE LOWER(name) = :name
+                          AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
+                        ORDER BY updated_at DESC, id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"name": template_name.lower(), "channel": target_channel},
+                ).mappings().first()
+                if tr:
+                    mapped_template_id = int(tr.get("id") or 0)
+
+            row = conn.execute(
+                text(
+                    """
+                    INSERT INTO remarketing_steps (
+                        flow_id, step_order, stage_name, wait_minutes, template_id, created_at
+                    )
+                    VALUES (
+                        :flow_id, :step_order, :stage_name, :wait_minutes, :template_id, NOW()
+                    )
+                    RETURNING id, flow_id, step_order, stage_name, wait_minutes, template_id, created_at
+                    """
+                ),
+                {
+                    "flow_id": new_flow_id,
+                    "step_order": max(1, int(step.get("step_order") or 1)),
+                    "stage_name": str(step.get("stage_name") or "").strip(),
+                    "wait_minutes": max(0, int(step.get("wait_minutes") or 0)),
+                    "template_id": mapped_template_id,
+                },
+            ).mappings().first()
+
+            step_copies.append(
+                {
+                    **dict(row or {}),
+                    "template_source_id": (int(template_id) if template_id is not None else None),
+                    "template_source_name": template_name,
+                    "template_mapped_id": mapped_template_id,
+                }
+            )
+
+    return {
+        "ok": True,
+        "source_flow_id": int(flow_id),
+        "flow": dict(new_flow or {}),
+        "steps": step_copies,
     }
 
 
@@ -4572,7 +5047,7 @@ async def dispatch_remarketing_flow_now(flow_id: int, payload: RemarketingDispat
         flow = conn.execute(
             text(
                 """
-                SELECT id, name, is_active
+                SELECT id, name, channel, is_active
                 FROM remarketing_flows
                 WHERE id = :flow_id
                 LIMIT 1
@@ -4584,6 +5059,8 @@ async def dispatch_remarketing_flow_now(flow_id: int, payload: RemarketingDispat
             raise HTTPException(status_code=404, detail="flow not found")
         if not bool(flow.get("is_active")):
             raise HTTPException(status_code=409, detail="flow is inactive")
+        if _normalize_channel(str(flow.get("channel") or "whatsapp"), default="whatsapp") != "whatsapp":
+            raise HTTPException(status_code=409, detail="channel_not_supported_for_dispatch_yet")
 
         if include_hold:
             rs = conn.execute(
@@ -4648,6 +5125,7 @@ async def dispatch_remarketing_step_now(step_id: int, payload: RemarketingDispat
                     s.step_order,
                     s.stage_name,
                     f.name AS flow_name,
+                    f.channel AS flow_channel,
                     f.is_active
                 FROM remarketing_steps s
                 JOIN remarketing_flows f ON f.id = s.flow_id
@@ -4661,6 +5139,8 @@ async def dispatch_remarketing_step_now(step_id: int, payload: RemarketingDispat
             raise HTTPException(status_code=404, detail="step not found")
         if not bool(step.get("is_active")):
             raise HTTPException(status_code=409, detail="flow is inactive")
+        if _normalize_channel(str(step.get("flow_channel") or "whatsapp"), default="whatsapp") != "whatsapp":
+            raise HTTPException(status_code=409, detail="channel_not_supported_for_dispatch_yet")
 
         flow_id = int(step.get("flow_id") or 0)
         target_step = int(step.get("step_order") or 0)
@@ -4786,8 +5266,13 @@ def list_remarketing_enrollments(
 
 
 @app.get("/api/remarketing/stages/catalog")
-def remarketing_stages_catalog():
-    return {"flows": list_stage_catalog()}
+def remarketing_stages_catalog(
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
+):
+    ch = (channel or "whatsapp").strip().lower()
+    if ch == "all":
+        return {"flows": list_stage_catalog(channel=None)}
+    return {"flows": list_stage_catalog(channel=_normalize_channel(ch, default="whatsapp"))}
 
 
 @app.get("/api/remarketing/contacts/{phone}")
@@ -4836,9 +5321,12 @@ def remarketing_engine_status():
 async def remarketing_engine_tick_now(
     limit: int = Query(300, ge=1, le=5000),
     flow_id: int = Query(0, ge=0),
+    channel: str = Query("whatsapp", description="whatsapp|facebook|instagram|tiktok|all"),
 ):
     fid = int(flow_id or 0)
-    return await process_due_remarketing(limit=limit, flow_id=(fid if fid > 0 else None))
+    ch = (channel or "whatsapp").strip().lower()
+    normalized_channel = None if ch == "all" else _normalize_channel(ch, default="whatsapp")
+    return await process_due_remarketing(limit=limit, flow_id=(fid if fid > 0 else None), channel=normalized_channel)
 
 
 # =========================================================

@@ -14,12 +14,13 @@ from app.ai.context_builder import build_ai_meta
 from app.ai.engine import process_message
 from app.crm.crm_writer import ensure_conversation_row, update_crm_fields
 from app.db import engine
+from app.integrations.social_channels import send_channel_media, send_channel_text
 from app.pipeline.reply_sender import (
     _get_voice_settings,
     send_ai_reply_as_voice,
     send_ai_reply_in_chunks,
 )
-from app.routes.whatsapp import send_whatsapp_media_id, send_whatsapp_text
+from app.routes.whatsapp import send_whatsapp_text
 
 
 def get_trigger_catalog() -> Dict[str, Any]:
@@ -257,39 +258,70 @@ def _recipient_variables(phone: str) -> Dict[str, Any]:
     }
 
 
-def _load_template_row(template_id: int = 0, template_name: str = "") -> Dict[str, Any]:
+def _load_template_row(template_id: int = 0, template_name: str = "", channel: str = "whatsapp") -> Dict[str, Any]:
     template_id = int(template_id or 0)
     tname = str(template_name or "").strip()
+    ch = str(channel or "whatsapp").strip().lower()
+    use_channel_filter = ch not in ("", "all")
 
     with engine.begin() as conn:
         if template_id > 0:
-            row = conn.execute(
-                text(
-                    """
-                    SELECT id, name, body, blocks_json, params_json, variables_json, status
-                    FROM message_templates
-                    WHERE id = :template_id
-                    LIMIT 1
-                    """
-                ),
-                {"template_id": template_id},
-            ).mappings().first()
+            if use_channel_filter:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT id, name, body, blocks_json, params_json, variables_json, status, channel
+                        FROM message_templates
+                        WHERE id = :template_id
+                          AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
+                        LIMIT 1
+                        """
+                    ),
+                    {"template_id": template_id, "channel": ch},
+                ).mappings().first()
+            else:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT id, name, body, blocks_json, params_json, variables_json, status, channel
+                        FROM message_templates
+                        WHERE id = :template_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"template_id": template_id},
+                ).mappings().first()
             if row:
                 return dict(row)
 
         if tname:
-            row = conn.execute(
-                text(
-                    """
-                    SELECT id, name, body, blocks_json, params_json, variables_json, status
-                    FROM message_templates
-                    WHERE LOWER(name) = :name
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                ),
-                {"name": tname.lower()},
-            ).mappings().first()
+            if use_channel_filter:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT id, name, body, blocks_json, params_json, variables_json, status, channel
+                        FROM message_templates
+                        WHERE LOWER(name) = :name
+                          AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"name": tname.lower(), "channel": ch},
+                ).mappings().first()
+            else:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT id, name, body, blocks_json, params_json, variables_json, status, channel
+                        FROM message_templates
+                        WHERE LOWER(name) = :name
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"name": tname.lower()},
+                ).mappings().first()
             if row:
                 return dict(row)
 
@@ -335,6 +367,7 @@ def _render_template_blocks(template_row: Dict[str, Any], variables: Dict[str, A
 def _save_out_message(
     *,
     phone: str,
+    channel: str,
     msg_type: str,
     text_msg: str,
     media_id: str,
@@ -351,6 +384,7 @@ def _save_out_message(
                 """
                 INSERT INTO messages (
                     phone,
+                    channel,
                     direction,
                     msg_type,
                     text,
@@ -365,6 +399,7 @@ def _save_out_message(
                 )
                 VALUES (
                     :phone,
+                    :channel,
                     'out',
                     :msg_type,
                     :text,
@@ -382,6 +417,7 @@ def _save_out_message(
             ),
             {
                 "phone": phone,
+                "channel": (channel or "whatsapp").strip().lower() or "whatsapp",
                 "msg_type": str(msg_type or "text").strip().lower(),
                 "text": text_msg,
                 "media_id": media_id or None,
@@ -416,6 +452,7 @@ def _save_out_message(
 async def _send_template_blocks(
     *,
     phone: str,
+    channel: str,
     blocks: List[Dict[str, Any]],
     ai_meta_base: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -433,26 +470,41 @@ async def _send_template_blocks(
         block_text = ""
         media_id = ""
         media_caption = ""
+        media_url = ""
 
         try:
             if kind in ("image", "video", "audio"):
                 media_id = str(block.get("media_id") or "").strip()
+                media_url = str(
+                    block.get(f"{kind}_url")
+                    or block.get("media_url")
+                    or block.get("url")
+                    or ""
+                ).strip()
                 media_caption = str(block.get("caption") or "").strip() if kind in ("image", "video") else ""
-                if not media_id:
-                    raise RuntimeError(f"{kind} block without media_id")
-                wa = await send_whatsapp_media_id(phone, kind, media_id, media_caption)
+                if not media_id and not media_url:
+                    raise RuntimeError(f"{kind} block without media_id/media_url")
+                wa = await send_channel_media(
+                    channel=channel,
+                    to=phone,
+                    media_type=kind,
+                    media_id=media_id,
+                    media_url=media_url,
+                    caption=media_caption,
+                )
                 block_text = media_caption or f"[{kind}]"
             else:
                 block_text = str(block.get("text") or "").strip()
                 if not block_text:
                     raise RuntimeError("text block empty")
-                wa = await send_whatsapp_text(phone, block_text)
+                wa = await send_channel_text(channel, phone, block_text)
         except Exception as e:
             err = str(e)[:900]
             failed_messages += 1
             errors.append(err)
             message_id = _save_out_message(
                 phone=phone,
+                channel=channel,
                 msg_type=msg_type,
                 text_msg=block_text,
                 media_id=media_id,
@@ -467,11 +519,16 @@ async def _send_template_blocks(
             continue
 
         ok = bool((wa or {}).get("sent"))
-        wa_id = str((wa or {}).get("wa_message_id") or "").strip()
+        wa_id = str(
+            (wa or {}).get("wa_message_id")
+            or (wa or {}).get("provider_message_id")
+            or ""
+        ).strip()
         wa_err = str((wa or {}).get("reason") or (wa or {}).get("whatsapp_body") or "")[:900]
 
         message_id = _save_out_message(
             phone=phone,
+            channel=channel,
             msg_type=msg_type,
             text_msg=block_text,
             media_id=media_id,
@@ -513,6 +570,7 @@ async def send_template_to_phone(
     template_name: str = "",
     trigger_id: int = 0,
     source: str = "trigger",
+    channel: str = "whatsapp",
     overrides: Dict[str, Any] | None = None,
     extra_meta: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
@@ -520,7 +578,7 @@ async def send_template_to_phone(
     if not p:
         return {"ok": False, "error": "phone_required", "sent_messages": 0}
 
-    tpl = _load_template_row(template_id=template_id, template_name=template_name)
+    tpl = _load_template_row(template_id=template_id, template_name=template_name, channel=channel)
     if not tpl:
         return {"ok": False, "error": "template_not_found", "sent_messages": 0}
 
@@ -549,10 +607,16 @@ async def send_template_to_phone(
         "trigger_id": int(trigger_id or 0) if int(trigger_id or 0) > 0 else None,
         "template_id": int(tpl.get("id") or 0),
         "template_name": str(tpl.get("name") or "").strip(),
+        "channel": str(tpl.get("channel") or channel or "whatsapp").strip().lower(),
     }
     ai_meta_base.update(_safe_json_dict(extra_meta))
 
-    send_result = await _send_template_blocks(phone=p, blocks=rendered_blocks, ai_meta_base=ai_meta_base)
+    send_result = await _send_template_blocks(
+        phone=p,
+        channel=channel,
+        blocks=rendered_blocks,
+        ai_meta_base=ai_meta_base,
+    )
     ok = int(send_result.get("sent_messages") or 0) > 0 and int(send_result.get("failed_messages") or 0) == 0
 
     return {
@@ -586,11 +650,11 @@ def _current_conversation(phone: str) -> Dict[str, Any]:
     return dict(row or {})
 
 
-def _resolve_template_id(template_id: int, template_name: str) -> int:
+def _resolve_template_id(template_id: int, template_name: str, channel: str = "whatsapp") -> int:
     tid = int(template_id or 0)
     if tid > 0:
         return tid
-    row = _load_template_row(template_id=0, template_name=template_name)
+    row = _load_template_row(template_id=0, template_name=template_name, channel=channel)
     try:
         return int(row.get("id") or 0)
     except Exception:
@@ -624,8 +688,9 @@ def _condition_check_words(user_text: str, cond: Dict[str, Any]) -> Tuple[bool, 
     return ok, {"hits": hits, "mode": mode, "words": words}
 
 
-def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
-    template_id = _resolve_template_id(int(cond.get("template_id") or 0), str(cond.get("template_name") or ""))
+def _condition_template_sent_status(phone: str, cond: Dict[str, Any], channel: str = "whatsapp") -> Tuple[bool, Dict[str, Any]]:
+    ch = str(channel or "whatsapp").strip().lower()
+    template_id = _resolve_template_id(int(cond.get("template_id") or 0), str(cond.get("template_name") or ""), channel=ch)
     template_name = str(cond.get("template_name") or "").strip().lower()
 
     state = str(cond.get("state") or cond.get("sent_state") or "not_sent").strip().lower()
@@ -652,6 +717,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                     SELECT 1
                     FROM messages
                     WHERE phone = :phone
+                      AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
                       AND direction = 'out'
                       AND created_at >= :since
                       AND (
@@ -663,6 +729,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                 ),
                 {
                     "phone": phone,
+                    "channel": ch,
                     "since": since,
                     "template_id_txt": str(template_id),
                     "template_name": template_name,
@@ -677,6 +744,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                     FROM campaign_recipients cr
                     JOIN campaigns c ON c.id = cr.campaign_id
                     WHERE cr.phone = :phone
+                      AND LOWER(COALESCE(c.channel, 'whatsapp')) = :channel
                       AND c.template_id = :template_id
                       AND LOWER(COALESCE(cr.status, '')) IN ('sent', 'delivered', 'read', 'replied')
                       AND COALESCE(cr.sent_at, cr.created_at) >= :since
@@ -685,6 +753,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                 ),
                 {
                     "phone": phone,
+                    "channel": ch,
                     "template_id": template_id,
                     "since": since,
                 },
@@ -697,6 +766,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                     SELECT 1
                     FROM messages
                     WHERE phone = :phone
+                      AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
                       AND direction = 'out'
                       AND created_at >= :since
                       AND LOWER(COALESCE(ai_meta->>'template_name', '')) = :template_name
@@ -705,6 +775,7 @@ def _condition_template_sent_status(phone: str, cond: Dict[str, Any]) -> Tuple[b
                 ),
                 {
                     "phone": phone,
+                    "channel": ch,
                     "since": since,
                     "template_name": template_name,
                 },
@@ -903,7 +974,13 @@ def _normalize_actions_payload(action_json: Dict[str, Any]) -> List[Dict[str, An
     return [a for a in actions if isinstance(a, dict)]
 
 
-def _evaluate_conditions(phone: str, user_text: str, conditions_json: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]]]:
+def _evaluate_conditions(
+    phone: str,
+    user_text: str,
+    conditions_json: Dict[str, Any],
+    *,
+    channel: str = "whatsapp",
+) -> Tuple[bool, List[Dict[str, Any]]]:
     mode, conditions = _normalize_conditions_payload(conditions_json)
     if not conditions:
         return True, []
@@ -918,7 +995,7 @@ def _evaluate_conditions(phone: str, user_text: str, conditions_json: Dict[str, 
         if ctype == "check_words":
             ok, info = _condition_check_words(user_text, cond)
         elif ctype == "template_sent_status":
-            ok, info = _condition_template_sent_status(phone, cond)
+            ok, info = _condition_template_sent_status(phone, cond, channel=channel)
         elif ctype == "current_tag":
             ok, info = _condition_current_tag(phone, cond)
         elif ctype == "last_message_sent":
@@ -1314,8 +1391,20 @@ async def _action_extract_conversation_info(phone: str, action: Dict[str, Any]) 
     return {"ok": True, "summary_len": len(summary), "messages_considered": len(rows)}
 
 
-async def _action_schedule_message(trigger_id: int, phone: str, action: Dict[str, Any], user_text: str) -> Dict[str, Any]:
-    template_id = _resolve_template_id(int(action.get("template_id") or 0), str(action.get("template_name") or ""))
+async def _action_schedule_message(
+    trigger_id: int,
+    phone: str,
+    action: Dict[str, Any],
+    user_text: str,
+    *,
+    channel: str = "whatsapp",
+) -> Dict[str, Any]:
+    ch = str(channel or "whatsapp").strip().lower()
+    template_id = _resolve_template_id(
+        int(action.get("template_id") or 0),
+        str(action.get("template_name") or ""),
+        channel=ch,
+    )
     if template_id <= 0:
         return {"ok": False, "error": "template_required"}
 
@@ -1331,6 +1420,7 @@ async def _action_schedule_message(trigger_id: int, phone: str, action: Dict[str
     payload = {
         "source": "trigger",
         "trigger_id": int(trigger_id or 0),
+        "channel": ch,
         "template_id": int(template_id),
         "template_name": str(action.get("template_name") or "").strip(),
         "overrides": _safe_json_dict(action.get("overrides")),
@@ -1451,6 +1541,7 @@ async def _execute_actions(
 ) -> Dict[str, Any]:
     trigger_id = int(trigger_row.get("id") or 0)
     trigger_name = str(trigger_row.get("name") or "").strip()
+    trigger_channel = str(trigger_row.get("channel") or "whatsapp").strip().lower() or "whatsapp"
 
     actions = _normalize_actions_payload(_safe_json_dict(trigger_row.get("action_json")))
     action_results: List[Dict[str, Any]] = []
@@ -1469,6 +1560,7 @@ async def _execute_actions(
                     template_name=str(action.get("template_name") or ""),
                     trigger_id=trigger_id,
                     source="trigger",
+                    channel=trigger_channel,
                     overrides=_safe_json_dict(action.get("overrides")),
                     extra_meta={"action_index": idx, "action_type": atype},
                 )
@@ -1490,7 +1582,13 @@ async def _execute_actions(
                 result = await _action_extract_conversation_info(phone, action)
 
             elif atype == "schedule_message":
-                result = await _action_schedule_message(trigger_id, phone, action, user_text)
+                result = await _action_schedule_message(
+                    trigger_id,
+                    phone,
+                    action,
+                    user_text,
+                    channel=trigger_channel,
+                )
 
             else:
                 result = {"ok": False, "error": "unknown_action_type"}
@@ -1536,10 +1634,12 @@ async def execute_incoming_triggers(
     phone: str,
     user_text: str,
     msg_type: str,
+    channel: str = "whatsapp",
 ) -> Dict[str, Any]:
     p = str(phone or "").strip()
     if not p:
         return {"ok": False, "matched": False, "block_ai": False, "reason": "phone_required"}
+    ch = str(channel or "whatsapp").strip().lower() or "whatsapp"
 
     ensure_conversation_row(p)
 
@@ -1562,6 +1662,7 @@ async def execute_incoming_triggers(
                 SELECT
                     id,
                     name,
+                    channel,
                     event_type,
                     trigger_type,
                     flow_event,
@@ -1576,9 +1677,11 @@ async def execute_incoming_triggers(
                     only_when_no_takeover
                 FROM automation_triggers
                 WHERE is_active = TRUE
+                  AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
                 ORDER BY priority ASC, id ASC
                 """
-            )
+            ),
+            {"channel": ch},
         ).mappings().all()
 
     takeover_on = bool((conv or {}).get("takeover") is True)
@@ -1614,6 +1717,7 @@ async def execute_incoming_triggers(
             p,
             user_text,
             _safe_json_dict(trigger.get("conditions_json")),
+            channel=ch,
         )
 
         if not conditions_ok:
@@ -1714,10 +1818,12 @@ async def execute_outgoing_triggers(
     phone: str,
     user_text: str,
     msg_type: str,
+    channel: str = "whatsapp",
 ) -> Dict[str, Any]:
     p = str(phone or "").strip()
     if not p:
         return {"ok": False, "matched": False, "sent": False, "reason": "phone_required"}
+    ch = str(channel or "whatsapp").strip().lower() or "whatsapp"
 
     ensure_conversation_row(p)
 
@@ -1728,6 +1834,7 @@ async def execute_outgoing_triggers(
                 SELECT
                     id,
                     name,
+                    channel,
                     event_type,
                     trigger_type,
                     flow_event,
@@ -1742,9 +1849,11 @@ async def execute_outgoing_triggers(
                     only_when_no_takeover
                 FROM automation_triggers
                 WHERE is_active = TRUE
+                  AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
                 ORDER BY priority ASC, id ASC
                 """
-            )
+            ),
+            {"channel": ch},
         ).mappings().all()
 
     matched = False
@@ -1773,6 +1882,7 @@ async def execute_outgoing_triggers(
             p,
             user_text,
             _safe_json_dict(trigger.get("conditions_json")),
+            channel=ch,
         )
         if not conditions_ok:
             details.append(
@@ -1869,17 +1979,19 @@ def _claim_due_scheduled_trigger_messages(now: datetime, limit: int) -> List[Dic
                 """
                 WITH due AS (
                     SELECT
-                        id,
-                        trigger_id,
-                        phone,
-                        template_id,
-                        payload_json,
-                        run_at,
-                        attempts
-                    FROM trigger_scheduled_messages
+                        sm.id,
+                        sm.trigger_id,
+                        sm.phone,
+                        sm.template_id,
+                        sm.payload_json,
+                        sm.run_at,
+                        sm.attempts,
+                        COALESCE(t.channel, 'whatsapp') AS channel
+                    FROM trigger_scheduled_messages sm
+                    LEFT JOIN automation_triggers t ON t.id = sm.trigger_id
                     WHERE LOWER(status) = 'pending'
-                      AND run_at <= :now
-                    ORDER BY run_at ASC, id ASC
+                      AND sm.run_at <= :now
+                    ORDER BY sm.run_at ASC, sm.id ASC
                     LIMIT :limit
                     FOR UPDATE SKIP LOCKED
                 )
@@ -1895,7 +2007,8 @@ def _claim_due_scheduled_trigger_messages(now: datetime, limit: int) -> List[Dic
                     due.template_id,
                     due.payload_json,
                     due.run_at,
-                    due.attempts
+                    due.attempts,
+                    due.channel
                 """
             ),
             {"now": now, "limit": int(limit)},
@@ -1947,6 +2060,7 @@ async def process_due_scheduled_trigger_messages(*, limit: int = 50) -> Dict[str
         phone = str(row.get("phone") or "").strip()
         template_id = int(row.get("template_id") or 0)
         trigger_id = int(row.get("trigger_id") or 0)
+        channel = str(row.get("channel") or "whatsapp").strip().lower() or "whatsapp"
         payload = _safe_json_dict(row.get("payload_json"))
 
         if scheduled_id <= 0 or not phone or template_id <= 0:
@@ -1961,6 +2075,7 @@ async def process_due_scheduled_trigger_messages(*, limit: int = 50) -> Dict[str
                 template_id=template_id,
                 trigger_id=trigger_id,
                 source="trigger_scheduled",
+                channel=channel,
                 overrides=_safe_json_dict(payload.get("overrides")),
                 extra_meta={"scheduled_message_id": scheduled_id},
             )

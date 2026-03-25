@@ -60,6 +60,7 @@ class IngestMessage(BaseModel):
     model_config = {"extra": "allow"}
 
     phone: str
+    channel: str = "whatsapp"
     direction: str
     msg_type: str = "text"
     text: str = ""
@@ -495,14 +496,19 @@ def _build_wc_router_text(user_text: str, conv_state: dict) -> str:
 async def run_ingest(msg: IngestMessage) -> dict:
     # Import local para evitar circular imports con routes.whatsapp
     from app.routes.whatsapp import (
-        send_whatsapp_text,
-        send_whatsapp_media_id,
         download_whatsapp_media_bytes,
+    )
+    from app.integrations.social_channels import (
+        send_channel_media,
+        send_channel_text,
     )
 
     trace_id = _new_trace_id()
 
     direction = msg.direction if msg.direction in ("in", "out") else "in"
+    channel = (msg.channel or "whatsapp").strip().lower()
+    if channel not in ("whatsapp", "facebook", "instagram", "tiktok"):
+        channel = "whatsapp"
     msg_type = (msg.msg_type or "text").strip().lower()
     user_text_original = (msg.text or "").strip()
     mime_in = (msg.mime_type or "").strip()
@@ -512,6 +518,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
         trace_id,
         "ENTER_INGEST",
         phone=msg.phone,
+        channel=channel,
         direction=direction,
         msg_type=msg_type,
         text_len=len(user_text_original),
@@ -529,6 +536,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 recent = conn.execute(text("""
                     SELECT id FROM messages
                     WHERE phone = :phone
+                      AND channel = :channel
                       AND direction = 'in'
                       AND msg_type = :msg_type
                       AND text = :text
@@ -539,6 +547,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                       )
                 """), {
                     "phone": msg.phone,
+                    "channel": channel,
                     "msg_type": msg_type,
                     "text": user_text_original,
                     "media_id": media_id_in
@@ -562,6 +571,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
             local_id = save_message(
                 conn,
                 phone=msg.phone,
+                channel=channel,
                 direction=direction,
                 msg_type=msg_type,
                 text_msg=msg.text or "",
@@ -596,10 +606,10 @@ async def run_ingest(msg: IngestMessage) -> dict:
             with engine.begin() as conn:
                 latest_in_id = conn.execute(text("""
                     SELECT id FROM messages
-                    WHERE phone=:phone AND direction='in'
+                    WHERE phone=:phone AND channel=:channel AND direction='in'
                     ORDER BY created_at DESC
                     LIMIT 1
-                """), {"phone": msg.phone}).scalar()
+                """), {"phone": msg.phone, "channel": channel}).scalar()
 
             if int(latest_in_id or 0) != int(local_id):
                 _log(trace_id, "BATCH_SUPERSEDED", local_id=local_id, latest_in_id=int(latest_in_id or 0))
@@ -608,18 +618,18 @@ async def run_ingest(msg: IngestMessage) -> dict:
             with engine.begin() as conn:
                 last_out_id = conn.execute(text("""
                     SELECT id FROM messages
-                    WHERE phone=:phone AND direction='out'
+                    WHERE phone=:phone AND channel=:channel AND direction='out'
                     ORDER BY created_at DESC
                     LIMIT 1
-                """), {"phone": msg.phone}).scalar()
+                """), {"phone": msg.phone, "channel": channel}).scalar()
 
-                params = {"phone": msg.phone}
+                params = {"phone": msg.phone, "channel": channel}
                 if last_out_id:
                     params["last_out_id"] = int(last_out_id)
                     rows = conn.execute(text("""
                         SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
                         FROM messages
-                        WHERE phone=:phone AND direction='in' AND id > :last_out_id
+                        WHERE phone=:phone AND channel=:channel AND direction='in' AND id > :last_out_id
                         ORDER BY created_at ASC
                         LIMIT 25
                     """), params).mappings().all()
@@ -627,7 +637,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     rows = conn.execute(text("""
                         SELECT id, msg_type, text, extracted_text, media_id, mime_type, created_at
                         FROM messages
-                        WHERE phone=:phone AND direction='in'
+                        WHERE phone=:phone AND channel=:channel AND direction='in'
                         ORDER BY created_at DESC
                         LIMIT 25
                     """), params).mappings().all()
@@ -660,10 +670,10 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 with engine.begin() as conn:
                     latest_in_id_2 = conn.execute(text("""
                         SELECT id FROM messages
-                        WHERE phone=:phone AND direction='in'
+                        WHERE phone=:phone AND channel=:channel AND direction='in'
                         ORDER BY created_at DESC
                         LIMIT 1
-                    """), {"phone": msg.phone}).scalar()
+                    """), {"phone": msg.phone, "channel": channel}).scalar()
                 if int(latest_in_id_2 or 0) != int(local_id):
                     _log(
                         trace_id,
@@ -682,20 +692,24 @@ async def run_ingest(msg: IngestMessage) -> dict:
             wa_resp = None
 
             if msg_type in ("image", "video", "audio", "document"):
-                if not msg.media_id:
+                media_id_value = (msg.media_id or "").strip()
+                media_url_value = (msg.media_url or "").strip()
+                if not media_id_value and not media_url_value:
                     with engine.begin() as conn:
-                        set_wa_send_result(conn, local_id, None, False, "media_id is required")
-                    return {"saved": True, "sent": False, "reason": "media_id is required for media messages"}
+                        set_wa_send_result(conn, local_id, None, False, "media_id/media_url is required")
+                    return {"saved": True, "sent": False, "reason": "media_id/media_url is required for media messages"}
 
-                wa_resp = await send_whatsapp_media_id(
-                    to_phone=msg.phone,
+                wa_resp = await send_channel_media(
+                    channel=channel,
+                    to=msg.phone,
                     media_type=msg_type,
-                    media_id=msg.media_id,
-                    caption=msg.media_caption or msg.text or ""
+                    media_id=media_id_value,
+                    media_url=media_url_value,
+                    caption=msg.media_caption or msg.text or "",
                 )
 
             else:
-                wa_resp = await send_whatsapp_text(msg.phone, msg.text or "")
+                wa_resp = await send_channel_text(channel, msg.phone, msg.text or "")
 
             wa_message_id = None
             if isinstance(wa_resp, dict) and wa_resp.get("sent") is True:
@@ -708,18 +722,19 @@ async def run_ingest(msg: IngestMessage) -> dict:
                     err = (wa_resp.get("whatsapp_body") if isinstance(wa_resp, dict) else "") \
                           or (wa_resp.get("reason") if isinstance(wa_resp, dict) else "") \
                           or (wa_resp.get("error") if isinstance(wa_resp, dict) else "") \
-                          or "WhatsApp send failed"
+                          or "channel send failed"
                     set_wa_send_result(conn, local_id, None, False, str(err)[:900])
 
             out_trigger_result = await execute_outgoing_triggers(
                 phone=msg.phone,
                 user_text=str(msg.text or msg.media_caption or "").strip(),
                 msg_type=msg_type,
+                channel=channel,
             )
             if out_trigger_result.get("matched"):
                 _log(trace_id, "TRIGGER_OUT_MATCHED", sent=bool(out_trigger_result.get("sent")))
 
-            _log(trace_id, "WHATSAPP_OUT_SENT", ok=bool(isinstance(wa_resp, dict) and wa_resp.get("sent")))
+            _log(trace_id, "OUT_SENT", ok=bool(isinstance(wa_resp, dict) and wa_resp.get("sent")), channel=channel)
             return {
                 "saved": True,
                 "sent": bool(isinstance(wa_resp, dict) and wa_resp.get("sent")),
@@ -730,11 +745,14 @@ async def run_ingest(msg: IngestMessage) -> dict:
         except Exception as e:
             with engine.begin() as conn:
                 set_wa_send_result(conn, local_id, None, False, str(e)[:900])
-            _log(trace_id, "WHATSAPP_OUT_EXCEPTION", error=str(e)[:900])
-            return {"saved": True, "sent": False, "stage": "whatsapp", "error": str(e)}
+            _log(trace_id, "OUT_EXCEPTION", error=str(e)[:900], channel=channel)
+            return {"saved": True, "sent": False, "stage": channel, "error": str(e)}
 
     # ✅ 4) Si es IN: decidir si IA corre (takeover off + ai enabled)
     if direction == "in":
+        if channel != "whatsapp":
+            _log(trace_id, "IN_CHANNEL_NOT_SUPPORTED_FOR_AI", channel=channel)
+            return {"saved": True, "sent": False, "ai": False, "reason": "channel_not_supported_for_ai_auto_reply"}
         try:
             with engine.begin() as conn:
                 c = conn.execute(text("""
@@ -765,6 +783,7 @@ async def run_ingest(msg: IngestMessage) -> dict:
                 phone=msg.phone,
                 user_text=user_text,
                 msg_type=msg_type,
+                channel=channel,
             )
             if trigger_result.get("matched"):
                 _log(

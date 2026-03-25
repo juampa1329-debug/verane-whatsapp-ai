@@ -43,6 +43,34 @@ const EMPTY_FILTER_OPTIONS = {
   takeover: ["all", "on", "off"],
 };
 
+const CRM_CHANNELS = [
+  { id: "whatsapp", label: "WhatsApp" },
+  { id: "facebook", label: "Facebook" },
+  { id: "instagram", label: "Instagram" },
+  { id: "tiktok", label: "TikTok" },
+];
+
+const MODULE_COPY_CONFIG = {
+  templates: {
+    listPath: "/api/templates",
+    listKey: "templates",
+    copyPath: "/api/templates/{id}/copy",
+    successLabel: "Plantilla",
+  },
+  triggers: {
+    listPath: "/api/triggers",
+    listKey: "triggers",
+    copyPath: "/api/triggers/{id}/copy",
+    successLabel: "Trigger",
+  },
+  remarketing: {
+    listPath: "/api/remarketing/flows",
+    listKey: "flows",
+    copyPath: "/api/remarketing/flows/{id}/copy",
+    successLabel: "Flow",
+  },
+};
+
 function fmtDt(v) {
   if (!v) return "-";
   try {
@@ -76,6 +104,7 @@ export default function MarketingPanel({ apiBase }) {
   const { isMobile, isTablet } = useViewport();
 
   const [tab, setTab] = useState("templates");
+  const [crmChannel, setCrmChannel] = useState("whatsapp");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -136,10 +165,43 @@ export default function MarketingPanel({ apiBase }) {
     template_id: "",
   });
 
+  const [copySourceByModule, setCopySourceByModule] = useState({
+    templates: "whatsapp",
+    triggers: "whatsapp",
+    remarketing: "whatsapp",
+  });
+  const [copyItemsByModule, setCopyItemsByModule] = useState({
+    templates: [],
+    triggers: [],
+    remarketing: [],
+  });
+  const [copySelectedIdByModule, setCopySelectedIdByModule] = useState({
+    templates: "",
+    triggers: "",
+    remarketing: "",
+  });
+  const [copySuffixByModule, setCopySuffixByModule] = useState({
+    templates: "",
+    triggers: "",
+    remarketing: "",
+  });
+  const [copyLoadingByModule, setCopyLoadingByModule] = useState({
+    templates: false,
+    triggers: false,
+    remarketing: false,
+  });
+  const [copySubmittingByModule, setCopySubmittingByModule] = useState({
+    templates: false,
+    triggers: false,
+    remarketing: false,
+  });
+
   const selectedFlow = useMemo(
     () => flows.find((f) => f.id === selectedFlowId) || null,
     [flows, selectedFlowId]
   );
+  const isWhatsAppChannel = crmChannel === "whatsapp";
+  const channelQuery = encodeURIComponent(crmChannel || "whatsapp");
 
   const flowWaitTotalMinutes = useMemo(() => {
     return (steps || []).reduce((acc, s) => acc + Math.max(0, Number(s.wait_minutes || 0)), 0);
@@ -150,29 +212,135 @@ export default function MarketingPanel({ apiBase }) {
     setTimeout(() => setStatus(""), 2200);
   };
 
+  const setCopyLoading = (moduleKey, value) => {
+    setCopyLoadingByModule((prev) => ({ ...prev, [moduleKey]: !!value }));
+  };
+
+  const setCopySubmitting = (moduleKey, value) => {
+    setCopySubmittingByModule((prev) => ({ ...prev, [moduleKey]: !!value }));
+  };
+
+  const setCopyItems = (moduleKey, rows) => {
+    setCopyItemsByModule((prev) => ({ ...prev, [moduleKey]: Array.isArray(rows) ? rows : [] }));
+  };
+
+  const setCopySelectedId = (moduleKey, value) => {
+    setCopySelectedIdByModule((prev) => ({ ...prev, [moduleKey]: String(value || "") }));
+  };
+
+  const setCopySource = (moduleKey, value) => {
+    setCopySourceByModule((prev) => ({ ...prev, [moduleKey]: String(value || "whatsapp") }));
+  };
+
+  const setCopySuffix = (moduleKey, value) => {
+    setCopySuffixByModule((prev) => ({ ...prev, [moduleKey]: String(value || "") }));
+  };
+
+  const loadCopyItemsForModule = async (moduleKey) => {
+    const cfg = MODULE_COPY_CONFIG[moduleKey];
+    if (!cfg) return;
+    const sourceChannel = String(copySourceByModule?.[moduleKey] || "whatsapp").trim().toLowerCase();
+    if (!sourceChannel || sourceChannel === crmChannel) {
+      setCopyItems(moduleKey, []);
+      setCopySelectedId(moduleKey, "");
+      return;
+    }
+
+    setError("");
+    setCopyLoading(moduleKey, true);
+    try {
+      const url = `${API}${cfg.listPath}?channel=${encodeURIComponent(sourceChannel)}`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || `No se pudo cargar ${cfg.successLabel.toLowerCase()}s`);
+
+      const rows = Array.isArray(d?.[cfg.listKey]) ? d[cfg.listKey] : [];
+      const normalized = rows
+        .map((x) => ({
+          id: x?.id,
+          name: String(x?.name || `#${x?.id || ""}`).trim(),
+        }))
+        .filter((x) => x.id !== undefined && x.id !== null);
+
+      setCopyItems(moduleKey, normalized);
+      setCopySelectedId(moduleKey, normalized[0]?.id || "");
+    } catch (e) {
+      setCopyItems(moduleKey, []);
+      setCopySelectedId(moduleKey, "");
+      setError(String(e.message || e));
+    } finally {
+      setCopyLoading(moduleKey, false);
+    }
+  };
+
+  const copyItemToCurrentChannel = async (moduleKey) => {
+    const cfg = MODULE_COPY_CONFIG[moduleKey];
+    if (!cfg) return;
+
+    const sourceChannel = String(copySourceByModule?.[moduleKey] || "whatsapp").trim().toLowerCase();
+    const sourceId = String(copySelectedIdByModule?.[moduleKey] || "").trim();
+    const suffix = String(copySuffixByModule?.[moduleKey] || "").trim();
+    if (!sourceId) {
+      setError("Selecciona un elemento para copiar");
+      return;
+    }
+    if (!sourceChannel || sourceChannel === crmChannel) {
+      setError("El canal origen debe ser diferente al canal destino");
+      return;
+    }
+
+    setError("");
+    setCopySubmitting(moduleKey, true);
+    try {
+      const copyUrl = `${API}${cfg.copyPath.replace("{id}", encodeURIComponent(sourceId))}`;
+      const r = await fetch(copyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_channel: crmChannel,
+          name_suffix: suffix || null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d?.detail || `No se pudo copiar ${cfg.successLabel.toLowerCase()}`);
+
+      if (moduleKey === "templates") await loadTemplates();
+      if (moduleKey === "triggers") await loadTriggers();
+      if (moduleKey === "remarketing") await loadFlows();
+
+      const srcLabel = CRM_CHANNELS.find((c) => c.id === sourceChannel)?.label || sourceChannel;
+      setTempStatus(`${cfg.successLabel} copiada de ${srcLabel} a ${activeChannelLabel}`);
+      await loadCopyItemsForModule(moduleKey);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setCopySubmitting(moduleKey, false);
+    }
+  };
+
   const loadTemplates = async () => {
-    const r = await fetch(`${API}/api/templates`);
+    const r = await fetch(`${API}/api/templates?channel=${channelQuery}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d?.detail || "Error templates");
     setTemplates(Array.isArray(d?.templates) ? d.templates : []);
   };
 
   const loadCampaigns = async () => {
-    const r = await fetch(`${API}/api/campaigns`);
+    const r = await fetch(`${API}/api/campaigns?channel=${channelQuery}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d?.detail || "Error campaigns");
     setCampaigns(Array.isArray(d?.campaigns) ? d.campaigns : []);
   };
 
   const loadTriggers = async () => {
-    const r = await fetch(`${API}/api/triggers`);
+    const r = await fetch(`${API}/api/triggers?channel=${channelQuery}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d?.detail || "Error triggers");
     setTriggers(Array.isArray(d?.triggers) ? d.triggers : []);
   };
 
   const loadFlows = async () => {
-    const r = await fetch(`${API}/api/remarketing/flows`);
+    const r = await fetch(`${API}/api/remarketing/flows?channel=${channelQuery}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d?.detail || "Error flows");
     const rows = Array.isArray(d?.flows) ? d.flows : [];
@@ -247,7 +415,7 @@ export default function MarketingPanel({ apiBase }) {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [crmChannel]);
 
   useEffect(() => {
     loadSteps(selectedFlowId).catch((e) => setError(String(e.message || e)));
@@ -273,6 +441,7 @@ export default function MarketingPanel({ apiBase }) {
       const payload = {
         name: templateForm.name.trim(),
         category: templateForm.category.trim() || "general",
+        channel: crmChannel,
         body: templateForm.body,
         variables_json: (templateForm.variables || "")
           .split(",")
@@ -305,6 +474,7 @@ export default function MarketingPanel({ apiBase }) {
         segment_id: campaignForm.segment_id ? Number(campaignForm.segment_id) : null,
         template_id: campaignForm.template_id ? Number(campaignForm.template_id) : null,
         scheduled_at: campaignForm.scheduled_at ? new Date(campaignForm.scheduled_at).toISOString() : null,
+        channel: crmChannel,
         status: "draft",
       };
 
@@ -391,6 +561,7 @@ export default function MarketingPanel({ apiBase }) {
 
       const payload = {
         name: flowForm.name.trim(),
+        channel: crmChannel,
         is_active: !!flowForm.is_active,
         entry_rules_json: entryRules,
         exit_rules_json: exitRules,
@@ -564,6 +735,103 @@ export default function MarketingPanel({ apiBase }) {
   const flowDispatchCols = isMobile ? "1fr" : (isTablet ? "1fr 1fr" : "1fr 220px 180px");
   const addStepCols = isMobile ? "1fr" : (isTablet ? "1fr 1fr" : "110px 190px 130px 1fr auto");
   const editStepCols = isMobile ? "1fr" : (isTablet ? "120px 1fr 120px 1fr auto auto auto" : "90px 180px 130px 1fr auto auto auto");
+  const activeChannelLabel = CRM_CHANNELS.find((c) => c.id === crmChannel)?.label || crmChannel;
+
+  const renderChannelSkeleton = (moduleKey, moduleLabel) => {
+    const cfg = MODULE_COPY_CONFIG[moduleKey];
+    const sourceChannel = String(copySourceByModule?.[moduleKey] || "whatsapp").trim().toLowerCase();
+    const sourceItems = Array.isArray(copyItemsByModule?.[moduleKey]) ? copyItemsByModule[moduleKey] : [];
+    const selectedId = String(copySelectedIdByModule?.[moduleKey] || "");
+    const suffix = String(copySuffixByModule?.[moduleKey] || "");
+    const loading = !!copyLoadingByModule?.[moduleKey];
+    const submitting = !!copySubmittingByModule?.[moduleKey];
+    const sourceOptions = CRM_CHANNELS.filter((c) => c.id !== crmChannel);
+
+    return (
+      <div style={{ ...box, display: "grid", gap: 10 }}>
+        <h3 style={{ marginTop: 0, marginBottom: 0 }}>
+          {moduleLabel} - {activeChannelLabel}
+        </h3>
+        <div style={{ fontSize: 13, opacity: 0.85 }}>
+          Este canal esta en fase de esqueleto UI. Las plantillas, triggers y flows seran independientes por red social.
+        </div>
+        <div style={{ display: "grid", gap: 8, fontSize: 12, opacity: 0.8 }}>
+          <div>1) Definir API/token del canal en Ajustes.</div>
+          <div>2) Activar sincronizacion y permisos de mensajes del canal.</div>
+          <div>3) Usar copia entre canales cuando quieras replicar estructura inicial.</div>
+        </div>
+
+        {cfg ? (
+          <div style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 10, display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>Copiar desde otro canal</div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr auto", gap: 8 }}>
+              <select
+                style={input}
+                value={sourceChannel}
+                onChange={(e) => {
+                  setCopySource(moduleKey, e.target.value);
+                  setCopyItems(moduleKey, []);
+                  setCopySelectedId(moduleKey, "");
+                }}
+              >
+                {sourceOptions.map((c) => (
+                  <option key={`${moduleKey}_${c.id}`} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={smallBtn}
+                onClick={() => loadCopyItemsForModule(moduleKey)}
+                disabled={loading || sourceChannel === crmChannel}
+              >
+                {loading ? "Cargando..." : "Cargar origen"}
+              </button>
+            </div>
+
+            <select
+              style={input}
+              value={selectedId}
+              onChange={(e) => setCopySelectedId(moduleKey, e.target.value)}
+              disabled={!sourceItems.length}
+            >
+              {!sourceItems.length ? <option value="">Sin datos del canal origen</option> : null}
+              {sourceItems.map((row) => (
+                <option key={`${moduleKey}_copy_${row.id}`} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              style={input}
+              placeholder='Sufijo opcional (ej. "[instagram]")'
+              value={suffix}
+              onChange={(e) => setCopySuffix(moduleKey, e.target.value)}
+            />
+
+            <button
+              type="button"
+              style={smallBtn}
+              onClick={() => copyItemToCurrentChannel(moduleKey)}
+              disabled={!selectedId || submitting || sourceChannel === crmChannel}
+            >
+              {submitting ? "Copiando..." : `Copiar ${cfg.successLabel.toLowerCase()} a ${activeChannelLabel}`}
+            </button>
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          style={smallBtn}
+          onClick={() => setTempStatus(`Canal ${activeChannelLabel}: UI esqueleto validada`)}
+        >
+          Confirmar diseno de esqueleto
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -571,8 +839,30 @@ export default function MarketingPanel({ apiBase }) {
       style={{ alignItems: "stretch", flexDirection: "column", justifyContent: "flex-start", width: "100%", minHeight: 0, overflowY: "auto", padding: 12 }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0 }}>Marketing</h2>
+        <h2 style={{ margin: 0 }}>Campanas CRM</h2>
         <button onClick={loadAll} style={smallBtn}>Recargar</button>
+      </div>
+
+      <div style={{ ...box, marginBottom: 12 }}>
+        <div style={{ fontSize: 12, opacity: 0.82, marginBottom: 8 }}>
+          Modulo CRM multicanal. Cada canal mantiene sus plantillas, triggers, campanas y remarketing de forma independiente.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {CRM_CHANNELS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setCrmChannel(c.id)}
+              style={{
+                ...smallBtn,
+                background: crmChannel === c.id ? "rgba(46, 204, 113, 0.16)" : "transparent",
+                borderColor: crmChannel === c.id ? "rgba(46, 204, 113, 0.35)" : "rgba(255,255,255,0.16)",
+              }}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -594,16 +884,22 @@ export default function MarketingPanel({ apiBase }) {
       {status ? <div style={{ color: "#9be15d", marginBottom: 8 }}>{status}</div> : null}
 
       {tab === "templates" ? (
-        <TemplateBuilderPanel
-          apiBase={API}
-          templates={templates}
-          onTemplatesReload={loadTemplates}
-          onError={(msg) => setError(String(msg || ""))}
-          onStatus={setTempStatus}
-        />
+        isWhatsAppChannel ? (
+          <TemplateBuilderPanel
+            apiBase={API}
+            channel={crmChannel}
+            templates={templates}
+            onTemplatesReload={loadTemplates}
+            onError={(msg) => setError(String(msg || ""))}
+            onStatus={setTempStatus}
+          />
+        ) : (
+          renderChannelSkeleton("templates", "Plantillas")
+        )
       ) : null}
 
       {tab === "campaigns" ? (
+        isWhatsAppChannel ? (
         <div style={{ display: "grid", gridTemplateColumns: mainCols, gap: 12 }}>
           <div style={box}>
             <h3 style={{ marginTop: 0 }}>Nueva campaña</h3>
@@ -657,20 +953,29 @@ export default function MarketingPanel({ apiBase }) {
             </div>
           </div>
         </div>
+        ) : (
+          renderChannelSkeleton("campaigns", "Campanas")
+        )
       ) : null}
 
       {tab === "triggers" ? (
-        <TriggerBuilderPanel
-          apiBase={API}
-          templates={templates}
-          triggers={triggers}
-          onTriggersReload={loadTriggers}
-          onError={(msg) => setError(String(msg || ""))}
-          onStatus={setTempStatus}
-        />
+        isWhatsAppChannel ? (
+          <TriggerBuilderPanel
+            apiBase={API}
+            channel={crmChannel}
+            templates={templates}
+            triggers={triggers}
+            onTriggersReload={loadTriggers}
+            onError={(msg) => setError(String(msg || ""))}
+            onStatus={setTempStatus}
+          />
+        ) : (
+          renderChannelSkeleton("triggers", "Triggers")
+        )
       ) : null}
 
       {tab === "remarketing" ? (
+        isWhatsAppChannel ? (
         <div style={{ display: "grid", gridTemplateColumns: mainCols, gap: 12 }}>
           <div style={{ display: "grid", gap: 12 }}>
             <div style={box}>
@@ -900,6 +1205,9 @@ export default function MarketingPanel({ apiBase }) {
             </div>
           </div>
         </div>
+        ) : (
+          renderChannelSkeleton("remarketing", "Remarketing")
+        )
       ) : null}
     </div>
   );

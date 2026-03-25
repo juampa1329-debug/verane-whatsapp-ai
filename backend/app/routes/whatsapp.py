@@ -637,6 +637,7 @@ async def _ingest_internal(
 
         payload = CoreIngestMessage(
             phone=(phone or "").strip(),
+            channel="whatsapp",
             direction="in",
             msg_type=(msg_type or "text").strip().lower(),
             text=(text_msg or "").strip(),

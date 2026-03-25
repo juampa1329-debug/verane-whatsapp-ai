@@ -9,6 +9,8 @@ from sqlalchemy import text
 
 from app.db import engine
 from app.crm.crm_writer import sync_ai_memory
+from app.catalog.cache_repo import search_cached_products
+from app.integrations.woocommerce import score_product_match
 
 
 _BRAND_HINTS = (
@@ -368,6 +370,92 @@ def _extract_preferences(messages: List[str]) -> Dict[str, Any]:
     return prefs
 
 
+_QUERY_LEAD_PAT = re.compile(
+    r"\b(cual|cuál|que|qué|tienen|tiene|hay|busco|quiero|me interesa|necesito|dame|muestrame|muéstrame|enviame|envíame|mandame|mándame)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_catalog_query_candidate(raw: str) -> str:
+    text_value = _clean_visible_text(raw)
+    if not text_value:
+        return ""
+
+    lowered = _norm(text_value)
+    lowered = re.sub(r"\b(por favor|gracias|hola|buenas|bro|amigo|asesor)\b", " ", lowered, flags=re.IGNORECASE)
+    lowered = re.sub(r"\b(perfume|perfumes|fragancia|fragancias|colonia|colonias)\b", " ", lowered, flags=re.IGNORECASE)
+    lowered = re.sub(r"\b(precio|stock|disponible|disponibilidad|cuanto|cuánto|vale|coste|costo)\b", " ", lowered, flags=re.IGNORECASE)
+    lowered = _QUERY_LEAD_PAT.sub(" ", lowered)
+    lowered = re.sub(r"[?¡!.,;:()\\[\\]{}]+", " ", lowered)
+    lowered = re.sub(r"\s+", " ", lowered).strip()
+    if not lowered:
+        return ""
+    return _normalize_product_aliases(" ".join(lowered.split()[:8]))
+
+
+def _catalog_query_score(query: str) -> tuple[int, str]:
+    q = _clean_visible_text(query)
+    if len(q) < 3:
+        return 0, ""
+
+    try:
+        items = search_cached_products(q, limit=6)
+    except Exception:
+        return 0, ""
+
+    if not items:
+        return 0, ""
+
+    top_name = _clean_visible_text((items[0] or {}).get("name") or "")
+    if not top_name:
+        return 25, ""
+
+    try:
+        score = int(score_product_match(q, top_name))
+    except Exception:
+        score = 0
+    # Bonus por simple hit en catálogo, aunque el nombre venga con ruido.
+    return max(score, 25), top_name
+
+
+def _extract_candidate_queries_from_message(raw: str) -> List[str]:
+    base = _clean_visible_text(raw)
+    if not base:
+        return []
+
+    out: List[str] = []
+    out.append(base)
+
+    cleaned = _clean_catalog_query_candidate(base)
+    if cleaned:
+        out.append(cleaned)
+
+    # Frases comunes de consulta para extraer solo el término objetivo.
+    patterns = [
+        r"(?:cual|cuál|que|qué)\s+(?:tiene|tienen)\s+(.+)$",
+        r"(?:busco|quiero|necesito|me interesa)\s+(.+)$",
+        r"(?:tienes|tienen|hay)\s+(.+)$",
+    ]
+    low = _norm(base)
+    for pat in patterns:
+        m = re.search(pat, low, re.IGNORECASE)
+        if not m:
+            continue
+        cand = _clean_catalog_query_candidate(m.group(1) or "")
+        if cand:
+            out.append(cand)
+
+    dedup: List[str] = []
+    seen = set()
+    for x in out:
+        key = _norm(x)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        dedup.append(x)
+    return dedup[:5]
+
+
 def _extract_product_query(
     messages: List[str],
     vision_obj: Dict[str, Any] | None,
@@ -393,38 +481,38 @@ def _extract_product_query(
 
     latest = _clean_visible_text(current_text) or (messages[-1] if messages else "")
     allow_history = _should_reuse_previous_query(latest, messages)
+    max_scan = 10 if allow_history else 3
+
+    best_query = ""
+    best_score = 0
 
     for idx, msg in enumerate(reversed(messages)):
-        if idx > 0 and not allow_history:
+        if idx >= max_scan:
             break
 
         raw = _clean_visible_text(msg)
-        low = _norm(raw)
         if not raw or _is_tiny_ack(raw):
             continue
 
-        explicit_product = (
-            _contains_any(raw, _PRODUCT_WORDS)
-            or _contains_any(raw, _BRAND_HINTS)
-            or _contains_any(raw, _PERFUME_HINTS)
-            or re.search(r"\b\d{2,3}\s*ml\b", low) is not None
-        )
-        if not explicit_product:
-            continue
+        for cand in _extract_candidate_queries_from_message(raw):
+            score, _ = _catalog_query_score(cand)
+            if score > best_score:
+                best_score = score
+                best_query = cand
+            # Match suficientemente bueno: cortar temprano.
+            if score >= 60:
+                return _normalize_product_aliases(cand)
 
-        cleaned = re.sub(
-            r"\b(quiero|busco|tienen|tiene|tendran|tendrán|me muestras|muestrame|muéstrame|me interesa|mandame|mándame|enviame|envíame|pasame|pásame|quiero ver|quiero comprar|tienes algo para|para regalo|para mi novio|para mi novia)\b",
-            " ",
-            raw,
-            flags=re.IGNORECASE,
-        )
-        cleaned = re.sub(r"[?¡!.,;:]+", " ", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        if cleaned:
-            return _normalize_product_aliases(" ".join(cleaned.split()[:8]).strip())
+    if best_query and best_score >= 28:
+        return _normalize_product_aliases(best_query)
+
+    # Fallback conservador para no perder consultas largas de producto
+    # cuando el cache aun se esta sincronizando.
+    fallback = _clean_catalog_query_candidate(latest)
+    if len(fallback) >= 6 and re.search(r"[a-z0-9]", _norm(fallback)):
+        return _normalize_product_aliases(fallback)
 
     return ""
-
 
 def _infer_intent(
     *,
@@ -469,7 +557,11 @@ def _infer_intent(
     if _contains_any(joined_recent, _PRICE_WORDS) and (product_query or last_product_id > 0):
         return "PRICE_STOCK", 0.8, "searching_product"
 
-    if product_query:
+    if product_query and (
+        current_has_commerce
+        or _is_tiny_ack(latest_text)
+        or _contains_any(latest_text, _COMMERCIAL_FOLLOWUP_WORDS)
+    ):
         return "PRODUCT_SEARCH", 0.78, "searching_product"
 
     has_preferences = bool(
@@ -719,3 +811,4 @@ def reconstruct_conversation_state(
         },
     )
     return state
+

@@ -62,7 +62,9 @@ services:
       - traefik.http.middlewares.verane_api_cors.headers.addVaryHeader=true
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     depends_on:
       - api
     expose:

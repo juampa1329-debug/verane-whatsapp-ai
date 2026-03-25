@@ -185,6 +185,7 @@ def _mark_due_campaigns_running(now: datetime) -> int:
                 updated_at = NOW(),
                 launched_at = COALESCE(launched_at, NOW())
             WHERE LOWER(status) = 'scheduled'
+              AND LOWER(COALESCE(channel, 'whatsapp')) = 'whatsapp'
               AND scheduled_at IS NOT NULL
               AND scheduled_at <= :now
         """), {"now": now})
@@ -232,6 +233,7 @@ def _claim_pending_recipients(now: datetime, batch_size: int) -> List[Dict[str, 
                 LEFT JOIN conversations conv ON conv.phone = cr.phone
                 WHERE LOWER(cr.status) = 'pending'
                   AND LOWER(c.status) IN ('running', 'scheduled')
+                  AND LOWER(COALESCE(c.channel, 'whatsapp')) = 'whatsapp'
                   AND (c.scheduled_at IS NULL OR c.scheduled_at <= :now)
                 ORDER BY COALESCE(c.scheduled_at, c.created_at) ASC, cr.id ASC
                 LIMIT :limit
@@ -273,6 +275,7 @@ def _save_campaign_message(
     campaign_id: int,
     recipient_id: int,
     phone: str,
+    channel: str,
     msg_type: str,
     text_msg: str,
     media_id: str,
@@ -293,6 +296,7 @@ def _save_campaign_message(
         message_id = conn.execute(text("""
             INSERT INTO messages (
                 phone,
+                channel,
                 direction,
                 msg_type,
                 text,
@@ -307,6 +311,7 @@ def _save_campaign_message(
             )
             VALUES (
                 :phone,
+                :channel,
                 'out',
                 :msg_type,
                 :text,
@@ -322,6 +327,7 @@ def _save_campaign_message(
             RETURNING id
         """), {
             "phone": phone,
+            "channel": (channel or "whatsapp").strip().lower() or "whatsapp",
             "msg_type": (msg_type or "text").strip().lower(),
             "text": text_msg,
             "media_id": media_id or None,
@@ -467,6 +473,7 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
                     campaign_id=campaign_id,
                     recipient_id=recipient_id,
                     phone=phone,
+                    channel=str(row.get("channel") or "whatsapp"),
                     msg_type="image" if kind == "image" else "text",
                     text_msg=block_text,
                     media_id=media_id,
@@ -485,6 +492,7 @@ async def campaign_engine_tick(*, batch_size: int | None = None, send_delay_ms: 
                 campaign_id=campaign_id,
                 recipient_id=recipient_id,
                 phone=phone,
+                channel=str(row.get("channel") or "whatsapp"),
                 msg_type=msg_type,
                 text_msg=block_text,
                 media_id=media_id,

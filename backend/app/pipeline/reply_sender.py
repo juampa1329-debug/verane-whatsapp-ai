@@ -98,6 +98,7 @@ def save_message(
     conn,
     phone: str,
     direction: str,
+    channel: str = "whatsapp",
     text_msg: str = "",
     msg_type: str = "text",
     media_url: Optional[str] = None,
@@ -121,6 +122,7 @@ def save_message(
         direction = "in"
 
     msg_type = (msg_type or "text").strip().lower()
+    channel = (channel or "whatsapp").strip().lower() or "whatsapp"
     now = datetime.utcnow()
 
     initial_wa_status = None
@@ -133,13 +135,13 @@ def save_message(
     r = conn.execute(
         text("""
             INSERT INTO messages (
-                phone, direction, msg_type, text,
+                phone, channel, direction, msg_type, text,
                 media_url, media_caption, media_id, mime_type, file_name, file_size, duration_sec,
                 featured_image, real_image, permalink, created_at,
                 wa_status, wa_ts_sent
             )
             VALUES (
-                :phone, :direction, :msg_type, :text,
+                :phone, :channel, :direction, :msg_type, :text,
                 :media_url, :media_caption, :media_id, :mime_type, :file_name, :file_size, :duration_sec,
                 :featured_image, :real_image, :permalink, :created_at,
                 :wa_status, :wa_ts_sent
@@ -148,6 +150,7 @@ def save_message(
         """),
         {
             "phone": phone,
+            "channel": channel,
             "direction": direction,
             "msg_type": msg_type,
             "text": text_msg or "",

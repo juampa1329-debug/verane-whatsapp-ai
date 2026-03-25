@@ -265,7 +265,14 @@ def _set_flow_tags(
     )
     return tags_csv
 
-def list_stage_catalog() -> List[Dict[str, Any]]:
+def list_stage_catalog(channel: str | None = "whatsapp") -> List[Dict[str, Any]]:
+    where_channel = ""
+    params: Dict[str, Any] = {}
+    ch = str(channel or "").strip().lower()
+    if ch:
+        where_channel = "AND LOWER(COALESCE(f.channel, 'whatsapp')) = :channel"
+        params["channel"] = ch
+
     with engine.begin() as conn:
         rows = conn.execute(
             text(
@@ -273,6 +280,7 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
                 SELECT
                     f.id AS flow_id,
                     f.name AS flow_name,
+                    f.channel AS flow_channel,
                     f.is_active,
                     s.step_order,
                     s.stage_name,
@@ -283,9 +291,11 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
                 LEFT JOIN remarketing_steps s ON s.flow_id = f.id
                 LEFT JOIN message_templates t ON t.id = s.template_id
                 WHERE f.is_active = TRUE
+                  {where_channel}
                 ORDER BY f.updated_at DESC, f.id DESC, s.step_order ASC
-                """
-            )
+                """.replace("{where_channel}", where_channel)
+            ),
+            params,
         ).mappings().all()
 
     by_flow: Dict[int, Dict[str, Any]] = {}
@@ -297,6 +307,7 @@ def list_stage_catalog() -> List[Dict[str, Any]]:
             by_flow[flow_id] = {
                 "id": flow_id,
                 "name": str(row.get("flow_name") or "").strip(),
+                "channel": str(row.get("flow_channel") or "whatsapp").strip().lower() or "whatsapp",
                 "is_active": bool(row.get("is_active") is True),
                 "steps": [],
             }
@@ -636,17 +647,24 @@ def assign_phone_stage(
     return {"ok": False, "error": "stage_not_supported"}
 
 
-async def process_due_remarketing(*, limit: int | None = None, flow_id: int | None = None) -> Dict[str, Any]:
+async def process_due_remarketing(
+    *,
+    limit: int | None = None,
+    flow_id: int | None = None,
+    channel: str | None = "whatsapp",
+) -> Dict[str, Any]:
     cfg = remarketing_settings()
     flow_filter_id = int(flow_id or 0)
     if flow_filter_id <= 0:
         flow_filter_id = None
+    channel_filter = str(channel or "").strip().lower()
 
     if not bool(cfg.get("enabled")):
         return {
             "ok": True,
             "enabled": False,
             "flow_id": flow_filter_id,
+            "channel": channel_filter or None,
             "flows": 0,
             "enrolled": 0,
             "checked": 0,
@@ -668,6 +686,9 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
     with engine.begin() as conn:
         flow_where = "WHERE is_active = TRUE"
         flow_params: Dict[str, Any] = {}
+        if channel_filter:
+            flow_where += " AND LOWER(COALESCE(channel, 'whatsapp')) = :channel"
+            flow_params["channel"] = channel_filter
         if flow_filter_id is not None:
             flow_where += " AND id = :flow_id"
             flow_params["flow_id"] = int(flow_filter_id)
@@ -675,7 +696,7 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
         flow_rows = conn.execute(
             text(
                 f"""
-                SELECT id, name, entry_rules_json, exit_rules_json
+                SELECT id, name, channel, entry_rules_json, exit_rules_json
                 FROM remarketing_flows
                 {flow_where}
                 ORDER BY updated_at DESC, id DESC
@@ -692,6 +713,9 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
                 )
         """
         steps_params: Dict[str, Any] = {}
+        if channel_filter:
+            steps_where += "\n                  AND s.flow_id IN (SELECT id FROM remarketing_flows WHERE LOWER(COALESCE(channel, 'whatsapp')) = :channel)"
+            steps_params["channel"] = channel_filter
         if flow_filter_id is not None:
             steps_where += "\n                  AND s.flow_id = :flow_id"
             steps_params["flow_id"] = int(flow_filter_id)
@@ -1134,6 +1158,7 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
             phone=phone,
             template_id=template_id,
             source="remarketing",
+            channel=str(flow.get("channel") or "whatsapp").strip().lower() or "whatsapp",
             overrides={},
             extra_meta={
                 "remarketing_flow_id": flow_id,
@@ -1235,6 +1260,7 @@ async def process_due_remarketing(*, limit: int | None = None, flow_id: int | No
         "ok": True,
         "enabled": True,
         "flow_id": flow_filter_id,
+        "channel": channel_filter or None,
         "flows": len(flow_map),
         "enrolled": int(enrolled),
         "checked": int(checked),

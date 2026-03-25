@@ -10,14 +10,15 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # Keep dev dependencies for Vite build
 ENV NODE_ENV=development
 
-# 2) Install dependencies deterministically
+# 2) Install dependencies deterministically (including optional native bindings)
 COPY package.json package-lock.json ./
-RUN npm ci --include=dev --no-audit --no-fund
+RUN npm ci --include=dev --include=optional --no-audit --no-fund
 
 # 3) Copy source
 COPY . .
 
 # 4) Build frontend
+RUN node -v && npm -v
 RUN npm run build
 
 # Serve stage

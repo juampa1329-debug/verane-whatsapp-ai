@@ -201,6 +201,7 @@ function findLabel(items, key, fallback = "") {
 
 export default function TriggerBuilderPanel({
   apiBase,
+  channel = "whatsapp",
   templates,
   triggers,
   onTriggersReload,
@@ -335,6 +336,7 @@ export default function TriggerBuilderPanel({
     try {
       const payload = {
         name: String(form.name || "").trim(),
+        channel: String(channel || "whatsapp").trim().toLowerCase() || "whatsapp",
         event_type: "message_in",
         trigger_type: form.trigger_type || "message_flow",
         flow_event: form.flow_event || "received",
@@ -378,7 +380,10 @@ export default function TriggerBuilderPanel({
       const r = await fetch(`${API}/api/triggers/${encodeURIComponent(trigger.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: !trigger.is_active }),
+        body: JSON.stringify({
+          is_active: !trigger.is_active,
+          channel: String(channel || "whatsapp").trim().toLowerCase() || "whatsapp",
+        }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.detail || "No se pudo actualizar trigger");

@@ -205,6 +205,7 @@ function statusLabel(value) {
 
 export default function TemplateBuilderPanel({
   apiBase,
+  channel = "whatsapp",
   templates,
   onTemplatesReload,
   onError,
@@ -375,6 +376,7 @@ export default function TemplateBuilderPanel({
     return {
       name: String(templateForm.name || "").trim(),
       category: String(templateForm.category || "general").trim().toLowerCase() || "general",
+      channel: String(channel || "whatsapp").trim().toLowerCase() || "whatsapp",
       status: String(templateForm.status || "draft").trim().toLowerCase() || "draft",
       render_mode: String(templateForm.render_mode || "chat").trim().toLowerCase() || "chat",
       body: String(templateForm.body || "").trim(),
@@ -382,7 +384,7 @@ export default function TemplateBuilderPanel({
       params_json: paramsObj,
       blocks_json: blocks,
     };
-  }, [paramRows, templateBlocks, templateForm]);
+  }, [paramRows, templateBlocks, templateForm, channel]);
 
   const currentSignature = useMemo(
     () => buildEditorSignature(templateForm, templateBlocks, paramRows),

@@ -11,3 +11,5 @@ Pillow==10.4.0
 pillow-avif-plugin==1.4.6
 pypdf
 requests
+cryptography==44.0.3
+pyotp==2.9.0

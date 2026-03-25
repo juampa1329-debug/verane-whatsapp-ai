@@ -1,9 +1,12 @@
 # app/main.py
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import re
+import secrets
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -73,6 +76,8 @@ _remarketing_engine_stop: Optional[asyncio.Event] = None
 _remarketing_engine_task: Optional[asyncio.Task] = None
 _wc_cache_sync_task: Optional[asyncio.Task] = None
 _kb_web_sync_task: Optional[asyncio.Task] = None
+_security_key_rotation_stop: Optional[asyncio.Event] = None
+_security_key_rotation_task: Optional[asyncio.Task] = None
 
 origins = [
     "https://app.perfumesverane.com",
@@ -638,6 +643,285 @@ def ensure_schema():
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_enrollments_state_next_run ON remarketing_enrollments (state, next_run_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_remarketing_enrollments_phone ON remarketing_enrollments (phone)"""))
 
+        # -------------------------
+        # security (policy + users + sessions + keys + audit)
+        # -------------------------
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS security_policy (
+                id INTEGER PRIMARY KEY,
+                password_min_length INTEGER NOT NULL DEFAULT 10,
+                require_special_chars BOOLEAN NOT NULL DEFAULT TRUE,
+                access_token_minutes INTEGER NOT NULL DEFAULT 15,
+                refresh_token_days INTEGER NOT NULL DEFAULT 15,
+                session_idle_minutes INTEGER NOT NULL DEFAULT 30,
+                session_absolute_hours INTEGER NOT NULL DEFAULT 12,
+                max_failed_attempts INTEGER NOT NULL DEFAULT 5,
+                lock_minutes INTEGER NOT NULL DEFAULT 15,
+                force_password_rotation_days INTEGER NOT NULL DEFAULT 90,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO security_policy (
+                id, password_min_length, require_special_chars, access_token_minutes, refresh_token_days,
+                session_idle_minutes, session_absolute_hours, max_failed_attempts, lock_minutes,
+                force_password_rotation_days, updated_at
+            )
+            VALUES (1, 10, TRUE, 15, 15, 30, 12, 5, 15, 90, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS security_mfa_settings (
+                id INTEGER PRIMARY KEY,
+                enforce_for_admins BOOLEAN NOT NULL DEFAULT TRUE,
+                enforce_for_supervisors BOOLEAN NOT NULL DEFAULT TRUE,
+                allow_for_agents BOOLEAN NOT NULL DEFAULT FALSE,
+                backup_codes_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO security_mfa_settings (
+                id, enforce_for_admins, enforce_for_supervisors, allow_for_agents, backup_codes_enabled, updated_at
+            )
+            VALUES (1, TRUE, TRUE, FALSE, TRUE, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS security_alert_settings (
+                id INTEGER PRIMARY KEY,
+                failed_login_alert BOOLEAN NOT NULL DEFAULT TRUE,
+                suspicious_ip_alert BOOLEAN NOT NULL DEFAULT TRUE,
+                security_change_alert BOOLEAN NOT NULL DEFAULT TRUE,
+                webhook_failure_alert BOOLEAN NOT NULL DEFAULT TRUE,
+                channel_email BOOLEAN NOT NULL DEFAULT TRUE,
+                channel_whatsapp BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            INSERT INTO security_alert_settings (
+                id, failed_login_alert, suspicious_ip_alert, security_change_alert,
+                webhook_failure_alert, channel_email, channel_whatsapp, updated_at
+            )
+            VALUES (1, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, NOW())
+            ON CONFLICT (id) DO NOTHING
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_users (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                role TEXT NOT NULL DEFAULT 'agente',
+                twofa BOOLEAN NOT NULL DEFAULT FALSE,
+                twofa_secret_cipher TEXT NOT NULL DEFAULT '',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                password_salt TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL DEFAULT '',
+                password_updated_at TIMESTAMP NULL,
+                last_login_at TIMESTAMP NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_salt TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_updated_at TIMESTAMP NULL"""))
+        conn.execute(text("""ALTER TABLE app_users ADD COLUMN IF NOT EXISTS twofa_secret_cipher TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_users_role ON app_users (role)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_users_active ON app_users (is_active)"""))
+
+        conn.execute(text("""
+            INSERT INTO app_users (name, email, role, twofa, is_active, created_at, updated_at)
+            SELECT 'Administrador', 'admin@verane.com', 'admin', TRUE, TRUE, NOW(), NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM app_users)
+        """))
+
+        # Migración de contraseñas (si hay usuarios legacy sin hash).
+        users_without_password = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM app_users
+                WHERE COALESCE(password_hash, '') = ''
+                   OR COALESCE(password_salt, '') = ''
+                ORDER BY id ASC
+                LIMIT 2000
+                """
+            )
+        ).mappings().all()
+        bootstrap_password = str(os.getenv("SECURITY_BOOTSTRAP_ADMIN_PASSWORD", "Admin12345!") or "Admin12345!").strip()
+        if not bootstrap_password:
+            bootstrap_password = "Admin12345!"
+        for u in users_without_password:
+            uid = int(u.get("id") or 0)
+            if uid <= 0:
+                continue
+            try:
+                salt, pwh = _hash_password(bootstrap_password)
+                conn.execute(
+                    text(
+                        """
+                        UPDATE app_users
+                        SET
+                            password_salt = :salt,
+                            password_hash = :pwh,
+                            password_updated_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = :uid
+                        """
+                    ),
+                    {"uid": uid, "salt": salt, "pwh": pwh},
+                )
+            except Exception:
+                pass
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_user_sessions (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+                device TEXT NOT NULL DEFAULT '',
+                ip TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                revoked_at TIMESTAMP NULL
+            )
+        """))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_user_sessions_user_id ON app_user_sessions (user_id)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_user_sessions_revoked ON app_user_sessions (revoked_at)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_user_sessions_last_seen ON app_user_sessions (last_seen_at DESC)"""))
+
+        conn.execute(text("""
+            INSERT INTO app_user_sessions (id, user_id, device, ip, user_agent, created_at, last_seen_at, revoked_at)
+            SELECT
+                'bootstrap-admin-session',
+                u.id,
+                'Chrome / Windows',
+                '127.0.0.1',
+                'bootstrap',
+                NOW() - INTERVAL '45 minutes',
+                NOW(),
+                NULL
+            FROM app_users u
+            WHERE LOWER(TRIM(u.email)) = 'admin@verane.com'
+              AND NOT EXISTS (SELECT 1 FROM app_user_sessions)
+            LIMIT 1
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_api_keys (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'general',
+                secret_preview TEXT NOT NULL DEFAULT '',
+                secret_hash TEXT NOT NULL DEFAULT '',
+                secret_cipher TEXT NOT NULL DEFAULT '',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                rotation_days INTEGER NOT NULL DEFAULT 90,
+                next_rotation_at TIMESTAMP NULL,
+                last_rotated_at TIMESTAMP NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""ALTER TABLE app_api_keys ADD COLUMN IF NOT EXISTS secret_cipher TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE app_api_keys ADD COLUMN IF NOT EXISTS rotation_days INTEGER NOT NULL DEFAULT 90"""))
+        conn.execute(text("""ALTER TABLE app_api_keys ADD COLUMN IF NOT EXISTS next_rotation_at TIMESTAMP NULL"""))
+        conn.execute(text("""ALTER TABLE app_api_keys ADD COLUMN IF NOT EXISTS last_rotated_at TIMESTAMP NULL"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_api_keys_scope ON app_api_keys (scope)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_api_keys_active ON app_api_keys (is_active)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_app_api_keys_next_rotation ON app_api_keys (next_rotation_at)"""))
+        conn.execute(text("""UPDATE app_api_keys SET rotation_days = 90 WHERE COALESCE(rotation_days, 0) <= 0"""))
+        conn.execute(text("""
+            INSERT INTO app_api_keys (name, scope, secret_preview, secret_hash, is_active, created_at, updated_at)
+            SELECT
+                'WhatsApp Cloud Token', 'mensajeria', 'wa_t...0001', md5('bootstrap-wa-token'), TRUE, NOW(), NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM app_api_keys)
+        """))
+        conn.execute(text("""
+            INSERT INTO app_api_keys (name, scope, secret_preview, secret_hash, is_active, created_at, updated_at)
+            SELECT
+                'WooCommerce Consumer Key', 'catalogo', 'wc_k...0002', md5('bootstrap-wc-token'), TRUE, NOW(), NOW()
+            WHERE (SELECT COUNT(1) FROM app_api_keys) = 1
+        """))
+        conn.execute(text("""
+            INSERT INTO app_api_keys (name, scope, secret_preview, secret_hash, is_active, created_at, updated_at)
+            SELECT
+                'Proveedor IA Principal', 'inferencia', 'ia_k...0003', md5('bootstrap-ia-token'), TRUE, NOW(), NOW()
+            WHERE (SELECT COUNT(1) FROM app_api_keys) = 2
+        """))
+
+        # Migración best-effort: si faltan secretos cifrados/rotación, regenera secreto interno.
+        stale_keys = conn.execute(
+            text(
+                """
+                SELECT id
+                FROM app_api_keys
+                WHERE COALESCE(secret_cipher, '') = ''
+                   OR COALESCE(secret_hash, '') = ''
+                   OR COALESCE(secret_preview, '') = ''
+                   OR next_rotation_at IS NULL
+                ORDER BY id ASC
+                LIMIT 500
+                """
+            )
+        ).mappings().all()
+
+        for k in stale_keys:
+            key_id = int(k.get("id") or 0)
+            if key_id <= 0:
+                continue
+            try:
+                plain_secret, preview, secret_hash, secret_cipher = _new_api_secret()
+                conn.execute(
+                    text(
+                        """
+                        UPDATE app_api_keys
+                        SET
+                            secret_preview = :preview,
+                            secret_hash = :secret_hash,
+                            secret_cipher = :secret_cipher,
+                            last_rotated_at = COALESCE(last_rotated_at, NOW()),
+                            next_rotation_at = COALESCE(next_rotation_at, NOW() + ((rotation_days::text || ' days')::interval)),
+                            updated_at = NOW()
+                        WHERE id = :key_id
+                        """
+                    ),
+                    {
+                        "key_id": key_id,
+                        "preview": preview,
+                        "secret_hash": secret_hash,
+                        "secret_cipher": secret_cipher,
+                    },
+                )
+            except Exception:
+                # Nunca tumbamos el arranque por una clave con datos legacy.
+                pass
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS security_audit_events (
+                id BIGSERIAL PRIMARY KEY,
+                level TEXT NOT NULL DEFAULT 'low',
+                action TEXT NOT NULL,
+                actor TEXT NOT NULL DEFAULT 'Sistema',
+                ip TEXT NOT NULL DEFAULT '',
+                details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_security_audit_level ON security_audit_events (level)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_security_audit_created_at ON security_audit_events (created_at DESC)"""))
+
+        conn.execute(text("""
+            INSERT INTO security_audit_events (level, action, actor, ip, details_json, created_at)
+            SELECT 'low', 'Inicialización de módulo de seguridad', 'Sistema', '', '{}'::jsonb, NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM security_audit_events)
+        """))
+
 
 @app.on_event("startup")
 def _startup():
@@ -758,6 +1042,37 @@ async def _startup_kb_web_sources_sync():
     print("[KB_WEB_SYNC] started", {"interval_sec": interval_sec})
 
 
+async def _run_security_key_rotation_forever(stop_event: asyncio.Event, interval_sec: int) -> None:
+    wait_sec = int(max(30, min(int(interval_sec or 900), 86400)))
+    while not stop_event.is_set():
+        try:
+            rotate_due_security_keys_once(limit=60)
+        except Exception as e:
+            print("[SECURITY_ROTATION] tick error:", str(e)[:900])
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=wait_sec)
+        except asyncio.TimeoutError:
+            pass
+
+
+@app.on_event("startup")
+async def _startup_security_key_rotation():
+    global _security_key_rotation_stop, _security_key_rotation_task
+
+    cfg = security_rotation_settings()
+    if not bool(cfg.get("enabled")):
+        print("[SECURITY_ROTATION] disabled")
+        return
+    if _security_key_rotation_task and not _security_key_rotation_task.done():
+        return
+
+    _security_key_rotation_stop = asyncio.Event()
+    _security_key_rotation_task = asyncio.create_task(
+        _run_security_key_rotation_forever(_security_key_rotation_stop, interval_sec=int(cfg.get("interval_sec") or 900))
+    )
+    print("[SECURITY_ROTATION] started", cfg)
+
+
 @app.on_event("shutdown")
 async def _shutdown_campaign_engine():
     global _campaign_engine_stop, _campaign_engine_task
@@ -824,6 +1139,23 @@ async def _shutdown_kb_web_sources_sync():
     except Exception:
         pass
     _kb_web_sync_task = None
+
+
+@app.on_event("shutdown")
+async def _shutdown_security_key_rotation():
+    global _security_key_rotation_stop, _security_key_rotation_task
+
+    if _security_key_rotation_stop:
+        _security_key_rotation_stop.set()
+
+    if _security_key_rotation_task:
+        try:
+            await _security_key_rotation_task
+        except Exception:
+            pass
+
+    _security_key_rotation_task = None
+    _security_key_rotation_stop = None
 
 
 # =========================================================
@@ -4507,3 +4839,1374 @@ async def remarketing_engine_tick_now(
 ):
     fid = int(flow_id or 0)
     return await process_due_remarketing(limit=limit, flow_id=(fid if fid > 0 else None))
+
+
+# =========================================================
+# SECURITY API
+# =========================================================
+
+SECURITY_ROLES = {"admin", "supervisor", "agente"}
+
+
+def security_rotation_settings() -> Dict[str, Any]:
+    raw_enabled = str(os.getenv("SECURITY_KEY_ROTATION_ENABLED", "true") or "true").strip().lower()
+    enabled = raw_enabled in {"1", "true", "yes", "on", "y", "si"}
+    raw_interval = str(os.getenv("SECURITY_KEY_ROTATION_INTERVAL_SEC", "1800") or "1800").strip()
+    try:
+        interval_sec = int(raw_interval)
+    except Exception:
+        interval_sec = 1800
+    interval_sec = int(max(30, min(interval_sec, 86400)))
+    return {"enabled": enabled, "interval_sec": interval_sec}
+
+
+def rotate_due_security_keys_once(limit: int = 60) -> Dict[str, Any]:
+    safe_limit = int(max(1, min(int(limit or 60), 500)))
+    rotated = 0
+    scanned = 0
+    errors: List[str] = []
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, name, scope, rotation_days
+                FROM app_api_keys
+                WHERE is_active = TRUE
+                  AND COALESCE(rotation_days, 0) > 0
+                  AND next_rotation_at IS NOT NULL
+                  AND next_rotation_at <= NOW()
+                ORDER BY next_rotation_at ASC, id ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": safe_limit},
+        ).mappings().all()
+
+        scanned = len(rows)
+        for row in rows:
+            key_id = int(row.get("id") or 0)
+            if key_id <= 0:
+                continue
+            try:
+                plain_secret, preview, secret_hash, secret_cipher = _new_api_secret()
+                conn.execute(
+                    text(
+                        """
+                        UPDATE app_api_keys
+                        SET
+                            secret_preview = :preview,
+                            secret_hash = :secret_hash,
+                            secret_cipher = :secret_cipher,
+                            last_rotated_at = NOW(),
+                            next_rotation_at = NOW() + ((COALESCE(NULLIF(rotation_days, 0), 90)::text || ' days')::interval),
+                            updated_at = NOW(),
+                            is_active = TRUE
+                        WHERE id = :key_id
+                        """
+                    ),
+                    {
+                        "key_id": key_id,
+                        "preview": preview,
+                        "secret_hash": secret_hash,
+                        "secret_cipher": secret_cipher,
+                    },
+                )
+                rotated += 1
+                _audit_security(
+                    conn,
+                    level="high",
+                    action="Rotación automática de API key",
+                    actor="Sistema",
+                    ip="",
+                    details={
+                        "key_id": key_id,
+                        "name": str(row.get("name") or ""),
+                        "scope": str(row.get("scope") or ""),
+                        "auto_rotation": True,
+                    },
+                )
+            except Exception as e:
+                errors.append(f"id={key_id}:{str(e)[:140]}")
+
+    return {"ok": True, "scanned": scanned, "rotated": rotated, "errors": errors}
+
+
+class SecurityPolicyPatch(BaseModel):
+    password_min_length: Optional[int] = Field(default=None, ge=8, le=128)
+    require_special_chars: Optional[bool] = None
+    access_token_minutes: Optional[int] = Field(default=None, ge=5, le=240)
+    refresh_token_days: Optional[int] = Field(default=None, ge=1, le=180)
+    session_idle_minutes: Optional[int] = Field(default=None, ge=5, le=720)
+    session_absolute_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_failed_attempts: Optional[int] = Field(default=None, ge=3, le=20)
+    lock_minutes: Optional[int] = Field(default=None, ge=1, le=240)
+    force_password_rotation_days: Optional[int] = Field(default=None, ge=15, le=365)
+
+
+class SecurityMfaPatch(BaseModel):
+    enforce_for_admins: Optional[bool] = None
+    enforce_for_supervisors: Optional[bool] = None
+    allow_for_agents: Optional[bool] = None
+    backup_codes_enabled: Optional[bool] = None
+
+
+class SecurityAlertsPatch(BaseModel):
+    failed_login_alert: Optional[bool] = None
+    suspicious_ip_alert: Optional[bool] = None
+    security_change_alert: Optional[bool] = None
+    webhook_failure_alert: Optional[bool] = None
+    channel_email: Optional[bool] = None
+    channel_whatsapp: Optional[bool] = None
+
+
+class SecurityUserCreateIn(BaseModel):
+    name: str
+    email: str
+    role: str = "agente"
+    twofa: bool = False
+    active: bool = True
+    password: Optional[str] = None
+
+
+class SecurityUserPatch(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    twofa: Optional[bool] = None
+    active: Optional[bool] = None
+
+
+class SecurityUserPasswordResetIn(BaseModel):
+    password: Optional[str] = None
+
+
+class SecurityTwofaVerifyIn(BaseModel):
+    code: str
+
+
+class SecurityKeyCreateIn(BaseModel):
+    name: str
+    scope: str = "general"
+    rotation_days: int = Field(default=90, ge=1, le=3650)
+
+
+class SecurityKeyPatch(BaseModel):
+    name: Optional[str] = None
+    scope: Optional[str] = None
+    is_active: Optional[bool] = None
+    rotation_days: Optional[int] = Field(default=None, ge=1, le=3650)
+
+
+def _truthy(raw: Any) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on", "y", "si"}
+
+
+def _security_role_tokens() -> Dict[str, str]:
+    return {
+        "admin": str(os.getenv("SECURITY_ADMIN_TOKEN", "") or "").strip(),
+        "supervisor": str(os.getenv("SECURITY_SUPERVISOR_TOKEN", "") or "").strip(),
+        "agente": str(os.getenv("SECURITY_AGENT_TOKEN", "") or "").strip(),
+    }
+
+
+def _security_auth_enabled() -> bool:
+    if _truthy(os.getenv("SECURITY_ENFORCE_AUTH", "")):
+        return True
+    token_map = _security_role_tokens()
+    return any(bool(v) for v in token_map.values())
+
+
+def _resolve_security_role(request: Optional[StarletteRequest]) -> Optional[str]:
+    if request is None:
+        return None
+    auth = str(request.headers.get("Authorization") or "").strip()
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    token_map = _security_role_tokens()
+    for role, secret_token in token_map.items():
+        if secret_token and secrets.compare_digest(token, secret_token):
+            return role
+    return None
+
+
+def _require_security_role(request: Optional[StarletteRequest], allowed_roles: set[str]) -> str:
+    if not _security_auth_enabled():
+        # Modo abierto (desarrollo/legacy): permite operar sin token.
+        return "admin"
+
+    role = _resolve_security_role(request)
+    if not role:
+        raise HTTPException(status_code=401, detail="security bearer token required")
+    if role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="insufficient security role")
+    return role
+
+
+def _security_actor(request: Optional[StarletteRequest]) -> str:
+    if request is None:
+        return "Sistema"
+    hdr = request.headers.get("X-Actor") or request.headers.get("X-Admin-User") or ""
+    actor = str(hdr or "").strip()
+    return actor[:120] if actor else "Sistema"
+
+
+def _security_ip(request: Optional[StarletteRequest]) -> str:
+    if request is None:
+        return ""
+    xfwd = str(request.headers.get("x-forwarded-for") or "").strip()
+    if xfwd:
+        return xfwd.split(",")[0].strip()[:120]
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") if client else ""
+    return str(host or "")[:120]
+
+
+def _hash_password(password: str, salt_b64: Optional[str] = None) -> tuple[str, str]:
+    pwd = str(password or "")
+    if not pwd:
+        raise ValueError("password required")
+    if salt_b64:
+        try:
+            salt = base64.urlsafe_b64decode((salt_b64 + ("=" * ((4 - len(salt_b64) % 4) % 4))).encode("utf-8"))
+        except Exception:
+            salt = secrets.token_bytes(16)
+    else:
+        salt = secrets.token_bytes(16)
+
+    digest = hashlib.pbkdf2_hmac("sha256", pwd.encode("utf-8"), salt, 240000)
+    salt_out = base64.urlsafe_b64encode(salt).decode("ascii").rstrip("=")
+    hash_out = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return salt_out, hash_out
+
+
+def _verify_password(password: str, salt_b64: str, expected_hash_b64: str) -> bool:
+    try:
+        _, actual = _hash_password(password, salt_b64=salt_b64)
+        return secrets.compare_digest(str(actual or ""), str(expected_hash_b64 or ""))
+    except Exception:
+        return False
+
+
+def _generate_temp_password(length: int = 14) -> str:
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*-_"
+    n = int(max(10, min(int(length or 14), 64)))
+    return "".join(secrets.choice(chars) for _ in range(n))
+
+
+def _validate_password_policy(conn, password: str) -> None:
+    pwd = str(password or "")
+    if not pwd:
+        raise HTTPException(status_code=400, detail="password is required")
+
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                password_min_length,
+                require_special_chars
+            FROM security_policy
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+
+    min_len = int((row or {}).get("password_min_length") or 10)
+    require_special = bool((row or {}).get("require_special_chars"))
+    if len(pwd) < min_len:
+        raise HTTPException(status_code=400, detail=f"password must have at least {min_len} characters")
+    if require_special and re.search(r"[^a-zA-Z0-9]", pwd) is None:
+        raise HTTPException(status_code=400, detail="password requires at least one special character")
+
+
+def _totp_generate_secret() -> str:
+    try:
+        import pyotp  # type: ignore
+        return str(pyotp.random_base32())
+    except Exception:
+        # Fallback base32-like (sin dependencias externas)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+        return "".join(secrets.choice(alphabet) for _ in range(32))
+
+
+def _totp_verify(secret: str, code: str) -> bool:
+    try:
+        import pyotp  # type: ignore
+        return bool(pyotp.TOTP(str(secret or "")).verify(str(code or "").strip(), valid_window=1))
+    except Exception:
+        return False
+
+
+def _totp_uri(secret: str, email: str) -> str:
+    acct = str(email or "usuario").strip() or "usuario"
+    issuer = str(os.getenv("SECURITY_2FA_ISSUER", "Verane CRM")).strip() or "Verane CRM"
+    try:
+        import pyotp  # type: ignore
+        return str(pyotp.totp.TOTP(secret).provisioning_uri(name=acct, issuer_name=issuer))
+    except Exception:
+        return f"otpauth://totp/{issuer}:{acct}?secret={secret}&issuer={issuer}"
+
+
+def _security_data_key() -> bytes:
+    raw = str(os.getenv("SECURITY_DATA_KEY", "") or "").strip()
+    if raw:
+        # Acepta base64 urlsafe o texto plano.
+        try:
+            padded = raw + ("=" * ((4 - len(raw) % 4) % 4))
+            decoded = base64.urlsafe_b64decode(padded.encode("utf-8"))
+            if decoded:
+                return hashlib.sha256(decoded).digest()
+        except Exception:
+            pass
+        return hashlib.sha256(raw.encode("utf-8")).digest()
+
+    # Fallback determinístico para no romper despliegues legacy sin key explícita.
+    seed = "|".join(
+        [
+            str(os.getenv("DATABASE_URL", "") or ""),
+            str(os.getenv("SECURITY_ADMIN_TOKEN", "") or ""),
+            str(os.getenv("SECURITY_SUPERVISOR_TOKEN", "") or ""),
+            str(os.getenv("SECURITY_AGENT_TOKEN", "") or ""),
+        ]
+    )
+    return hashlib.sha256(seed.encode("utf-8")).digest()
+
+
+def _encrypt_security_secret(plain: str) -> str:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except Exception as e:
+        raise RuntimeError(
+            "Missing dependency 'cryptography'. Install backend requirements before enabling encrypted secrets."
+        ) from e
+
+    key = _security_data_key()
+    nonce = secrets.token_bytes(12)
+    aesgcm = AESGCM(key)
+    cipher = aesgcm.encrypt(nonce, str(plain or "").encode("utf-8"), None)
+    payload = base64.urlsafe_b64encode(nonce + cipher).decode("ascii")
+    return f"v1:{payload}"
+
+
+def _decrypt_security_secret(cipher_text: str) -> str:
+    raw = str(cipher_text or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith("v1:"):
+        raise ValueError("Unsupported encrypted secret format")
+    blob = raw.split(":", 1)[1]
+    padded = blob + ("=" * ((4 - len(blob) % 4) % 4))
+    data = base64.urlsafe_b64decode(padded.encode("utf-8"))
+    if len(data) < 13:
+        raise ValueError("Corrupted encrypted secret")
+
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except Exception as e:
+        raise RuntimeError(
+            "Missing dependency 'cryptography'. Install backend requirements before decrypting secrets."
+        ) from e
+
+    nonce, cipher = data[:12], data[12:]
+    aesgcm = AESGCM(_security_data_key())
+    plain = aesgcm.decrypt(nonce, cipher, None)
+    return plain.decode("utf-8")
+
+
+def _new_api_secret() -> tuple[str, str, str, str]:
+    raw = f"vk_{secrets.token_urlsafe(24)}"
+    secret_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    preview = f"{raw[:4]}...{raw[-4:]}"
+    secret_cipher = _encrypt_security_secret(raw)
+    return raw, preview, secret_hash, secret_cipher
+
+
+def _audit_security(
+    conn,
+    *,
+    level: str,
+    action: str,
+    actor: str,
+    ip: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    level_clean = str(level or "low").strip().lower()
+    if level_clean not in {"low", "medium", "high"}:
+        level_clean = "low"
+    payload = json.dumps(details or {}, ensure_ascii=False)
+    conn.execute(
+        text(
+            """
+            INSERT INTO security_audit_events (level, action, actor, ip, details_json, created_at)
+            VALUES (:level, :action, :actor, :ip, CAST(:details AS jsonb), NOW())
+            """
+        ),
+        {
+            "level": level_clean,
+            "action": str(action or "").strip()[:240] or "Evento de seguridad",
+            "actor": str(actor or "Sistema").strip()[:120] or "Sistema",
+            "ip": str(ip or "").strip()[:120],
+            "details": payload,
+        },
+    )
+
+
+def _load_security_payload(conn, *, audit_level: str = "all", audit_limit: int = 30) -> Dict[str, Any]:
+    policy = conn.execute(
+        text(
+            """
+            SELECT
+                password_min_length,
+                require_special_chars,
+                access_token_minutes,
+                refresh_token_days,
+                session_idle_minutes,
+                session_absolute_hours,
+                max_failed_attempts,
+                lock_minutes,
+                force_password_rotation_days,
+                updated_at
+            FROM security_policy
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+
+    mfa = conn.execute(
+        text(
+            """
+            SELECT
+                enforce_for_admins,
+                enforce_for_supervisors,
+                allow_for_agents,
+                backup_codes_enabled,
+                updated_at
+            FROM security_mfa_settings
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+
+    alerts = conn.execute(
+        text(
+            """
+            SELECT
+                failed_login_alert,
+                suspicious_ip_alert,
+                security_change_alert,
+                webhook_failure_alert,
+                channel_email,
+                channel_whatsapp,
+                updated_at
+            FROM security_alert_settings
+            WHERE id = 1
+            LIMIT 1
+            """
+        )
+    ).mappings().first()
+
+    users_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id,
+                name,
+                email,
+                role,
+                twofa,
+                is_active AS active,
+                last_login_at AS last_login,
+                created_at,
+                updated_at
+            FROM app_users
+            ORDER BY id DESC
+            """
+        )
+    ).mappings().all()
+
+    sessions_rows = conn.execute(
+        text(
+            """
+            SELECT
+                s.id,
+                COALESCE(u.name, '') AS "user",
+                s.device,
+                s.ip,
+                s.created_at,
+                s.last_seen_at AS last_seen
+            FROM app_user_sessions s
+            LEFT JOIN app_users u ON u.id = s.user_id
+            WHERE s.revoked_at IS NULL
+            ORDER BY s.last_seen_at DESC, s.created_at DESC
+            LIMIT 400
+            """
+        )
+    ).mappings().all()
+
+    keys_rows = conn.execute(
+        text(
+            """
+            SELECT
+                id,
+                name,
+                scope,
+                secret_preview AS value,
+                is_active,
+                rotation_days,
+                next_rotation_at,
+                last_rotated_at,
+                updated_at,
+                created_at
+            FROM app_api_keys
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 500
+            """
+        )
+    ).mappings().all()
+
+    level = str(audit_level or "all").strip().lower()
+    where = ""
+    params: Dict[str, Any] = {"limit": int(max(1, min(int(audit_limit or 30), 300)))}
+    if level in {"high", "medium", "low"}:
+        where = "WHERE LOWER(level) = :level"
+        params["level"] = level
+
+    audit_rows = conn.execute(
+        text(
+            f"""
+            SELECT id, level, action, actor, ip, created_at
+            FROM security_audit_events
+            {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT :limit
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    critical_24h = conn.execute(
+        text(
+            """
+            SELECT COUNT(1)
+            FROM security_audit_events
+            WHERE LOWER(level) = 'high'
+              AND created_at >= (NOW() - INTERVAL '24 hours')
+            """
+        )
+    ).scalar_one()
+
+    users = [dict(r) for r in users_rows]
+    sessions = [dict(r) for r in sessions_rows]
+    keys = [dict(r) for r in keys_rows]
+    audit_events = [dict(r) for r in audit_rows]
+    active_users = sum(1 for u in users if bool(u.get("active")))
+    with_2fa = sum(1 for u in users if bool(u.get("twofa")))
+
+    return {
+        "policy": dict(policy or {}),
+        "mfa": dict(mfa or {}),
+        "alerts": dict(alerts or {}),
+        "users": users,
+        "sessions": sessions,
+        "keys": keys,
+        "audit_events": audit_events,
+        "summary": {
+            "active_users": int(active_users),
+            "users_with_2fa": int(with_2fa),
+            "total_users": len(users),
+            "open_sessions": len(sessions),
+            "critical_events_24h": int(critical_24h or 0),
+        },
+    }
+
+
+@app.get("/api/security/state")
+def get_security_state(
+    audit_level: str = Query("all", description="all|high|medium|low"),
+    audit_limit: int = Query(50, ge=1, le=300),
+    request: StarletteRequest = None,
+):
+    _require_security_role(request, {"admin", "supervisor"})
+    with engine.begin() as conn:
+        return _load_security_payload(conn, audit_level=audit_level, audit_limit=audit_limit)
+
+
+@app.get("/api/security/auth/mode")
+def get_security_auth_mode():
+    token_map = _security_role_tokens()
+    enabled = _security_auth_enabled()
+    return {
+        "enabled": bool(enabled),
+        "open_mode": not bool(enabled),
+        "configured_roles": [role for role, tok in token_map.items() if tok],
+    }
+
+
+@app.get("/api/security/rotation/status")
+def get_security_rotation_status(request: StarletteRequest):
+    _require_security_role(request, {"admin", "supervisor"})
+    cfg = security_rotation_settings()
+    running = bool(_security_key_rotation_task and not _security_key_rotation_task.done())
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "running": running,
+        "interval_sec": int(cfg.get("interval_sec") or 0),
+    }
+
+
+@app.post("/api/security/rotation/tick")
+def run_security_rotation_tick(
+    request: StarletteRequest,
+    limit: int = Query(60, ge=1, le=500),
+):
+    _require_security_role(request, {"admin"})
+    result = rotate_due_security_keys_once(limit=limit)
+    return result
+
+
+@app.put("/api/security/policy")
+def update_security_policy(payload: SecurityPolicyPatch, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with engine.begin() as conn:
+        sets = ["updated_at = NOW()"]
+        params: Dict[str, Any] = {}
+        for key, val in data.items():
+            sets.append(f"{key} = :{key}")
+            params[key] = val
+
+        conn.execute(
+            text(
+                f"""
+                UPDATE security_policy
+                SET {", ".join(sets)}
+                WHERE id = 1
+                """
+            ),
+            params,
+        )
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Actualización de políticas de seguridad",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"updated_fields": sorted(list(data.keys()))},
+        )
+
+        state = _load_security_payload(conn, audit_level="all", audit_limit=40)
+    return {"ok": True, "policy": state.get("policy", {}), "summary": state.get("summary", {})}
+
+
+@app.put("/api/security/mfa")
+def update_security_mfa(payload: SecurityMfaPatch, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with engine.begin() as conn:
+        sets = ["updated_at = NOW()"]
+        params: Dict[str, Any] = {}
+        for key, val in data.items():
+            sets.append(f"{key} = :{key}")
+            params[key] = bool(val)
+
+        conn.execute(
+            text(
+                f"""
+                UPDATE security_mfa_settings
+                SET {", ".join(sets)}
+                WHERE id = 1
+                """
+            ),
+            params,
+        )
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Actualización de política MFA",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"updated_fields": sorted(list(data.keys()))},
+        )
+        state = _load_security_payload(conn, audit_level="all", audit_limit=40)
+    return {"ok": True, "mfa": state.get("mfa", {}), "summary": state.get("summary", {})}
+
+
+@app.put("/api/security/alerts")
+def update_security_alerts(payload: SecurityAlertsPatch, request: StarletteRequest):
+    _require_security_role(request, {"admin", "supervisor"})
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with engine.begin() as conn:
+        sets = ["updated_at = NOW()"]
+        params: Dict[str, Any] = {}
+        for key, val in data.items():
+            sets.append(f"{key} = :{key}")
+            params[key] = bool(val)
+
+        conn.execute(
+            text(
+                f"""
+                UPDATE security_alert_settings
+                SET {", ".join(sets)}
+                WHERE id = 1
+                """
+            ),
+            params,
+        )
+
+        _audit_security(
+            conn,
+            level="low",
+            action="Actualización de alertas de seguridad",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"updated_fields": sorted(list(data.keys()))},
+        )
+        state = _load_security_payload(conn, audit_level="all", audit_limit=40)
+    return {"ok": True, "alerts": state.get("alerts", {}), "summary": state.get("summary", {})}
+
+
+@app.post("/api/security/users")
+def create_security_user(payload: SecurityUserCreateIn, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    name = str(payload.name or "").strip()
+    email = str(payload.email or "").strip().lower()
+    role = str(payload.role or "agente").strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="valid email is required")
+    if role not in SECURITY_ROLES:
+        raise HTTPException(status_code=400, detail="invalid role")
+
+    with engine.begin() as conn:
+        raw_password = str(payload.password or "").strip() or _generate_temp_password(14)
+        _validate_password_policy(conn, raw_password)
+        salt, pwh = _hash_password(raw_password)
+        requested_twofa = bool(payload.twofa)
+        twofa_secret = ""
+        twofa_secret_cipher = ""
+        twofa_uri = ""
+        if requested_twofa:
+            twofa_secret = _totp_generate_secret()
+            twofa_secret_cipher = _encrypt_security_secret(twofa_secret)
+            twofa_uri = _totp_uri(twofa_secret, email)
+
+        exists = conn.execute(
+            text("SELECT id FROM app_users WHERE LOWER(email) = :email LIMIT 1"),
+            {"email": email},
+        ).mappings().first()
+        if exists:
+            raise HTTPException(status_code=409, detail="email already exists")
+
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO app_users (
+                    name, email, role, twofa, is_active,
+                    twofa_secret_cipher,
+                    password_salt, password_hash, password_updated_at,
+                    created_at, updated_at
+                )
+                VALUES (
+                    :name, :email, :role, FALSE, :active,
+                    :twofa_secret_cipher,
+                    :password_salt, :password_hash, NOW(),
+                    NOW(), NOW()
+                )
+                RETURNING
+                    id, name, email, role, twofa, is_active AS active, last_login_at AS last_login, created_at, updated_at
+                """
+            ),
+            {
+                "name": name,
+                "email": email,
+                "role": role,
+                "active": bool(payload.active),
+                "twofa_secret_cipher": twofa_secret_cipher,
+                "password_salt": salt,
+                "password_hash": pwh,
+            },
+        ).mappings().first()
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Creación de usuario",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"email": email, "role": role, "requested_twofa": requested_twofa},
+        )
+
+    return {
+        "ok": True,
+        "user": dict(row or {}),
+        "temp_password": raw_password,
+        "twofa_pending_setup": requested_twofa,
+        "twofa_setup_secret": twofa_secret,
+        "twofa_setup_uri": twofa_uri,
+    }
+
+
+@app.patch("/api/security/users/{user_id}")
+def patch_security_user(user_id: int, payload: SecurityUserPatch, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with engine.begin() as conn:
+        current = conn.execute(
+            text(
+                """
+                SELECT id, name, email, role, twofa, is_active
+                FROM app_users
+                WHERE id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"user_id": int(user_id)},
+        ).mappings().first()
+        if not current:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        sets = ["updated_at = NOW()"]
+        params: Dict[str, Any] = {"user_id": int(user_id)}
+
+        if "name" in data:
+            name = str(data.get("name") or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="name cannot be empty")
+            sets.append("name = :name")
+            params["name"] = name
+
+        if "email" in data:
+            email = str(data.get("email") or "").strip().lower()
+            if not email or "@" not in email:
+                raise HTTPException(status_code=400, detail="valid email is required")
+            exists = conn.execute(
+                text("SELECT id FROM app_users WHERE LOWER(email) = :email AND id <> :user_id LIMIT 1"),
+                {"email": email, "user_id": int(user_id)},
+            ).mappings().first()
+            if exists:
+                raise HTTPException(status_code=409, detail="email already exists")
+            sets.append("email = :email")
+            params["email"] = email
+
+        if "role" in data:
+            role = str(data.get("role") or "").strip().lower()
+            if role not in SECURITY_ROLES:
+                raise HTTPException(status_code=400, detail="invalid role")
+            sets.append("role = :role")
+            params["role"] = role
+
+        if "twofa" in data:
+            sets.append("twofa = :twofa")
+            params["twofa"] = bool(data.get("twofa"))
+
+        if "active" in data:
+            sets.append("is_active = :active")
+            params["active"] = bool(data.get("active"))
+
+        row = conn.execute(
+            text(
+                f"""
+                UPDATE app_users
+                SET {", ".join(sets)}
+                WHERE id = :user_id
+                RETURNING
+                    id, name, email, role, twofa, is_active AS active, last_login_at AS last_login, created_at, updated_at
+                """
+            ),
+            params,
+        ).mappings().first()
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Actualización de usuario",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"user_id": int(user_id), "updated_fields": sorted(list(data.keys()))},
+        )
+
+    return {"ok": True, "user": dict(row or {})}
+
+
+@app.post("/api/security/users/{user_id}/password/reset")
+def reset_security_user_password(user_id: int, payload: SecurityUserPasswordResetIn, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    with engine.begin() as conn:
+        exists = conn.execute(
+            text("SELECT id, email FROM app_users WHERE id = :user_id LIMIT 1"),
+            {"user_id": int(user_id)},
+        ).mappings().first()
+        if not exists:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        password = str(payload.password or "").strip() or _generate_temp_password(14)
+        _validate_password_policy(conn, password)
+        salt, pwh = _hash_password(password)
+        conn.execute(
+            text(
+                """
+                UPDATE app_users
+                SET
+                    password_salt = :salt,
+                    password_hash = :pwh,
+                    password_updated_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = :user_id
+                """
+            ),
+            {"user_id": int(user_id), "salt": salt, "pwh": pwh},
+        )
+
+        _audit_security(
+            conn,
+            level="high",
+            action="Reseteo de contraseña de usuario",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"user_id": int(user_id), "email": str(exists.get("email") or "")},
+        )
+
+    return {"ok": True, "user_id": int(user_id), "temp_password": password}
+
+
+@app.post("/api/security/users/{user_id}/2fa/setup")
+def setup_security_user_2fa(user_id: int, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, email
+                FROM app_users
+                WHERE id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"user_id": int(user_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        secret = _totp_generate_secret()
+        secret_cipher = _encrypt_security_secret(secret)
+        conn.execute(
+            text(
+                """
+                UPDATE app_users
+                SET
+                    twofa_secret_cipher = :secret_cipher,
+                    twofa = FALSE,
+                    updated_at = NOW()
+                WHERE id = :user_id
+                """
+            ),
+            {"user_id": int(user_id), "secret_cipher": secret_cipher},
+        )
+        _audit_security(
+            conn,
+            level="medium",
+            action="Configuración inicial 2FA",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"user_id": int(user_id), "email": str(row.get("email") or "")},
+        )
+
+    return {
+        "ok": True,
+        "user_id": int(user_id),
+        "secret": secret,
+        "otpauth_uri": _totp_uri(secret, str(row.get("email") or "")),
+    }
+
+
+@app.post("/api/security/users/{user_id}/2fa/verify")
+def verify_security_user_2fa(user_id: int, payload: SecurityTwofaVerifyIn, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    code = str(payload.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="code is required")
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, email, twofa_secret_cipher
+                FROM app_users
+                WHERE id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"user_id": int(user_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        secret_cipher = str(row.get("twofa_secret_cipher") or "")
+        if not secret_cipher:
+            raise HTTPException(status_code=409, detail="2FA setup required first")
+        secret = _decrypt_security_secret(secret_cipher)
+        if not _totp_verify(secret, code):
+            raise HTTPException(status_code=400, detail="invalid 2FA code")
+
+        conn.execute(
+            text(
+                """
+                UPDATE app_users
+                SET twofa = TRUE, updated_at = NOW()
+                WHERE id = :user_id
+                """
+            ),
+            {"user_id": int(user_id)},
+        )
+        _audit_security(
+            conn,
+            level="high",
+            action="Activación de 2FA",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"user_id": int(user_id), "email": str(row.get("email") or "")},
+        )
+
+    return {"ok": True, "user_id": int(user_id), "twofa": True}
+
+
+@app.post("/api/security/users/{user_id}/2fa/disable")
+def disable_security_user_2fa(user_id: int, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT id, email FROM app_users WHERE id = :user_id LIMIT 1"),
+            {"user_id": int(user_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        conn.execute(
+            text(
+                """
+                UPDATE app_users
+                SET
+                    twofa = FALSE,
+                    twofa_secret_cipher = '',
+                    updated_at = NOW()
+                WHERE id = :user_id
+                """
+            ),
+            {"user_id": int(user_id)},
+        )
+        _audit_security(
+            conn,
+            level="high",
+            action="Desactivación de 2FA",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"user_id": int(user_id), "email": str(row.get("email") or "")},
+        )
+    return {"ok": True, "user_id": int(user_id), "twofa": False}
+
+
+@app.post("/api/security/sessions/{session_id}/revoke")
+def revoke_security_session(session_id: str, request: StarletteRequest):
+    _require_security_role(request, {"admin", "supervisor"})
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="session_id required")
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                UPDATE app_user_sessions
+                SET revoked_at = NOW()
+                WHERE id = :sid
+                  AND revoked_at IS NULL
+                RETURNING id
+                """
+            ),
+            {"sid": sid},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="session not found or already revoked")
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Revocación de sesión",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"session_id": sid},
+        )
+
+    return {"ok": True, "session_id": sid, "revoked": True}
+
+
+@app.post("/api/security/sessions/revoke-all")
+def revoke_all_security_sessions(request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    with engine.begin() as conn:
+        rs = conn.execute(
+            text(
+                """
+                UPDATE app_user_sessions
+                SET revoked_at = NOW()
+                WHERE revoked_at IS NULL
+                """
+            )
+        )
+        count = int(rs.rowcount or 0)
+        _audit_security(
+            conn,
+            level="high",
+            action="Revocación masiva de sesiones",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"revoked_count": count},
+        )
+    return {"ok": True, "revoked_count": count}
+
+
+@app.post("/api/security/keys")
+def create_security_key(payload: SecurityKeyCreateIn, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    name = str(payload.name or "").strip()
+    scope = str(payload.scope or "general").strip().lower()
+    rotation_days = int(payload.rotation_days or 90)
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not scope:
+        scope = "general"
+
+    plain_secret, preview, secret_hash, secret_cipher = _new_api_secret()
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                INSERT INTO app_api_keys (
+                    name, scope, secret_preview, secret_hash, secret_cipher,
+                    is_active, rotation_days, last_rotated_at, next_rotation_at,
+                    created_at, updated_at
+                )
+                VALUES (
+                    :name, :scope, :preview, :secret_hash, :secret_cipher,
+                    TRUE, :rotation_days, NOW(), NOW() + ((:rotation_days::text || ' days')::interval),
+                    NOW(), NOW()
+                )
+                RETURNING
+                    id, name, scope, secret_preview AS value, is_active,
+                    rotation_days, next_rotation_at, last_rotated_at, updated_at, created_at
+                """
+            ),
+            {
+                "name": name,
+                "scope": scope,
+                "preview": preview,
+                "secret_hash": secret_hash,
+                "secret_cipher": secret_cipher,
+                "rotation_days": rotation_days,
+            },
+        ).mappings().first()
+
+        _audit_security(
+            conn,
+            level="high",
+            action="Creación de API key",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"name": name, "scope": scope, "rotation_days": rotation_days},
+        )
+
+    return {"ok": True, "key": dict(row or {}), "plain_secret": plain_secret}
+
+
+@app.post("/api/security/keys/{key_id}/rotate")
+def rotate_security_key(key_id: int, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    plain_secret, preview, secret_hash, secret_cipher = _new_api_secret()
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                UPDATE app_api_keys
+                SET
+                    secret_preview = :preview,
+                    secret_hash = :secret_hash,
+                    secret_cipher = :secret_cipher,
+                    updated_at = NOW(),
+                    last_rotated_at = NOW(),
+                    next_rotation_at = NOW() + ((COALESCE(NULLIF(rotation_days, 0), 90)::text || ' days')::interval),
+                    is_active = TRUE
+                WHERE id = :key_id
+                RETURNING
+                    id, name, scope, secret_preview AS value, is_active,
+                    rotation_days, next_rotation_at, last_rotated_at, updated_at, created_at
+                """
+            ),
+            {
+                "key_id": int(key_id),
+                "preview": preview,
+                "secret_hash": secret_hash,
+                "secret_cipher": secret_cipher,
+            },
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="key not found")
+
+        _audit_security(
+            conn,
+            level="high",
+            action="Rotación de API key",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={
+                "key_id": int(key_id),
+                "name": str(row.get("name") or ""),
+                "next_rotation_at": str(row.get("next_rotation_at") or ""),
+            },
+        )
+
+    return {"ok": True, "key": dict(row or {}), "plain_secret": plain_secret}
+
+
+@app.patch("/api/security/keys/{key_id}")
+def patch_security_key(key_id: int, payload: SecurityKeyPatch, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    sets = ["updated_at = NOW()"]
+    params: Dict[str, Any] = {"key_id": int(key_id)}
+
+    if "name" in data:
+        name = str(data.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        sets.append("name = :name")
+        params["name"] = name
+
+    if "scope" in data:
+        scope = str(data.get("scope") or "").strip().lower()
+        if not scope:
+            raise HTTPException(status_code=400, detail="scope cannot be empty")
+        sets.append("scope = :scope")
+        params["scope"] = scope
+
+    if "is_active" in data:
+        sets.append("is_active = :is_active")
+        params["is_active"] = bool(data.get("is_active"))
+
+    if "rotation_days" in data:
+        rotation_days = int(data.get("rotation_days") or 90)
+        sets.append("rotation_days = :rotation_days")
+        sets.append("next_rotation_at = NOW() + ((:rotation_days::text || ' days')::interval)")
+        params["rotation_days"] = rotation_days
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                UPDATE app_api_keys
+                SET {", ".join(sets)}
+                WHERE id = :key_id
+                RETURNING
+                    id, name, scope, secret_preview AS value, is_active,
+                    rotation_days, next_rotation_at, last_rotated_at, updated_at, created_at
+                """
+            ),
+            params,
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="key not found")
+
+        _audit_security(
+            conn,
+            level="medium",
+            action="Actualización de API key",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"key_id": int(key_id), "updated_fields": sorted(list(data.keys()))},
+        )
+
+    return {"ok": True, "key": dict(row or {})}
+
+
+@app.post("/api/security/keys/{key_id}/reveal")
+def reveal_security_key(key_id: int, request: StarletteRequest):
+    _require_security_role(request, {"admin"})
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT id, name, secret_cipher
+                FROM app_api_keys
+                WHERE id = :key_id
+                LIMIT 1
+                """
+            ),
+            {"key_id": int(key_id)},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="key not found")
+
+        plain = _decrypt_security_secret(str(row.get("secret_cipher") or ""))
+        _audit_security(
+            conn,
+            level="high",
+            action="Revelado de API key",
+            actor=_security_actor(request),
+            ip=_security_ip(request),
+            details={"key_id": int(key_id), "name": str(row.get("name") or "")},
+        )
+
+    return {"ok": True, "key_id": int(key_id), "plain_secret": plain}
+
+
+@app.get("/api/security/audit")
+def list_security_audit(
+    level: str = Query("all", description="all|high|medium|low"),
+    limit: int = Query(120, ge=1, le=500),
+    request: StarletteRequest = None,
+):
+    _require_security_role(request, {"admin", "supervisor"})
+    lvl = str(level or "all").strip().lower()
+    where = ""
+    params: Dict[str, Any] = {"limit": int(limit)}
+    if lvl in {"high", "medium", "low"}:
+        where = "WHERE LOWER(level) = :level"
+        params["level"] = lvl
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT id, level, action, actor, ip, created_at, details_json
+                FROM security_audit_events
+                {where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).mappings().all()
+
+    return {"events": [dict(r) for r in rows]}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 from typing import Any, Dict, Iterable, List, Optional
@@ -13,9 +15,19 @@ router = APIRouter()
 
 
 META_VERIFY_TOKEN = str(os.getenv("META_VERIFY_TOKEN", "")).strip()
+META_WEBHOOK_VERIFY_TOKEN = str(os.getenv("META_WEBHOOK_VERIFY_TOKEN", META_VERIFY_TOKEN)).strip()
 FACEBOOK_VERIFY_TOKEN = str(os.getenv("FACEBOOK_VERIFY_TOKEN", META_VERIFY_TOKEN)).strip()
 INSTAGRAM_VERIFY_TOKEN = str(os.getenv("INSTAGRAM_VERIFY_TOKEN", META_VERIFY_TOKEN)).strip()
 TIKTOK_VERIFY_TOKEN = str(os.getenv("TIKTOK_VERIFY_TOKEN", "")).strip()
+
+META_MESSENGER_VERIFY_TOKEN = str(os.getenv("META_MESSENGER_VERIFY_TOKEN", FACEBOOK_VERIFY_TOKEN or META_WEBHOOK_VERIFY_TOKEN)).strip()
+META_PAGE_VERIFY_TOKEN = str(os.getenv("META_PAGE_VERIFY_TOKEN", FACEBOOK_VERIFY_TOKEN or META_WEBHOOK_VERIFY_TOKEN)).strip()
+META_LEADS_VERIFY_TOKEN = str(os.getenv("META_LEADS_VERIFY_TOKEN", META_WEBHOOK_VERIFY_TOKEN or FACEBOOK_VERIFY_TOKEN)).strip()
+META_ADS_VERIFY_TOKEN = str(os.getenv("META_ADS_VERIFY_TOKEN", META_WEBHOOK_VERIFY_TOKEN or FACEBOOK_VERIFY_TOKEN)).strip()
+META_APP_SECRET = str(os.getenv("META_APP_SECRET", "")).strip()
+META_ENFORCE_SIGNATURE = str(os.getenv("META_ENFORCE_SIGNATURE", "false")).strip().lower() == "true"
+
+_SOCIAL_TABLES_READY = False
 
 
 def _norm_channel(channel: str, default: str = "facebook") -> str:
@@ -35,6 +47,127 @@ def _safe_list(value: Any) -> List[Any]:
     if isinstance(value, list):
         return value
     return []
+
+
+def _headers_subset(headers: Any) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not headers:
+        return out
+    for key in ("x-hub-signature-256", "x-hub-signature", "user-agent", "x-forwarded-for", "x-real-ip"):
+        try:
+            val = headers.get(key)
+        except Exception:
+            val = None
+        if val:
+            out[key] = str(val)
+    return out
+
+
+def _ensure_social_tables() -> None:
+    global _SOCIAL_TABLES_READY
+    if _SOCIAL_TABLES_READY:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS social_webhook_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    route_key TEXT NOT NULL,
+                    object_name TEXT,
+                    channel TEXT,
+                    processed INTEGER NOT NULL DEFAULT 0,
+                    errors INTEGER NOT NULL DEFAULT 0,
+                    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    headers_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_social_webhook_events_created_at ON social_webhook_events (created_at DESC)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_social_webhook_events_route_key ON social_webhook_events (route_key)"))
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS meta_lead_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    leadgen_id TEXT NOT NULL,
+                    page_id TEXT,
+                    form_id TEXT,
+                    ad_id TEXT,
+                    adgroup_id TEXT,
+                    object_name TEXT,
+                    route_key TEXT NOT NULL,
+                    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    UNIQUE (leadgen_id)
+                )
+                """
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_meta_lead_events_created_at ON meta_lead_events (created_at DESC)"))
+
+    _SOCIAL_TABLES_READY = True
+
+
+def _save_social_webhook_event(
+    *,
+    provider: str,
+    route_key: str,
+    object_name: str,
+    channel: str,
+    processed: int,
+    errors: int,
+    payload: Dict[str, Any],
+    headers: Dict[str, Any],
+) -> None:
+    _ensure_social_tables()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO social_webhook_events (
+                    provider, route_key, object_name, channel,
+                    processed, errors, payload_json, headers_json, created_at
+                )
+                VALUES (
+                    :provider, :route_key, :object_name, :channel,
+                    :processed, :errors, CAST(:payload_json AS jsonb), CAST(:headers_json AS jsonb), NOW()
+                )
+                """
+            ),
+            {
+                "provider": str(provider or "meta").strip().lower() or "meta",
+                "route_key": str(route_key or "").strip().lower() or "meta",
+                "object_name": str(object_name or "").strip().lower() or None,
+                "channel": _norm_channel(channel, default="facebook"),
+                "processed": int(processed or 0),
+                "errors": int(errors or 0),
+                "payload_json": json.dumps(payload or {}, ensure_ascii=False),
+                "headers_json": json.dumps(headers or {}, ensure_ascii=False),
+            },
+        )
+
+
+def _verify_meta_signature_or_skip(request: Request, raw_body: bytes) -> None:
+    secret = str(META_APP_SECRET or "").strip()
+    if not secret:
+        return
+
+    raw_sig = str(request.headers.get("x-hub-signature-256") or "").strip()
+    if not raw_sig:
+        if META_ENFORCE_SIGNATURE:
+            raise HTTPException(status_code=403, detail="Missing X-Hub-Signature-256")
+        return
+
+    digest = hmac.new(secret.encode("utf-8"), raw_body or b"", hashlib.sha256).hexdigest()
+    expected = f"sha256={digest}"
+    if not hmac.compare_digest(expected, raw_sig):
+        raise HTTPException(status_code=403, detail="Invalid X-Hub-Signature-256")
 
 
 def _extract_sender_id(value: Any) -> str:
@@ -171,6 +304,84 @@ def _iter_meta_records(payload: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
                         "media_id": None,
                         "mime_type": None,
                     }
+
+
+def _iter_meta_lead_events(payload: Dict[str, Any], route_key: str) -> Iterable[Dict[str, Any]]:
+    object_name = str(payload.get("object") or "").strip().lower()
+    entries = _safe_list(payload.get("entry"))
+    for entry in entries:
+        eobj = _safe_obj(entry)
+        entry_id = str(eobj.get("id") or "").strip()
+        for change in _safe_list(eobj.get("changes")):
+            cobj = _safe_obj(change)
+            field = str(cobj.get("field") or "").strip().lower()
+            if field != "leadgen":
+                continue
+
+            value = _safe_obj(cobj.get("value"))
+            leadgen_id = str(value.get("leadgen_id") or value.get("leadgenid") or "").strip()
+            if not leadgen_id:
+                continue
+
+            page_id = str(value.get("page_id") or entry_id or "").strip() or None
+            form_id = str(value.get("form_id") or value.get("formid") or "").strip() or None
+            ad_id = str(value.get("ad_id") or "").strip() or None
+            adgroup_id = str(value.get("adgroup_id") or "").strip() or None
+
+            yield {
+                "leadgen_id": leadgen_id,
+                "page_id": page_id,
+                "form_id": form_id,
+                "ad_id": ad_id,
+                "adgroup_id": adgroup_id,
+                "object_name": object_name or "page",
+                "route_key": str(route_key or "meta").strip().lower(),
+                "payload_json": value,
+            }
+
+
+def _save_meta_lead_events(payload: Dict[str, Any], route_key: str) -> int:
+    events = list(_iter_meta_lead_events(payload, route_key=route_key))
+    if not events:
+        return 0
+
+    _ensure_social_tables()
+    with engine.begin() as conn:
+        for evt in events:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO meta_lead_events (
+                        leadgen_id, page_id, form_id, ad_id, adgroup_id,
+                        object_name, route_key, payload_json, created_at
+                    )
+                    VALUES (
+                        :leadgen_id, :page_id, :form_id, :ad_id, :adgroup_id,
+                        :object_name, :route_key, CAST(:payload_json AS jsonb), NOW()
+                    )
+                    ON CONFLICT (leadgen_id)
+                    DO UPDATE SET
+                        page_id = COALESCE(EXCLUDED.page_id, meta_lead_events.page_id),
+                        form_id = COALESCE(EXCLUDED.form_id, meta_lead_events.form_id),
+                        ad_id = COALESCE(EXCLUDED.ad_id, meta_lead_events.ad_id),
+                        adgroup_id = COALESCE(EXCLUDED.adgroup_id, meta_lead_events.adgroup_id),
+                        object_name = COALESCE(EXCLUDED.object_name, meta_lead_events.object_name),
+                        route_key = COALESCE(EXCLUDED.route_key, meta_lead_events.route_key),
+                        payload_json = EXCLUDED.payload_json
+                    """
+                ),
+                {
+                    "leadgen_id": str(evt.get("leadgen_id") or "").strip(),
+                    "page_id": evt.get("page_id"),
+                    "form_id": evt.get("form_id"),
+                    "ad_id": evt.get("ad_id"),
+                    "adgroup_id": evt.get("adgroup_id"),
+                    "object_name": evt.get("object_name"),
+                    "route_key": evt.get("route_key"),
+                    "payload_json": json.dumps(evt.get("payload_json") or {}, ensure_ascii=False),
+                },
+            )
+    return len(events)
 
 
 def _iter_tiktok_records(payload: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
@@ -373,34 +584,171 @@ async def _process_tiktok_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "channel": channel, "processed": processed, "errors": errors}
 
 
+async def _handle_meta_webhook_post(
+    request: Request,
+    *,
+    route_key: str,
+    default_channel: str,
+) -> Dict[str, Any]:
+    raw = await request.body()
+    _verify_meta_signature_or_skip(request, raw)
+
+    try:
+        payload = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
+    except Exception:
+        payload = {}
+
+    payload_obj = _safe_obj(payload)
+    object_name = str(payload_obj.get("object") or "").strip().lower() or "page"
+
+    lead_count = 0
+    try:
+        lead_count = _save_meta_lead_events(payload_obj, route_key=route_key)
+    except Exception:
+        lead_count = 0
+
+    result = await _process_meta_payload(payload_obj, default_channel=default_channel)
+    processed_total = int(result.get("processed") or 0) + int(lead_count or 0)
+    result["processed"] = processed_total
+    if lead_count:
+        result["lead_events"] = int(lead_count)
+
+    try:
+        _save_social_webhook_event(
+            provider="meta",
+            route_key=route_key,
+            object_name=object_name,
+            channel=str(result.get("channel") or default_channel or "facebook"),
+            processed=int(result.get("processed") or 0),
+            errors=int(result.get("errors") or 0),
+            payload=payload_obj,
+            headers=_headers_subset(request.headers),
+        )
+    except Exception:
+        pass
+
+    return result
+
+
+def _meta_token_with_fallback(primary: str) -> str:
+    token = str(primary or "").strip()
+    if token:
+        return token
+    token = str(META_WEBHOOK_VERIFY_TOKEN or "").strip()
+    if token:
+        return token
+    return str(META_VERIFY_TOKEN or "").strip()
+
+
 @router.get("/api/facebook/webhook")
 async def facebook_verify(request: Request):
-    return _verify_with_token(request, FACEBOOK_VERIFY_TOKEN)
+    return _verify_with_token(request, _meta_token_with_fallback(FACEBOOK_VERIFY_TOKEN))
 
 
 @router.post("/api/facebook/webhook")
 async def facebook_receive(request: Request):
-    raw = await request.body()
-    try:
-        payload = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
-    except Exception:
-        return {"ok": True, "processed": 0, "errors": 0}
-    return await _process_meta_payload(_safe_obj(payload), default_channel="facebook")
+    return await _handle_meta_webhook_post(request, route_key="facebook_legacy", default_channel="facebook")
 
 
 @router.get("/api/instagram/webhook")
 async def instagram_verify(request: Request):
-    return _verify_with_token(request, INSTAGRAM_VERIFY_TOKEN)
+    return _verify_with_token(request, _meta_token_with_fallback(INSTAGRAM_VERIFY_TOKEN))
 
 
 @router.post("/api/instagram/webhook")
 async def instagram_receive(request: Request):
-    raw = await request.body()
-    try:
-        payload = json.loads(raw.decode("utf-8", errors="ignore") or "{}")
-    except Exception:
-        return {"ok": True, "processed": 0, "errors": 0}
-    return await _process_meta_payload(_safe_obj(payload), default_channel="instagram")
+    return await _handle_meta_webhook_post(request, route_key="instagram_legacy", default_channel="instagram")
+
+
+@router.get("/api/meta/webhook")
+async def meta_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(META_WEBHOOK_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/webhook")
+async def meta_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_generic", default_channel="facebook")
+
+
+@router.get("/api/meta/messenger/webhook")
+async def meta_messenger_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(META_MESSENGER_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/messenger/webhook")
+async def meta_messenger_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_messenger", default_channel="facebook")
+
+
+@router.get("/api/meta/page/webhook")
+async def meta_page_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(META_PAGE_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/page/webhook")
+async def meta_page_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_page", default_channel="facebook")
+
+
+@router.get("/api/meta/instagram/webhook")
+async def meta_instagram_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(INSTAGRAM_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/instagram/webhook")
+async def meta_instagram_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_instagram", default_channel="instagram")
+
+
+@router.get("/api/meta/leads/webhook")
+async def meta_leads_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(META_LEADS_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/leads/webhook")
+async def meta_leads_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_leads", default_channel="facebook")
+
+
+@router.get("/api/meta/ads/webhook")
+async def meta_ads_verify(request: Request):
+    return _verify_with_token(request, _meta_token_with_fallback(META_ADS_VERIFY_TOKEN))
+
+
+@router.post("/api/meta/ads/webhook")
+async def meta_ads_receive(request: Request):
+    return await _handle_meta_webhook_post(request, route_key="meta_ads", default_channel="facebook")
+
+
+@router.get("/api/meta/webhooks/routes")
+async def meta_webhook_routes():
+    return {
+        "ok": True,
+        "provider": "meta",
+        "routes": {
+            "generic": "/api/meta/webhook",
+            "messenger": "/api/meta/messenger/webhook",
+            "pages": "/api/meta/page/webhook",
+            "instagram": "/api/meta/instagram/webhook",
+            "leads": "/api/meta/leads/webhook",
+            "ads": "/api/meta/ads/webhook",
+            "legacy_facebook": "/api/facebook/webhook",
+            "legacy_instagram": "/api/instagram/webhook",
+        },
+        "verify_tokens": {
+            "generic": "META_WEBHOOK_VERIFY_TOKEN",
+            "messenger": "META_MESSENGER_VERIFY_TOKEN",
+            "pages": "META_PAGE_VERIFY_TOKEN",
+            "instagram": "INSTAGRAM_VERIFY_TOKEN",
+            "leads": "META_LEADS_VERIFY_TOKEN",
+            "ads": "META_ADS_VERIFY_TOKEN",
+        },
+        "signature": {
+            "header": "X-Hub-Signature-256",
+            "secret_env": "META_APP_SECRET",
+            "enforced": bool(META_ENFORCE_SIGNATURE),
+        },
+    }
 
 
 @router.get("/api/tiktok/webhook")

@@ -79,6 +79,7 @@ _wc_cache_sync_task: Optional[asyncio.Task] = None
 _kb_web_sync_task: Optional[asyncio.Task] = None
 _security_key_rotation_stop: Optional[asyncio.Event] = None
 _security_key_rotation_task: Optional[asyncio.Task] = None
+_firebase_admin_app = None
 
 origins = [
     "https://app.perfumesverane.com",
@@ -936,6 +937,54 @@ def ensure_schema():
             SELECT 'low', 'Inicialización de módulo de seguridad', 'Sistema', '', '{}'::jsonb, NOW()
             WHERE NOT EXISTS (SELECT 1 FROM security_audit_events)
         """))
+        # -------------------------
+        # mobile push (FCM tokens + event log)
+        # -------------------------
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS mobile_push_tokens (
+                id BIGSERIAL PRIMARY KEY,
+                token TEXT NOT NULL UNIQUE,
+                platform TEXT NOT NULL DEFAULT 'android',
+                app_version TEXT NOT NULL DEFAULT '',
+                device_id TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'agente',
+                actor TEXT NOT NULL DEFAULT '',
+                notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'agente'"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS app_version TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT ''"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"""))
+        conn.execute(text("""ALTER TABLE mobile_push_tokens ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP NOT NULL DEFAULT NOW()"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_active ON mobile_push_tokens (is_active, notifications_enabled, last_seen_at DESC)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_mobile_push_tokens_role ON mobile_push_tokens (role)"""))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS mobile_push_events (
+                id BIGSERIAL PRIMARY KEY,
+                event_type TEXT NOT NULL DEFAULT 'generic',
+                role_scope TEXT NOT NULL DEFAULT 'all',
+                title TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL DEFAULT '',
+                data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                tokens_targeted INTEGER NOT NULL DEFAULT 0,
+                tokens_sent INTEGER NOT NULL DEFAULT 0,
+                tokens_failed INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'queued',
+                error TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                delivered_at TIMESTAMP NULL
+            )
+        """))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_mobile_push_events_created ON mobile_push_events (created_at DESC)"""))
+        conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_mobile_push_events_status ON mobile_push_events (status, created_at DESC)"""))
 
 
 @app.on_event("startup")
@@ -1570,8 +1619,14 @@ def _normalize_event_type(raw: str) -> str:
         "recibido": "message_in",
         "received": "message_in",
         "flow": "message_in",
+        "comentario": "comment_in",
+        "comment": "comment_in",
+        "comment_incoming": "comment_in",
+        "incoming_comment": "comment_in",
     }
-    return aliases.get(v, v)
+    v = aliases.get(v, v)
+    allowed = {"message_in", "message_out", "comment_in", "all", "*"}
+    return v if v in allowed else "message_in"
 
 
 def _normalize_trigger_type(raw: str) -> str:
@@ -1582,10 +1637,11 @@ def _normalize_trigger_type(raw: str) -> str:
         "logica": "logic",
         "lógica": "logic",
         "flujo de mensajes": "message_flow",
+        "flujo de comentarios": "comment_flow",
         "tiempo": "time",
     }
     v = aliases.get(v, v)
-    allowed = {"none", "tag_changed", "logic", "message_flow", "time"}
+    allowed = {"none", "tag_changed", "logic", "message_flow", "comment_flow", "time"}
     return v if v in allowed else "message_flow"
 
 
@@ -2155,7 +2211,39 @@ def get_messages(
 
 @app.post("/api/messages/ingest")
 async def ingest(msg: IngestMessage):
-    return await run_ingest(msg)
+    result = await run_ingest(msg)
+
+    try:
+        direction = str(msg.direction or "in").strip().lower()
+        channel = _normalize_channel(str(msg.channel or "whatsapp"), default="whatsapp")
+        msg_type = str(msg.msg_type or "text").strip().lower()
+        reason = str((result or {}).get("reason") or "").strip().lower()
+
+        # Push solo para inbound reales (no duplicados descartados)
+        if direction == "in" and reason != "idempotency_skip_duplicate":
+            preview = str(msg.text or msg.media_caption or "").strip()
+            if len(preview) > 120:
+                preview = preview[:117] + "..."
+            if not preview:
+                preview = f"[{msg_type or 'mensaje'}]"
+
+            _emit_mobile_push_event(
+                event_type="message_in",
+                title=f"Nuevo mensaje ({channel})",
+                body=f"{msg.phone}: {preview}",
+                data={
+                    "phone": str(msg.phone or ""),
+                    "channel": channel,
+                    "msg_type": msg_type,
+                    "direction": "in",
+                    "channel_id": "verane_messages",
+                },
+                role_scope="all",
+            )
+    except Exception as e:
+        print("[PUSH] message_in event error:", str(e)[:400])
+
+    return result
 
 
 @app.post("/api/conversations/takeover")
@@ -2168,7 +2256,160 @@ def set_takeover(payload: TakeoverPayload):
             DO UPDATE SET takeover = EXCLUDED.takeover,
                           updated_at = EXCLUDED.updated_at
         """), {"phone": payload.phone, "takeover": payload.takeover, "updated_at": datetime.utcnow()})
+
+    try:
+        _emit_mobile_push_event(
+            event_type="takeover_changed",
+            title="Cambio de takeover",
+            body=f"{payload.phone}: takeover {'ON' if payload.takeover else 'OFF'}",
+            data={
+                "phone": str(payload.phone or ""),
+                "takeover": "on" if payload.takeover else "off",
+                "channel_id": "verane_system",
+            },
+            role_scope="admin_supervisor",
+        )
+    except Exception as e:
+        print("[PUSH] takeover event error:", str(e)[:400])
     return {"ok": True}
+
+
+@app.post("/api/mobile/push/register")
+def register_mobile_push_token(payload: "MobilePushRegisterIn"):
+    token = _normalize_mobile_push_token(payload.token)
+    if not token:
+        raise HTTPException(status_code=400, detail="invalid push token")
+
+    role = _normalize_mobile_role(payload.role)
+    platform = str(payload.platform or "android").strip().lower()[:40] or "android"
+    app_version = str(payload.app_version or "").strip()[:80]
+    device_id = str(payload.device_id or "").strip()[:200]
+    actor = str(payload.actor or "").strip()[:120]
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO mobile_push_tokens (
+                    token, platform, app_version, device_id, role, actor,
+                    notifications_enabled, is_active, last_seen_at, created_at, updated_at
+                )
+                VALUES (
+                    :token, :platform, :app_version, :device_id, :role, :actor,
+                    :notifications_enabled, TRUE, NOW(), NOW(), NOW()
+                )
+                ON CONFLICT (token) DO UPDATE SET
+                    platform = EXCLUDED.platform,
+                    app_version = EXCLUDED.app_version,
+                    device_id = EXCLUDED.device_id,
+                    role = EXCLUDED.role,
+                    actor = EXCLUDED.actor,
+                    notifications_enabled = EXCLUDED.notifications_enabled,
+                    is_active = TRUE,
+                    last_seen_at = NOW(),
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "token": token,
+                "platform": platform,
+                "app_version": app_version,
+                "device_id": device_id,
+                "role": role,
+                "actor": actor,
+                "notifications_enabled": bool(payload.notifications_enabled),
+            },
+        )
+
+    return {"ok": True, "registered": True, "role": role}
+
+
+@app.post("/api/push/register")
+def register_mobile_push_token_compat(payload: "MobilePushRegisterIn"):
+    return register_mobile_push_token(payload)
+
+
+@app.post("/api/mobile/push/unregister")
+def unregister_mobile_push_token(payload: "MobilePushUnregisterIn"):
+    token = _normalize_mobile_push_token(payload.token)
+    if not token:
+        raise HTTPException(status_code=400, detail="invalid push token")
+
+    with engine.begin() as conn:
+        rs = conn.execute(
+            text(
+                """
+                UPDATE mobile_push_tokens
+                SET is_active = FALSE, updated_at = NOW()
+                WHERE token = :token
+                """
+            ),
+            {"token": token},
+        )
+    return {"ok": True, "unregistered": int(rs.rowcount or 0)}
+
+
+@app.post("/api/push/unregister")
+def unregister_mobile_push_token_compat(payload: "MobilePushUnregisterIn"):
+    return unregister_mobile_push_token(payload)
+
+
+@app.get("/api/mobile/push/state")
+def mobile_push_state(request: StarletteRequest = None):
+    _require_security_role(request, {"admin", "supervisor"})
+    with engine.begin() as conn:
+        summary = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE is_active = TRUE AND notifications_enabled = TRUE) AS active_total,
+                    COUNT(*) FILTER (WHERE is_active = TRUE AND notifications_enabled = TRUE AND LOWER(role) = 'admin') AS active_admin,
+                    COUNT(*) FILTER (WHERE is_active = TRUE AND notifications_enabled = TRUE AND LOWER(role) = 'supervisor') AS active_supervisor,
+                    COUNT(*) FILTER (WHERE is_active = TRUE AND notifications_enabled = TRUE AND LOWER(role) = 'agente') AS active_agente
+                FROM mobile_push_tokens
+                """
+            )
+        ).mappings().first() or {}
+
+        events = conn.execute(
+            text(
+                """
+                SELECT
+                    id, event_type, role_scope, title, status,
+                    tokens_targeted, tokens_sent, tokens_failed,
+                    error, created_at, delivered_at
+                FROM mobile_push_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT 80
+                """
+            )
+        ).mappings().all()
+
+    return {"summary": dict(summary), "events": [dict(r) for r in events]}
+
+
+@app.get("/api/push/state")
+def mobile_push_state_compat(request: StarletteRequest = None):
+    return mobile_push_state(request=request)
+
+
+@app.post("/api/mobile/push/test")
+def test_mobile_push(payload: "MobilePushTestIn", request: StarletteRequest = None):
+    _require_security_role(request, {"admin", "supervisor"})
+    role_scope = _normalize_push_role_scope(payload.role_scope)
+    result = _emit_mobile_push_event(
+        event_type=str(payload.event_type or "manual_test"),
+        title=str(payload.title or "Prueba push"),
+        body=str(payload.body or "Push de prueba"),
+        data={**(payload.data or {}), "channel_id": "verane_system", "test": "true"},
+        role_scope=role_scope,
+    )
+    return {"ok": True, "result": result}
+
+
+@app.post("/api/push/test")
+def test_mobile_push_compat(payload: "MobilePushTestIn", request: StarletteRequest = None):
+    return test_mobile_push(payload=payload, request=request)
 
 
 @app.post("/api/crm")
@@ -5488,8 +5729,352 @@ class SecurityKeyPatch(BaseModel):
     rotation_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
+class MobilePushRegisterIn(BaseModel):
+    token: str
+    platform: str = "android"
+    app_version: str = ""
+    device_id: str = ""
+    role: str = "agente"
+    actor: str = ""
+    notifications_enabled: bool = True
+
+
+class MobilePushUnregisterIn(BaseModel):
+    token: str
+
+
+class MobilePushTestIn(BaseModel):
+    title: str = "Prueba push Verane"
+    body: str = "Push de prueba enviado desde backend"
+    event_type: str = "manual_test"
+    role_scope: str = "all"
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
 def _truthy(raw: Any) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on", "y", "si"}
+
+
+def _fcm_push_enabled() -> bool:
+    if _truthy(os.getenv("PUSH_FCM_ENABLED", "true")):
+        return True
+    return _truthy(os.getenv("FCM_PUSH_ENABLED", "false"))
+
+
+def _normalize_mobile_role(raw: str) -> str:
+    role = str(raw or "agente").strip().lower()
+    return role if role in SECURITY_ROLES else "agente"
+
+
+def _normalize_push_role_scope(raw: str) -> str:
+    scope = str(raw or "all").strip().lower()
+    if scope in {"all", "admin", "supervisor", "agente", "admin_supervisor"}:
+        return scope
+    return "all"
+
+
+def _normalize_mobile_push_token(raw: str) -> str:
+    token = str(raw or "").strip()
+    # Un token FCM real suele superar 100 chars; 32 es un umbral seguro.
+    if len(token) < 32:
+        return ""
+    return token
+
+
+def _get_active_mobile_push_tokens(role_scope: str = "all") -> List[str]:
+    scope = _normalize_push_role_scope(role_scope)
+    where = "WHERE is_active = TRUE AND notifications_enabled = TRUE AND token <> ''"
+    params: Dict[str, Any] = {}
+    if scope == "admin_supervisor":
+        where += " AND LOWER(role) IN ('admin', 'supervisor')"
+    elif scope in SECURITY_ROLES:
+        where += " AND LOWER(role) = :role"
+        params["role"] = scope
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT token
+                FROM mobile_push_tokens
+                {where}
+                ORDER BY last_seen_at DESC, id DESC
+                LIMIT 5000
+                """
+            ),
+            params,
+        ).mappings().all()
+
+    unique: List[str] = []
+    seen = set()
+    for r in rows:
+        tok = _normalize_mobile_push_token(str((r or {}).get("token") or ""))
+        if tok and tok not in seen:
+            seen.add(tok)
+            unique.append(tok)
+    return unique
+
+
+def _save_mobile_push_event(
+    *,
+    event_type: str,
+    role_scope: str,
+    title: str,
+    body: str,
+    data: Optional[Dict[str, Any]],
+    status: str,
+    tokens_targeted: int,
+    tokens_sent: int,
+    tokens_failed: int,
+    error: str = "",
+) -> None:
+    payload = data if isinstance(data, dict) else {}
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO mobile_push_events (
+                    event_type, role_scope, title, body, data_json,
+                    tokens_targeted, tokens_sent, tokens_failed,
+                    status, error, created_at, delivered_at
+                )
+                VALUES (
+                    :event_type, :role_scope, :title, :body, CAST(:data_json AS jsonb),
+                    :tokens_targeted, :tokens_sent, :tokens_failed,
+                    :status, :error, NOW(),
+                    CASE WHEN :status IN ('sent', 'partial') THEN NOW() ELSE NULL END
+                )
+                """
+            ),
+            {
+                "event_type": str(event_type or "generic")[:120],
+                "role_scope": _normalize_push_role_scope(role_scope),
+                "title": str(title or "")[:200],
+                "body": str(body or "")[:500],
+                "data_json": json.dumps(payload, ensure_ascii=False),
+                "tokens_targeted": int(max(0, tokens_targeted)),
+                "tokens_sent": int(max(0, tokens_sent)),
+                "tokens_failed": int(max(0, tokens_failed)),
+                "status": str(status or "queued")[:40],
+                "error": str(error or "")[:900],
+            },
+        )
+
+
+def _get_firebase_admin_app() -> tuple[Any, str]:
+    global _firebase_admin_app
+
+    if not _fcm_push_enabled():
+        return None, "push_disabled_by_env"
+
+    try:
+        import firebase_admin  # type: ignore
+        from firebase_admin import credentials  # type: ignore
+    except Exception:
+        return None, "firebase_admin_not_installed"
+
+    if _firebase_admin_app is not None:
+        return _firebase_admin_app, "ok"
+
+    try:
+        if getattr(firebase_admin, "_apps", None):
+            _firebase_admin_app = firebase_admin.get_app()
+            return _firebase_admin_app, "ok"
+    except Exception:
+        pass
+
+    try:
+        service_account_json = str(os.getenv("FCM_SERVICE_ACCOUNT_JSON", "") or "").strip()
+        service_account_file = str(
+            os.getenv("FCM_SERVICE_ACCOUNT_FILE", "") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+        ).strip()
+
+        if service_account_json:
+            info = json.loads(service_account_json)
+            cred = credentials.Certificate(info)
+            _firebase_admin_app = firebase_admin.initialize_app(cred)
+            return _firebase_admin_app, "ok"
+
+        if service_account_file:
+            if not os.path.exists(service_account_file):
+                return None, "service_account_file_not_found"
+            cred = credentials.Certificate(service_account_file)
+            _firebase_admin_app = firebase_admin.initialize_app(cred)
+            return _firebase_admin_app, "ok"
+
+        # Fallback a ADC (Application Default Credentials)
+        _firebase_admin_app = firebase_admin.initialize_app()
+        return _firebase_admin_app, "ok"
+    except Exception as e:
+        return None, f"firebase_init_error:{str(e)[:300]}"
+
+
+def _deactivate_mobile_push_tokens(tokens: List[str]) -> None:
+    if not tokens:
+        return
+    clean = [t for t in tokens if _normalize_mobile_push_token(t)]
+    if not clean:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE mobile_push_tokens
+                SET is_active = FALSE, updated_at = NOW()
+                WHERE token = ANY(:tokens)
+                """
+            ),
+            {"tokens": clean},
+        )
+
+
+def _is_invalid_fcm_token_error(raw: str) -> bool:
+    t = str(raw or "").strip().lower()
+    return (
+        "registration token is not a valid fcm registration token" in t
+        or "requested entity was not found" in t
+        or "unregistered" in t
+        or "registration-token-not-registered" in t
+        or "invalid-argument" in t
+    )
+
+
+def _emit_mobile_push_event(
+    *,
+    event_type: str,
+    title: str,
+    body: str,
+    data: Optional[Dict[str, Any]] = None,
+    role_scope: str = "all",
+) -> Dict[str, Any]:
+    safe_title = str(title or "").strip()[:200] or "Verane"
+    safe_body = str(body or "").strip()[:500] or "Nueva notificacion"
+    safe_data: Dict[str, str] = {}
+    for k, v in (data or {}).items():
+        kk = str(k or "").strip()
+        if not kk:
+            continue
+        safe_data[kk[:80]] = str(v if v is not None else "")[:900]
+    safe_data.setdefault("event_type", str(event_type or "generic")[:80])
+
+    tokens = _get_active_mobile_push_tokens(role_scope=role_scope)
+    if not tokens:
+        _save_mobile_push_event(
+            event_type=event_type,
+            role_scope=role_scope,
+            title=safe_title,
+            body=safe_body,
+            data=safe_data,
+            status="no_tokens",
+            tokens_targeted=0,
+            tokens_sent=0,
+            tokens_failed=0,
+            error="no_active_tokens",
+        )
+        return {"ok": True, "status": "no_tokens", "targeted": 0, "sent": 0, "failed": 0}
+
+    app, app_status = _get_firebase_admin_app()
+    if app is None:
+        _save_mobile_push_event(
+            event_type=event_type,
+            role_scope=role_scope,
+            title=safe_title,
+            body=safe_body,
+            data=safe_data,
+            status="skipped",
+            tokens_targeted=len(tokens),
+            tokens_sent=0,
+            tokens_failed=len(tokens),
+            error=app_status,
+        )
+        return {
+            "ok": False,
+            "status": "skipped",
+            "reason": app_status,
+            "targeted": len(tokens),
+            "sent": 0,
+            "failed": len(tokens),
+        }
+
+    try:
+        from firebase_admin import messaging  # type: ignore
+    except Exception:
+        _save_mobile_push_event(
+            event_type=event_type,
+            role_scope=role_scope,
+            title=safe_title,
+            body=safe_body,
+            data=safe_data,
+            status="failed",
+            tokens_targeted=len(tokens),
+            tokens_sent=0,
+            tokens_failed=len(tokens),
+            error="firebase_admin.messaging_import_failed",
+        )
+        return {"ok": False, "status": "failed", "reason": "messaging_import_failed"}
+
+    sent_count = 0
+    failed_count = 0
+    invalid_tokens: List[str] = []
+    error_msgs: List[str] = []
+
+    chunk_size = 500
+    for i in range(0, len(tokens), chunk_size):
+        chunk = tokens[i:i + chunk_size]
+        message = messaging.MulticastMessage(
+            tokens=chunk,
+            notification=messaging.Notification(title=safe_title, body=safe_body),
+            data=safe_data,
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    channel_id=str((safe_data.get("channel_id") or "verane_messages"))[:120],
+                    sound="default",
+                ),
+            ),
+        )
+        try:
+            response = messaging.send_each_for_multicast(message, app=app)
+            sent_count += int(response.success_count or 0)
+            failed_count += int(response.failure_count or 0)
+            for idx, r in enumerate(response.responses):
+                if r.success:
+                    continue
+                err_txt = str(r.exception or "")[:400]
+                if len(error_msgs) < 3 and err_txt:
+                    error_msgs.append(err_txt)
+                if idx < len(chunk) and _is_invalid_fcm_token_error(err_txt):
+                    invalid_tokens.append(chunk[idx])
+        except Exception as e:
+            failed_count += len(chunk)
+            if len(error_msgs) < 3:
+                error_msgs.append(str(e)[:400])
+
+    if invalid_tokens:
+        _deactivate_mobile_push_tokens(invalid_tokens)
+
+    status = "sent" if failed_count == 0 else ("partial" if sent_count > 0 else "failed")
+    _save_mobile_push_event(
+        event_type=event_type,
+        role_scope=role_scope,
+        title=safe_title,
+        body=safe_body,
+        data=safe_data,
+        status=status,
+        tokens_targeted=len(tokens),
+        tokens_sent=sent_count,
+        tokens_failed=failed_count,
+        error=" | ".join(error_msgs)[:900],
+    )
+    return {
+        "ok": sent_count > 0 and failed_count == 0,
+        "status": status,
+        "targeted": len(tokens),
+        "sent": sent_count,
+        "failed": failed_count,
+        "invalid_tokens": len(invalid_tokens),
+        "error": " | ".join(error_msgs)[:900],
+    }
 
 
 def _security_role_tokens() -> Dict[str, str]:
@@ -5715,6 +6300,25 @@ def _new_api_secret() -> tuple[str, str, str, str]:
     return raw, preview, secret_hash, secret_cipher
 
 
+def _security_mobile_alerts_enabled(conn) -> bool:
+    try:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                    COALESCE(security_change_alert, TRUE) AS security_change_alert,
+                    COALESCE(channel_whatsapp, TRUE) AS channel_whatsapp
+                FROM security_alert_settings
+                WHERE id = 1
+                LIMIT 1
+                """
+            )
+        ).mappings().first() or {}
+        return bool(row.get("security_change_alert")) and bool(row.get("channel_whatsapp"))
+    except Exception:
+        return False
+
+
 def _audit_security(
     conn,
     *,
@@ -5743,6 +6347,24 @@ def _audit_security(
             "details": payload,
         },
     )
+
+    if level_clean == "high":
+        try:
+            if _security_mobile_alerts_enabled(conn):
+                _emit_mobile_push_event(
+                    event_type="security_alert",
+                    title="Alerta de seguridad",
+                    body=f"{str(action or 'Evento de seguridad')[:160]}",
+                    data={
+                        "level": level_clean,
+                        "actor": str(actor or "Sistema")[:120],
+                        "ip": str(ip or "")[:120],
+                        "channel_id": "verane_system",
+                    },
+                    role_scope="admin_supervisor",
+                )
+        except Exception as e:
+            print("[PUSH] security alert event error:", str(e)[:400])
 
 
 def _load_security_payload(conn, *, audit_level: str = "all", audit_limit: int = 30) -> Dict[str, Any]:

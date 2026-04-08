@@ -14,7 +14,11 @@ from app.ai.context_builder import build_ai_meta
 from app.ai.engine import process_message
 from app.crm.crm_writer import ensure_conversation_row, update_crm_fields
 from app.db import engine
-from app.integrations.social_channels import send_channel_media, send_channel_text
+from app.integrations.social_channels import (
+    send_channel_media,
+    send_channel_text,
+    send_comment_reply,
+)
 from app.pipeline.reply_sender import (
     _get_voice_settings,
     send_ai_reply_as_voice,
@@ -25,11 +29,17 @@ from app.routes.whatsapp import send_whatsapp_text
 
 def get_trigger_catalog() -> Dict[str, Any]:
     return {
+        "event_types": [
+            {"key": "message_in", "label": "Mensaje entrante"},
+            {"key": "message_out", "label": "Mensaje saliente"},
+            {"key": "comment_in", "label": "Comentario entrante"},
+        ],
         "trigger_types": [
             {"key": "none", "label": "Ninguna"},
             {"key": "tag_changed", "label": "Etiqueta cambiada"},
             {"key": "logic", "label": "Logica"},
             {"key": "message_flow", "label": "Flujo de mensajes"},
+            {"key": "comment_flow", "label": "Flujo de comentarios"},
             {"key": "time", "label": "Tiempo"},
         ],
         "flow_events": [
@@ -46,12 +56,14 @@ def get_trigger_catalog() -> Dict[str, Any]:
             {"key": "last_message_sent", "label": "Ultimo mensaje enviado"},
             {"key": "sent_count", "label": "Cantidad de mensajes enviado"},
             {"key": "check_words", "label": "Comprobar palabras"},
+            {"key": "comment_keywords", "label": "Palabras clave en comentario"},
             {"key": "template_sent_status", "label": "Comprobar plantilla si/no enviada"},
             {"key": "current_tag", "label": "Etiqueta actual"},
             {"key": "schedule", "label": "Comprobar horario"},
         ],
         "action_types": [
             {"key": "send_template", "label": "Enviar plantilla de mensaje"},
+            {"key": "reply_comment", "label": "Responder comentario"},
             {"key": "change_tag", "label": "Cambiar etiqueta"},
             {"key": "configure_conversation", "label": "Configurar conversacion"},
             {"key": "change_contact_status", "label": "Cambiar estado contacto"},
@@ -992,7 +1004,7 @@ def _evaluate_conditions(
         ok = False
         info: Dict[str, Any] = {}
 
-        if ctype == "check_words":
+        if ctype in ("check_words", "comment_keywords"):
             ok, info = _condition_check_words(user_text, cond)
         elif ctype == "template_sent_status":
             ok, info = _condition_template_sent_status(phone, cond, channel=channel)
@@ -1123,11 +1135,31 @@ def _trigger_matches_event(trigger_row: Dict[str, Any], event_kind: str) -> bool
     if trigger_type in ("none", "tag_changed"):
         return False
 
+    if trigger_type == "comment_flow" and ek != "comment":
+        return False
+    if trigger_type == "message_flow" and ek == "comment":
+        return False
+
     if trigger_type == "message_flow":
         if ek == "received" and flow_event not in ("received", "both", "all"):
             return False
         if ek == "sent" and flow_event not in ("sent", "both", "all"):
             return False
+
+    if ek == "comment":
+        comment_event_types = {
+            "comment",
+            "comment_in",
+            "comment_received",
+            "incoming_comment",
+            "all",
+            "*",
+        }
+        if event_type in comment_event_types:
+            return True
+        if "comment" in event_type and ("in" in event_type or "receive" in event_type):
+            return True
+        return False
 
     if ek == "sent":
         outgoing_event_types = {
@@ -1533,15 +1565,157 @@ async def _execute_trigger_assistant(
     }
 
 
+async def _action_reply_comment(
+    *,
+    trigger_channel: str,
+    phone: str,
+    user_text: str,
+    action: Dict[str, Any],
+    event_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    channel = str(trigger_channel or "").strip().lower() or "facebook"
+    context = _safe_json_dict(event_context)
+    comment_id = str(action.get("comment_id") or context.get("comment_id") or "").strip()
+    if not comment_id:
+        return {"ok": False, "error": "comment_id_required"}
+
+    mode = str(action.get("mode") or "").strip().lower()
+    use_ai = bool(action.get("use_ai")) or mode == "ai"
+    reply_text = str(action.get("reply_text") or action.get("text") or "").strip()
+
+    if use_ai:
+        ai_prompt = str(action.get("ai_prompt") or "").strip()
+        ai_input = str(user_text or "").strip()
+        if ai_prompt:
+            ai_input = f"{ai_input}\n\nInstrucciones: {ai_prompt}"
+        ai_phone = str(
+            phone
+            or context.get("author_id")
+            or f"comment:{channel}:{comment_id}"
+        ).strip()
+        if ai_input:
+            try:
+                meta = build_ai_meta(ai_phone, ai_input)
+                ai_result = await process_message(phone=ai_phone, text=ai_input, meta=meta)
+                ai_text = str(ai_result.get("reply_text") or "").strip()
+                if ai_text:
+                    reply_text = ai_text
+            except Exception:
+                pass
+
+    if not reply_text:
+        return {"ok": False, "error": "reply_text_required"}
+
+    send = await send_comment_reply(channel=channel, comment_id=comment_id, text_msg=reply_text)
+    ok = bool(send.get("sent"))
+    provider_comment_id = str(
+        send.get("provider_message_id")
+        or send.get("wa_message_id")
+        or ""
+    ).strip()
+
+    if ok:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                        UPDATE social_comments
+                        SET status = 'replied',
+                            updated_at = NOW()
+                        WHERE LOWER(COALESCE(channel, 'facebook')) = :channel
+                          AND external_comment_id = :comment_id
+                          AND direction = 'in'
+                        """
+                    ),
+                    {"channel": channel, "comment_id": comment_id},
+                )
+
+                local_reply_id = provider_comment_id or f"auto-{int(datetime.utcnow().timestamp() * 1000)}-{comment_id}"
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO social_comments (
+                            channel,
+                            network_account_id,
+                            external_comment_id,
+                            parent_external_comment_id,
+                            post_id,
+                            direction,
+                            author_id,
+                            author_name,
+                            message,
+                            status,
+                            assigned_to,
+                            provider_payload_json,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (
+                            :channel,
+                            :network_account_id,
+                            :external_comment_id,
+                            :parent_external_comment_id,
+                            :post_id,
+                            'out',
+                            :author_id,
+                            :author_name,
+                            :message,
+                            'sent',
+                            :assigned_to,
+                            CAST(:provider_payload_json AS jsonb),
+                            NOW(),
+                            NOW()
+                        )
+                        ON CONFLICT (channel, external_comment_id, direction)
+                        DO NOTHING
+                        """
+                    ),
+                    {
+                        "channel": channel,
+                        "network_account_id": str(context.get("entry_id") or "").strip() or None,
+                        "external_comment_id": local_reply_id,
+                        "parent_external_comment_id": comment_id,
+                        "post_id": str(context.get("post_id") or "").strip() or None,
+                        "author_id": "system:trigger",
+                        "author_name": "IA Trigger",
+                        "message": reply_text,
+                        "assigned_to": str(context.get("assigned_to") or "").strip() or None,
+                        "provider_payload_json": json.dumps(
+                            {
+                                "source": "trigger",
+                                "action": "reply_comment",
+                                "provider_response": _safe_json_dict(send.get("provider_response")),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                )
+        except Exception:
+            pass
+
+    return {
+        "ok": ok,
+        "channel": channel,
+        "comment_id": comment_id,
+        "provider_comment_id": provider_comment_id,
+        "reply_text": reply_text,
+        "send": send,
+    }
+
+
 async def _execute_actions(
     *,
     trigger_row: Dict[str, Any],
     phone: str,
     user_text: str,
+    event_context: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     trigger_id = int(trigger_row.get("id") or 0)
     trigger_name = str(trigger_row.get("name") or "").strip()
     trigger_channel = str(trigger_row.get("channel") or "whatsapp").strip().lower() or "whatsapp"
+    trigger_event_type = str(trigger_row.get("event_type") or "message_in").strip().lower()
+    context = _safe_json_dict(event_context)
 
     actions = _normalize_actions_payload(_safe_json_dict(trigger_row.get("action_json")))
     action_results: List[Dict[str, Any]] = []
@@ -1565,6 +1739,15 @@ async def _execute_actions(
                     extra_meta={"action_index": idx, "action_type": atype},
                 )
                 sent_messages += int(result.get("sent_messages") or 0)
+
+            elif atype == "reply_comment":
+                result = await _action_reply_comment(
+                    trigger_channel=trigger_channel,
+                    phone=phone,
+                    user_text=user_text,
+                    action=action,
+                    event_context=context,
+                )
 
             elif atype == "change_tag":
                 result = await _action_change_tag(phone, action)
@@ -1607,12 +1790,15 @@ async def _execute_actions(
             }
         )
 
-    assistant_result = await _execute_trigger_assistant(
-        phone=phone,
-        user_text=user_text,
-        assistant_enabled=bool(trigger_row.get("assistant_enabled")),
-        assistant_message_type=str(trigger_row.get("assistant_message_type") or "auto"),
-    )
+    if trigger_event_type.startswith("comment"):
+        assistant_result = {"ok": True, "enabled": False, "sent": False, "skipped": "comment_event"}
+    else:
+        assistant_result = await _execute_trigger_assistant(
+            phone=phone,
+            user_text=user_text,
+            assistant_enabled=bool(trigger_row.get("assistant_enabled")),
+            assistant_message_type=str(trigger_row.get("assistant_message_type") or "auto"),
+        )
 
     if assistant_result.get("ok") is not True and assistant_result.get("enabled"):
         failed_actions += 1
@@ -1967,6 +2153,177 @@ async def execute_outgoing_triggers(
     return {
         "ok": True,
         "matched": matched,
+        "sent": sent_any,
+        "details": details,
+    }
+
+
+async def execute_comment_triggers(
+    *,
+    comment_id: str,
+    user_text: str,
+    channel: str = "facebook",
+    phone: str = "",
+    event_context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    cid = str(comment_id or "").strip()
+    if not cid:
+        return {"ok": False, "matched": False, "reason": "comment_id_required"}
+
+    ch = str(channel or "facebook").strip().lower() or "facebook"
+    phone_key = str(phone or "").strip() or f"comment:{ch}:{cid}"
+    context = _safe_json_dict(event_context)
+    if "comment_id" not in context:
+        context["comment_id"] = cid
+    if "channel" not in context:
+        context["channel"] = ch
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    name,
+                    channel,
+                    event_type,
+                    trigger_type,
+                    flow_event,
+                    conditions_json,
+                    action_json,
+                    cooldown_minutes,
+                    assistant_enabled,
+                    assistant_message_type,
+                    priority,
+                    block_ai,
+                    stop_on_match,
+                    only_when_no_takeover
+                FROM automation_triggers
+                WHERE is_active = TRUE
+                  AND LOWER(COALESCE(channel, 'whatsapp')) = :channel
+                ORDER BY priority ASC, id ASC
+                """
+            ),
+            {"channel": ch},
+        ).mappings().all()
+
+    matched = False
+    blocked_ai = False
+    sent_any = False
+    details: List[Dict[str, Any]] = []
+
+    for row in rows:
+        trigger = dict(row or {})
+        trigger_id = int(trigger.get("id") or 0)
+        if trigger_id <= 0:
+            continue
+        if not _trigger_matches_event(trigger, "comment"):
+            continue
+
+        cooldown = int(trigger.get("cooldown_minutes") or 0)
+        if _is_trigger_in_cooldown(trigger_id, phone_key, cooldown):
+            details.append({"trigger_id": trigger_id, "name": trigger.get("name"), "skipped": "cooldown"})
+            continue
+
+        conditions_ok, condition_evals = _evaluate_conditions(
+            phone_key,
+            user_text,
+            _safe_json_dict(trigger.get("conditions_json")),
+            channel=ch,
+        )
+        if not conditions_ok:
+            details.append(
+                {
+                    "trigger_id": trigger_id,
+                    "name": trigger.get("name"),
+                    "matched": False,
+                    "conditions": condition_evals,
+                }
+            )
+            continue
+
+        matched = True
+
+        try:
+            action_result = await _execute_actions(
+                trigger_row=trigger,
+                phone=phone_key,
+                user_text=user_text,
+                event_context=context,
+            )
+            status = "ok" if action_result.get("ok") is True else "error"
+            error = "" if status == "ok" else "actions_failed"
+
+            sent_messages = int(action_result.get("sent_messages") or 0)
+            sent_now = sent_messages > 0 or any(
+                bool(_safe_json_dict(a.get("result")).get("send", {}).get("sent"))
+                for a in (action_result.get("actions") or [])
+                if str(a.get("type") or "") == "reply_comment"
+            )
+            sent_any = sent_any or sent_now
+
+            should_block = bool(trigger.get("block_ai")) and status == "ok"
+            if should_block:
+                blocked_ai = True
+
+            execution_details = {
+                "event_kind": "comment",
+                "comment_id": cid,
+                "conditions": condition_evals,
+                "result": action_result,
+                "blocked_ai": should_block,
+            }
+            _insert_trigger_execution(
+                trigger_id=trigger_id,
+                phone=phone_key,
+                status=status,
+                error=error,
+                details=execution_details,
+            )
+            _touch_trigger_last_run(trigger_id)
+
+            details.append(
+                {
+                    "trigger_id": trigger_id,
+                    "name": trigger.get("name"),
+                    "matched": True,
+                    "status": status,
+                    "blocked_ai": should_block,
+                    "sent": sent_now,
+                    "conditions": condition_evals,
+                    "actions": action_result.get("actions") or [],
+                }
+            )
+        except Exception as e:
+            _insert_trigger_execution(
+                trigger_id=trigger_id,
+                phone=phone_key,
+                status="error",
+                error=str(e)[:900],
+                details={
+                    "event_kind": "comment",
+                    "comment_id": cid,
+                    "conditions": condition_evals,
+                },
+            )
+            details.append(
+                {
+                    "trigger_id": trigger_id,
+                    "name": trigger.get("name"),
+                    "matched": True,
+                    "status": "error",
+                    "error": str(e)[:300],
+                    "conditions": condition_evals,
+                }
+            )
+
+        if bool(trigger.get("stop_on_match")):
+            break
+
+    return {
+        "ok": True,
+        "matched": matched,
+        "block_ai": blocked_ai,
         "sent": sent_any,
         "details": details,
     }

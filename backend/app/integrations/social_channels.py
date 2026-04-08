@@ -186,6 +186,65 @@ async def send_channel_text(channel: str, to: str, text_msg: str) -> Dict[str, A
     return {"saved": True, "sent": False, "reason": "channel_not_supported", "channel": ch}
 
 
+async def send_comment_reply(channel: str, comment_id: str, text_msg: str) -> Dict[str, Any]:
+    ch = _normalize_channel(channel)
+    cid = str(comment_id or "").strip()
+    body = str(text_msg or "").strip()
+
+    if ch not in ("facebook", "instagram"):
+        return {
+            "saved": True,
+            "sent": False,
+            "reason": "channel_not_supported_for_comment_reply",
+            "channel": ch,
+        }
+    if not cid:
+        return {"saved": True, "sent": False, "reason": "comment_id_required", "channel": ch}
+    if not body:
+        return {"saved": True, "sent": False, "reason": "text_required", "channel": ch}
+
+    token = FACEBOOK_PAGE_TOKEN if ch == "facebook" else (INSTAGRAM_TOKEN or FACEBOOK_PAGE_TOKEN)
+    if not token:
+        return {
+            "saved": True,
+            "sent": False,
+            "reason": "missing_meta_token_for_comment_reply",
+            "channel": ch,
+        }
+
+    endpoint = "replies" if ch == "instagram" else "comments"
+    url = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{cid}/{endpoint}"
+    params = {"access_token": token}
+    payload = {"message": body}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.post(url, params=params, data=payload)
+
+    if r.status_code >= 400:
+        return {
+            "saved": True,
+            "sent": False,
+            "channel": ch,
+            "whatsapp_status": int(r.status_code),
+            "whatsapp_body": r.text[:1200],
+        }
+
+    try:
+        data = r.json()
+    except Exception:
+        data = {}
+
+    reply_id = str((data or {}).get("id") or "").strip()
+    return {
+        "saved": True,
+        "sent": True,
+        "channel": ch,
+        "wa_message_id": reply_id,
+        "provider_message_id": reply_id,
+        "provider_response": data if isinstance(data, dict) else {},
+    }
+
+
 async def send_channel_media(
     *,
     channel: str,

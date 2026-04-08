@@ -31,7 +31,14 @@ const fallbackTriggerTypes = [
   { key: "tag_changed", label: "Etiqueta cambiada" },
   { key: "logic", label: "Logica" },
   { key: "message_flow", label: "Flujo de mensajes" },
+  { key: "comment_flow", label: "Flujo de comentarios" },
   { key: "time", label: "Tiempo" },
+];
+
+const fallbackEventTypes = [
+  { key: "message_in", label: "Mensaje entrante" },
+  { key: "message_out", label: "Mensaje saliente" },
+  { key: "comment_in", label: "Comentario entrante" },
 ];
 
 const fallbackFlowEvents = [
@@ -44,6 +51,7 @@ const fallbackConditionTypes = [
   { key: "last_message_sent", label: "Ultimo mensaje enviado" },
   { key: "sent_count", label: "Cantidad de mensajes enviado" },
   { key: "check_words", label: "Comprobar palabras" },
+  { key: "comment_keywords", label: "Palabras clave en comentario" },
   { key: "template_sent_status", label: "Comprobar plantilla si/no enviada" },
   { key: "current_tag", label: "Etiqueta actual" },
   { key: "schedule", label: "Comprobar horario" },
@@ -51,6 +59,7 @@ const fallbackConditionTypes = [
 
 const fallbackActionTypes = [
   { key: "send_template", label: "Enviar plantilla de mensaje" },
+  { key: "reply_comment", label: "Responder comentario" },
   { key: "change_tag", label: "Cambiar etiqueta" },
   { key: "configure_conversation", label: "Configurar conversacion" },
   { key: "change_contact_status", label: "Cambiar estado contacto" },
@@ -76,7 +85,7 @@ const weekDays = [
 ];
 
 const conditionMenuGroups = [
-  ["last_message_sent", "sent_count", "check_words"],
+  ["last_message_sent", "sent_count", "check_words", "comment_keywords"],
   ["template_sent_status", "current_tag", "schedule"],
 ];
 
@@ -99,6 +108,7 @@ function blankTrigger() {
 }
 
 function blankCondition(type = "check_words") {
+  if (type === "comment_keywords") return { type, mode: "any", words: [] };
   if (type === "template_sent_status") return { type, state: "not_sent", template_id: "" };
   if (type === "current_tag") return { type, state: "has", tag: "" };
   if (type === "last_message_sent") return { type, op: "gte", minutes: 10 };
@@ -110,6 +120,7 @@ function blankCondition(type = "check_words") {
 }
 
 function blankAction(type = "send_template") {
+  if (type === "reply_comment") return { type, mode: "text", use_ai: false, reply_text: "", ai_prompt: "" };
   if (type === "change_tag") return { type, mode: "add", tag: "" };
   if (type === "configure_conversation") return { type, takeover: "keep", ai_state: "", clear_ai_state: false };
   if (type === "change_contact_status") return { type, field: "customer_type", status: "" };
@@ -141,7 +152,7 @@ function cleanConditions(conditions) {
       const type = String(c?.type || "").trim().toLowerCase();
       if (!type) return null;
 
-      if (type === "check_words") {
+      if (type === "check_words" || type === "comment_keywords") {
         const words = Array.isArray(c.words) ? c.words.map((w) => String(w || "").trim()).filter(Boolean) : [];
         return { type, mode: c.mode === "all" ? "all" : "any", words };
       }
@@ -175,6 +186,16 @@ function cleanActions(actions) {
       if (!type) return null;
 
       if (type === "send_template") return { type, template_id: a.template_id ? Number(a.template_id) : null };
+      if (type === "reply_comment") {
+        const mode = a.mode === "ai" || a.use_ai ? "ai" : "text";
+        return {
+          type,
+          mode,
+          use_ai: mode === "ai",
+          reply_text: String(a.reply_text || a.text || "").trim(),
+          ai_prompt: String(a.ai_prompt || "").trim(),
+        };
+      }
       if (type === "change_tag") return { type, mode: a.mode || "add", tag: String(a.tag || "").trim() };
       if (type === "configure_conversation") {
         return {
@@ -279,6 +300,10 @@ export default function TriggerBuilderPanel({
     () => (Array.isArray(catalog?.trigger_types) && catalog.trigger_types.length ? catalog.trigger_types : fallbackTriggerTypes),
     [catalog]
   );
+  const eventTypes = useMemo(
+    () => (Array.isArray(catalog?.event_types) && catalog.event_types.length ? catalog.event_types : fallbackEventTypes),
+    [catalog]
+  );
   const flowEvents = useMemo(
     () => (Array.isArray(catalog?.flow_events) && catalog.flow_events.length ? catalog.flow_events : fallbackFlowEvents),
     [catalog]
@@ -337,7 +362,7 @@ export default function TriggerBuilderPanel({
       const payload = {
         name: String(form.name || "").trim(),
         channel: String(channel || "whatsapp").trim().toLowerCase() || "whatsapp",
-        event_type: "message_in",
+        event_type: form.event_type || "message_in",
         trigger_type: form.trigger_type || "message_flow",
         flow_event: form.flow_event || "received",
         cooldown_minutes: Number(form.cooldown_minutes || 0),
@@ -416,7 +441,23 @@ export default function TriggerBuilderPanel({
           <div className="trg-title">Disparador</div>
           <div className="trg-grid">
             <input style={input} placeholder="Nombre" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
-            <select style={input} value={form.trigger_type} onChange={(e) => setForm((p) => ({ ...p, trigger_type: e.target.value }))}>
+            <select style={input} value={form.event_type} onChange={(e) => setForm((p) => ({ ...p, event_type: e.target.value }))}>
+              {eventTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+            </select>
+            <select
+              style={input}
+              value={form.trigger_type}
+              onChange={(e) => {
+                const nextType = e.target.value;
+                setForm((p) => ({
+                  ...p,
+                  trigger_type: nextType,
+                  event_type: nextType === "comment_flow"
+                    ? "comment_in"
+                    : (String(p.event_type || "").startsWith("comment") ? "message_in" : p.event_type),
+                }));
+              }}
+            >
               {triggerTypes.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
             </select>
 
@@ -471,7 +512,9 @@ export default function TriggerBuilderPanel({
               <div key={t.id} className={`trg-item ${selectedTriggerId === t.id ? "active" : ""}`}>
                 <button style={{ ...smallBtn, flex: 1, textAlign: "left" }} onClick={() => setSelectedTriggerId(t.id)}>
                   <div className="trg-item-name">{t.name}</div>
-                  <div className="trg-item-meta">{labelTriggerType(t.trigger_type)} | {labelFlow(t.flow_event)} | prioridad {t.priority}</div>
+                  <div className="trg-item-meta">
+                    {labelTriggerType(t.trigger_type)} | evento {t.event_type || "message_in"}{t.trigger_type === "message_flow" ? ` | ${labelFlow(t.flow_event)}` : ""} | prioridad {t.priority}
+                  </div>
                   <div className="trg-item-meta">cooldown {t.cooldown_minutes} min | ejecuciones {t.executions_count || 0}</div>
                 </button>
                 <button style={t.is_active ? dangerBtn : smallBtn} onClick={() => toggleActive(t)}>{t.is_active ? "OFF" : "ON"}</button>
@@ -522,7 +565,7 @@ export default function TriggerBuilderPanel({
                   </div>
                 </div>
 
-                {c.type === "check_words" ? (
+                {c.type === "check_words" || c.type === "comment_keywords" ? (
                   <div className="trg-stack">
                     <select style={input} value={c.mode || "any"} onChange={(e) => updateCondition(idx, { mode: e.target.value })}>
                       <option value="any">Cualquiera</option>
@@ -661,6 +704,42 @@ export default function TriggerBuilderPanel({
                     <option value="">Plantilla</option>
                     {(templates || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
+                ) : null}
+
+                {a.type === "reply_comment" ? (
+                  <div className="trg-stack">
+                    <select
+                      style={input}
+                      value={a.mode === "ai" || a.use_ai ? "ai" : "text"}
+                      onChange={(e) => updateAction(idx, { mode: e.target.value, use_ai: e.target.value === "ai" })}
+                    >
+                      <option value="text">Texto fijo</option>
+                      <option value="ai">Generar con IA</option>
+                    </select>
+                    {a.mode === "ai" || a.use_ai ? (
+                      <input
+                        style={input}
+                        placeholder="Instrucciones IA (opcional)"
+                        value={a.ai_prompt || ""}
+                        onChange={(e) => updateAction(idx, { ai_prompt: e.target.value })}
+                      />
+                    ) : (
+                      <div className="trg-stack">
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                          <EmojiPickerButton
+                            onSelect={(emoji) => updateAction(idx, { reply_text: `${a.reply_text || ""}${emoji}` })}
+                            title="Agregar emoji a la respuesta"
+                          />
+                        </div>
+                        <textarea
+                          style={{ ...input, minHeight: 70 }}
+                          placeholder="Respuesta para el comentario"
+                          value={a.reply_text || ""}
+                          onChange={(e) => updateAction(idx, { reply_text: e.target.value })}
+                        />
+                      </div>
+                    )}
+                  </div>
                 ) : null}
 
                 {a.type === "change_tag" ? (

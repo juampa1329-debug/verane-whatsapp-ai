@@ -1446,6 +1446,28 @@ class RemarketingDispatchIn(BaseModel):
     limit: int = 600
 
 
+class MobilePushRegisterIn(BaseModel):
+    token: str
+    platform: str = "android"
+    app_version: str = ""
+    device_id: str = ""
+    role: str = "agente"
+    actor: str = ""
+    notifications_enabled: bool = True
+
+
+class MobilePushUnregisterIn(BaseModel):
+    token: str
+
+
+class MobilePushTestIn(BaseModel):
+    title: str = "Prueba push Verane"
+    body: str = "Push de prueba enviado desde backend"
+    event_type: str = "manual_test"
+    role_scope: str = "all"
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -2300,7 +2322,7 @@ def set_takeover(payload: TakeoverPayload):
 
 
 @app.post("/api/mobile/push/register")
-def register_mobile_push_token(payload: "MobilePushRegisterIn"):
+def register_mobile_push_token(payload: MobilePushRegisterIn):
     token = _normalize_mobile_push_token(payload.token)
     if not token:
         raise HTTPException(status_code=400, detail="invalid push token")
@@ -2350,12 +2372,12 @@ def register_mobile_push_token(payload: "MobilePushRegisterIn"):
 
 
 @app.post("/api/push/register")
-def register_mobile_push_token_compat(payload: "MobilePushRegisterIn"):
+def register_mobile_push_token_compat(payload: MobilePushRegisterIn):
     return register_mobile_push_token(payload)
 
 
 @app.post("/api/mobile/push/unregister")
-def unregister_mobile_push_token(payload: "MobilePushUnregisterIn"):
+def unregister_mobile_push_token(payload: MobilePushUnregisterIn):
     token = _normalize_mobile_push_token(payload.token)
     if not token:
         raise HTTPException(status_code=400, detail="invalid push token")
@@ -2375,7 +2397,7 @@ def unregister_mobile_push_token(payload: "MobilePushUnregisterIn"):
 
 
 @app.post("/api/push/unregister")
-def unregister_mobile_push_token_compat(payload: "MobilePushUnregisterIn"):
+def unregister_mobile_push_token_compat(payload: MobilePushUnregisterIn):
     return unregister_mobile_push_token(payload)
 
 
@@ -2419,7 +2441,7 @@ def mobile_push_state_compat(request: StarletteRequest = None):
 
 
 @app.post("/api/mobile/push/test")
-def test_mobile_push(payload: "MobilePushTestIn", request: StarletteRequest = None):
+def test_mobile_push(payload: MobilePushTestIn, request: StarletteRequest = None):
     _require_security_role(request, {"admin", "supervisor"})
     role_scope = _normalize_push_role_scope(payload.role_scope)
     result = _emit_mobile_push_event(
@@ -2433,7 +2455,7 @@ def test_mobile_push(payload: "MobilePushTestIn", request: StarletteRequest = No
 
 
 @app.post("/api/push/test")
-def test_mobile_push_compat(payload: "MobilePushTestIn", request: StarletteRequest = None):
+def test_mobile_push_compat(payload: MobilePushTestIn, request: StarletteRequest = None):
     return test_mobile_push(payload=payload, request=request)
 
 
@@ -5752,28 +5774,6 @@ class SecurityKeyPatch(BaseModel):
     scope: Optional[str] = None
     is_active: Optional[bool] = None
     rotation_days: Optional[int] = Field(default=None, ge=1, le=3650)
-
-
-class MobilePushRegisterIn(BaseModel):
-    token: str
-    platform: str = "android"
-    app_version: str = ""
-    device_id: str = ""
-    role: str = "agente"
-    actor: str = ""
-    notifications_enabled: bool = True
-
-
-class MobilePushUnregisterIn(BaseModel):
-    token: str
-
-
-class MobilePushTestIn(BaseModel):
-    title: str = "Prueba push Verane"
-    body: str = "Push de prueba enviado desde backend"
-    event_type: str = "manual_test"
-    role_scope: str = "all"
-    data: Dict[str, Any] = Field(default_factory=dict)
 
 
 def _truthy(raw: Any) -> bool:

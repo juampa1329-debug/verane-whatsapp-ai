@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -989,9 +990,33 @@ def ensure_schema():
 
 @app.on_event("startup")
 def _startup():
-    # ✅ IMPORTANTE: NO recursión. Se ejecuta una sola vez al levantar el server.
-    ensure_schema()
+    # Startup resiliente para evitar 503 por carrera de arranque con Postgres.
+    raw_retries = str(os.getenv("DB_STARTUP_RETRIES", "20") or "20").strip()
+    raw_delay = str(os.getenv("DB_STARTUP_DELAY_SEC", "2") or "2").strip()
+    try:
+        retries = max(1, min(int(raw_retries), 120))
+    except Exception:
+        retries = 20
+    try:
+        delay_sec = max(0.2, min(float(raw_delay), 10.0))
+    except Exception:
+        delay_sec = 2.0
 
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            ensure_schema()
+            if attempt > 1:
+                print(f"[STARTUP] ensure_schema recovered on attempt {attempt}/{retries}")
+            return
+        except Exception as e:
+            last_error = e
+            print(f"[STARTUP] ensure_schema failed attempt {attempt}/{retries}: {str(e)[:260]}")
+            if attempt < retries:
+                time.sleep(delay_sec)
+
+    if last_error:
+        raise last_error
 
 async def _run_remarketing_engine_forever(stop_event: asyncio.Event, interval_sec: int) -> None:
     wait_sec = int(max(2, min(int(interval_sec or 8), 120)))
@@ -7322,3 +7347,4 @@ def list_security_audit(
         ).mappings().all()
 
     return {"events": [dict(r) for r in rows]}
+

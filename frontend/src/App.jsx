@@ -7,6 +7,7 @@ import MarketingPanel from "./components/MarketingPanel";
 import AdsManagerPanel from "./components/AdsManagerPanel";
 import LabelsPanel from "./components/LabelsPanel";
 import EmojiPickerButton from "./components/EmojiPickerButton";
+import InboxCommentsPanel from "./components/InboxCommentsPanel";
 import useViewport from "./hooks/useViewport";
 
 
@@ -225,6 +226,19 @@ function normalizeInboxChannel(raw, fallback = "all") {
   return fallback;
 }
 
+const inboxChannelMeta = {
+  all: { label: "Todos", short: "ALL" },
+  whatsapp: { label: "WhatsApp", short: "WA" },
+  facebook: { label: "Facebook", short: "FB" },
+  instagram: { label: "Instagram", short: "IG" },
+  tiktok: { label: "TikTok", short: "TT" },
+};
+
+function getInboxChannelMeta(raw, fallback = "all") {
+  const channel = normalizeInboxChannel(raw, fallback);
+  return inboxChannelMeta[channel] || inboxChannelMeta.all;
+}
+
 const MainNav = ({ activeTab, onChangeTab, isMobile }) => {
   const navItems = [
     { id: 'dashboard', icon: IconChart, label: 'Dashboard' },
@@ -274,6 +288,7 @@ const ChatList = ({
   filterTags,
   setFilterTags,
   onClearFilters,
+  loadError,
 }) => {
   const channelTabs = [
     { id: "all", label: "Todos" },
@@ -314,6 +329,12 @@ const ChatList = ({
           />
         </div>
 
+        {loadError ? (
+          <div className="inbox-load-error">
+            {loadError}
+          </div>
+        ) : null}
+
         {/* Filtros */}
         <div className="filter-row" style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           <select value={filterTakeover} onChange={(e) => setFilterTakeover(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10 }}>
@@ -349,6 +370,9 @@ const ChatList = ({
         {(conversations || []).map(c => {
           const unread = !!c.has_unread;
           const unreadCount = Number.isFinite(Number(c.unread_count)) ? Number(c.unread_count) : 0;
+          const rowChannel = normalizeInboxChannel(c.last_channel, "whatsapp");
+          const rowChannelMeta = getInboxChannelMeta(rowChannel, "whatsapp");
+          const showChannelChip = normalizeInboxChannel(channel, "all") === "all";
 
           return (
             <button
@@ -359,6 +383,14 @@ const ChatList = ({
               <div className="chat-item-top">
                 <div className="chat-title-wrap" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span className="chat-phone">{displayName(c)}</span>
+                  {showChannelChip ? (
+                    <span
+                      className={`channel-chip channel-${rowChannel}`}
+                      title={`Canal: ${rowChannelMeta.label}`}
+                    >
+                      {rowChannelMeta.short}
+                    </span>
+                  ) : null}
 
                   {unread && (
                     <>
@@ -870,6 +902,7 @@ const CustomerCardCRM = ({ phone, takeover, isMobile = false, onBack = null }) =
 // --- COMPONENTE PRINCIPAL ---
 export default function App() {
   const [activeTab, setActiveTab] = useState('inbox');
+  const [inboxViewMode, setInboxViewMode] = useState("messages"); // messages|comments
   const [conversations, setConversations] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -883,6 +916,7 @@ export default function App() {
   const [filterUnread, setFilterUnread] = useState("all");     // all|yes|no
   const [filterTags, setFilterTags] = useState("");            // "vip,pago pendiente"
   const [inboxChannel, setInboxChannel] = useState("all");
+  const [conversationsError, setConversationsError] = useState("");
 
   useEffect(() => {
     const normalized = normalizeInboxChannel(inboxChannel);
@@ -970,7 +1004,12 @@ export default function App() {
       const activeChannel = normalizeInboxChannel(inboxChannel);
       const url = buildConversationsUrl(activeChannel);
       const r = await fetch(url);
-      if (!r.ok) throw new Error(`conversations_http_${r.status}`);
+      if (!r.ok) {
+        if (r.status === 503) {
+          throw new Error("backend_unavailable_503");
+        }
+        throw new Error(`conversations_http_${r.status}`);
+      }
       const data = await r.json();
       let list = Array.isArray(data?.conversations) ? data.conversations : [];
 
@@ -1013,8 +1052,17 @@ export default function App() {
       prevConversationsRef.current = nextMap;
 
       setConversations(list);
+      setConversationsError("");
     } catch (e) {
       console.error("Error cargando conversaciones", e);
+      const token = String(e?.message || e || "").toLowerCase();
+      if (token.includes("backend_unavailable_503")) {
+        setConversationsError("Backend no disponible (503). Verifica el despliegue del API en Coolify.");
+      } else if (token.includes("failed to fetch")) {
+        setConversationsError("No se pudo conectar con el backend. Revisa dominio, SSL y CORS.");
+      } else {
+        setConversationsError("Error cargando conversaciones. Revisa logs del backend.");
+      }
     }
   };
 
@@ -1350,6 +1398,7 @@ export default function App() {
     setFilterTakeover("all");
     setFilterUnread("all");
     setFilterTags("");
+    setConversationsError("");
   };
 
   const handleTabChange = (nextTab) => {
@@ -1363,20 +1412,22 @@ export default function App() {
 
   // Poll conversations
   useEffect(() => {
+    if (activeTab !== "inbox" || inboxViewMode !== "messages") return;
     loadConversations();
     const interval = setInterval(loadConversations, 2500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPhone, filterTakeover, filterUnread, filterTags, q, inboxChannel]);
+  }, [activeTab, inboxViewMode, selectedPhone, filterTakeover, filterUnread, filterTags, q, inboxChannel]);
 
   // Poll messages for selected
   useEffect(() => {
+    if (activeTab !== "inbox" || inboxViewMode !== "messages") return;
     if (selectedPhone) {
       loadMessages(selectedPhone);
       const interval = setInterval(() => loadMessages(selectedPhone), 2500);
       return () => clearInterval(interval);
     }
-  }, [selectedPhone, inboxChannel]);
+  }, [activeTab, inboxViewMode, selectedPhone, inboxChannel]);
 
   useEffect(() => {
     audioWaveformsRef.current = audioWaveforms;
@@ -1432,12 +1483,13 @@ export default function App() {
 
   // cada vez que se abre chat o llega update, marcamos leido
   useEffect(() => {
+    if (activeTab !== "inbox" || inboxViewMode !== "messages") return;
     if (!selectedPhone) return;
     markRead(selectedPhone);
     // y refrescamos inbox para quitar unread badge
     loadConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPhone]);
+  }, [activeTab, inboxViewMode, selectedPhone]);
 
   useEffect(() => {
     return () => {
@@ -1461,6 +1513,11 @@ export default function App() {
   }, [isMobile, activeTab, selectedPhone]);
 
   const selectedConversation = conversations.find(c => c.phone === selectedPhone);
+  const selectedConversationChannel = normalizeInboxChannel(
+    normalizeInboxChannel(inboxChannel, "all") === "all" ? selectedConversation?.last_channel : inboxChannel,
+    "whatsapp"
+  );
+  const selectedConversationChannelMeta = getInboxChannelMeta(selectedConversationChannel, "whatsapp");
   const showInboxList = !isMobile || inboxMobileView === "list";
   const showInboxChat = !isMobile || inboxMobileView === "chat";
   const showInboxCRM = !isMobile || inboxMobileView === "crm";
@@ -1471,7 +1528,26 @@ export default function App() {
 
       <div className={`app-content ${activeTab === "inbox" ? "app-content-inbox" : "app-content-page"}`}>
         {activeTab === 'inbox' ? (
-          <div className={`inbox-layout ${isMobile ? "inbox-mobile" : isTablet ? "inbox-tablet" : "inbox-desktop"}`}>
+          <div className="inbox-shell">
+            <div className="inbox-mode-tabs">
+              <button
+                type="button"
+                className={`inbox-mode-tab ${inboxViewMode === "messages" ? "active" : ""}`}
+                onClick={() => setInboxViewMode("messages")}
+              >
+                Mensajeria instantanea
+              </button>
+              <button
+                type="button"
+                className={`inbox-mode-tab ${inboxViewMode === "comments" ? "active" : ""}`}
+                onClick={() => setInboxViewMode("comments")}
+              >
+                Comentarios
+              </button>
+            </div>
+
+            {inboxViewMode === "messages" ? (
+            <div className={`inbox-layout ${isMobile ? "inbox-mobile" : isTablet ? "inbox-tablet" : "inbox-desktop"}`}>
             {showInboxList && (
               <ChatList
                 conversations={conversations}
@@ -1488,6 +1564,7 @@ export default function App() {
                 filterTags={filterTags}
                 setFilterTags={setFilterTags}
                 onClearFilters={onClearFilters}
+                loadError={conversationsError}
               />
             )}
 
@@ -1508,8 +1585,16 @@ export default function App() {
                         <div>
                           <h3 className="chat-title">{displayName(selectedConversation)}</h3>
                           <div className="chat-subtitle">
+                            <span style={{ marginRight: 6, opacity: 0.9, fontWeight: 600 }}>Canal:</span>
+                            <span
+                              className={`channel-chip channel-${selectedConversationChannel}`}
+                              style={{ marginRight: 6 }}
+                              title={`Canal: ${selectedConversationChannelMeta.label}`}
+                            >
+                              {selectedConversationChannelMeta.short}
+                            </span>
                             <span style={{ marginRight: 8, opacity: 0.9, fontWeight: 600 }}>
-                              Canal: {normalizeInboxChannel(inboxChannel)}
+                              {selectedConversationChannelMeta.label}
                             </span>
                             {selectedConversation?.updated_at ? `Ultimo: ${fmtDateTime(selectedConversation.updated_at)}` : ''}
                           </div>
@@ -1886,6 +1971,10 @@ export default function App() {
               />
             )}
           </div>
+            ) : (
+              <InboxCommentsPanel apiBase={API_BASE} />
+            )}
+          </div>
       ) : activeTab === "dashboard" ? (
         <DashboardPanel apiBase={API_BASE} />
       ) : activeTab === "crm" ? (
@@ -1895,7 +1984,7 @@ export default function App() {
       ) : activeTab === "marketing" ? (
         <MarketingPanel apiBase={API_BASE} />
       ) : activeTab === "ads_manager" ? (
-        <AdsManagerPanel apiBase={API_BASE} />
+        <AdsManagerPanel />
       ) : activeTab === "settings" ? (
         <SettingsPanel apiBase={API_BASE} />
       ) : (

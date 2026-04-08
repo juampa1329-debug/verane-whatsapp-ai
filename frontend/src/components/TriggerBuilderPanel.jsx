@@ -120,7 +120,7 @@ function blankCondition(type = "check_words") {
 }
 
 function blankAction(type = "send_template") {
-  if (type === "reply_comment") return { type, mode: "text", use_ai: false, reply_text: "", ai_prompt: "" };
+  if (type === "reply_comment") return { type, mode: "text", use_ai: false, reply_text: "", ai_prompt: "", template_id: "" };
   if (type === "change_tag") return { type, mode: "add", tag: "" };
   if (type === "configure_conversation") return { type, takeover: "keep", ai_state: "", clear_ai_state: false };
   if (type === "change_contact_status") return { type, field: "customer_type", status: "" };
@@ -187,13 +187,18 @@ function cleanActions(actions) {
 
       if (type === "send_template") return { type, template_id: a.template_id ? Number(a.template_id) : null };
       if (type === "reply_comment") {
-        const mode = a.mode === "ai" || a.use_ai ? "ai" : "text";
+        const rawMode = String(a.mode || "").trim().toLowerCase();
+        const mode = rawMode === "template"
+          ? "template"
+          : (rawMode === "ai" || a.use_ai ? "ai" : "text");
         return {
           type,
           mode,
           use_ai: mode === "ai",
           reply_text: String(a.reply_text || a.text || "").trim(),
           ai_prompt: String(a.ai_prompt || "").trim(),
+          template_id: a.template_id ? Number(a.template_id) : null,
+          template_name: String(a.template_name || "").trim(),
         };
       }
       if (type === "change_tag") return { type, mode: a.mode || "add", tag: String(a.tag || "").trim() };
@@ -708,15 +713,47 @@ export default function TriggerBuilderPanel({
 
                 {a.type === "reply_comment" ? (
                   <div className="trg-stack">
+                    {(() => {
+                      const replyMode = a.mode === "template" || a.template_id
+                        ? "template"
+                        : (a.mode === "ai" || a.use_ai ? "ai" : "text");
+                      return (
                     <select
                       style={input}
-                      value={a.mode === "ai" || a.use_ai ? "ai" : "text"}
-                      onChange={(e) => updateAction(idx, { mode: e.target.value, use_ai: e.target.value === "ai" })}
+                          value={replyMode}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            updateAction(idx, {
+                              mode: next,
+                              use_ai: next === "ai",
+                              template_id: next === "template" ? a.template_id || "" : "",
+                            });
+                          }}
                     >
                       <option value="text">Texto fijo</option>
                       <option value="ai">Generar con IA</option>
+                          <option value="template">Usar plantilla</option>
                     </select>
-                    {a.mode === "ai" || a.use_ai ? (
+                      );
+                    })()}
+                    {a.mode === "template" || a.template_id ? (
+                      <select
+                        style={input}
+                        value={a.template_id || ""}
+                        onChange={(e) => {
+                          const selected = (templates || []).find((t) => String(t.id) === String(e.target.value));
+                          updateAction(idx, {
+                            template_id: e.target.value,
+                            template_name: selected?.name || "",
+                            mode: "template",
+                            use_ai: false,
+                          });
+                        }}
+                      >
+                        <option value="">Plantilla de comentarios</option>
+                        {(templates || []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    ) : a.mode === "ai" || a.use_ai ? (
                       <input
                         style={input}
                         placeholder="Instrucciones IA (opcional)"

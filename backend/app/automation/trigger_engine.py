@@ -376,6 +376,60 @@ def _render_template_blocks(template_row: Dict[str, Any], variables: Dict[str, A
     return rendered
 
 
+def _comment_template_variables(phone: str, event_context: Dict[str, Any]) -> Dict[str, Any]:
+    vars_map = _recipient_variables(phone)
+    ctx = _safe_json_dict(event_context)
+    author_name = str(ctx.get("author_name") or "").strip()
+    author_id = str(ctx.get("author_id") or "").strip()
+    comment_id = str(ctx.get("comment_id") or "").strip()
+    post_id = str(ctx.get("post_id") or "").strip()
+    if author_name:
+        vars_map["comment_author_name"] = author_name
+        vars_map.setdefault("customer_name", author_name)
+    if author_id:
+        vars_map["comment_author_id"] = author_id
+    if comment_id:
+        vars_map["comment_id"] = comment_id
+    if post_id:
+        vars_map["comment_post_id"] = post_id
+    return vars_map
+
+
+def _resolve_comment_reply_from_template(
+    *,
+    phone: str,
+    channel: str,
+    template_id: int = 0,
+    template_name: str = "",
+    event_context: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    tpl = _load_template_row(
+        template_id=int(template_id or 0),
+        template_name=str(template_name or "").strip(),
+        channel=str(channel or "facebook").strip().lower() or "facebook",
+    )
+    if not tpl:
+        return "", {}
+
+    vars_map = _comment_template_variables(phone, _safe_json_dict(event_context))
+    rendered_blocks = _render_template_blocks(tpl, vars_map)
+
+    # Comentarios soportan texto: priorizamos bloque text, luego caption de imagen/video.
+    for block in rendered_blocks:
+        kind = str(block.get("kind") or "").strip().lower()
+        if kind == "text":
+            text_value = str(block.get("text") or "").strip()
+            if text_value:
+                return text_value, tpl
+        if kind in ("image", "video"):
+            caption = str(block.get("caption") or "").strip()
+            if caption:
+                return caption, tpl
+
+    fallback_body = _render_template(str(tpl.get("body") or ""), vars_map).strip()
+    return fallback_body, tpl
+
+
 def _save_out_message(
     *,
     phone: str,
@@ -1582,6 +1636,21 @@ async def _action_reply_comment(
     mode = str(action.get("mode") or "").strip().lower()
     use_ai = bool(action.get("use_ai")) or mode == "ai"
     reply_text = str(action.get("reply_text") or action.get("text") or "").strip()
+    template_id = int(action.get("template_id") or 0)
+    template_name = str(action.get("template_name") or "").strip()
+    template_row: Dict[str, Any] = {}
+
+    if template_id > 0 or template_name:
+        templated_text, loaded_tpl = _resolve_comment_reply_from_template(
+            phone=str(phone or "").strip() or f"comment:{channel}:{comment_id}",
+            channel=channel,
+            template_id=template_id,
+            template_name=template_name,
+            event_context=context,
+        )
+        template_row = loaded_tpl or {}
+        if templated_text:
+            reply_text = templated_text
 
     if use_ai:
         ai_prompt = str(action.get("ai_prompt") or "").strip()
@@ -1685,6 +1754,8 @@ async def _action_reply_comment(
                             {
                                 "source": "trigger",
                                 "action": "reply_comment",
+                                "template_id": int(template_row.get("id") or template_id or 0),
+                                "template_name": str(template_row.get("name") or template_name or "").strip(),
                                 "provider_response": _safe_json_dict(send.get("provider_response")),
                             },
                             ensure_ascii=False,
@@ -1699,6 +1770,8 @@ async def _action_reply_comment(
         "channel": channel,
         "comment_id": comment_id,
         "provider_comment_id": provider_comment_id,
+        "template_id": int(template_row.get("id") or template_id or 0),
+        "template_name": str(template_row.get("name") or template_name or "").strip(),
         "reply_text": reply_text,
         "send": send,
     }

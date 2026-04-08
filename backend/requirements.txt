@@ -13,3 +13,4 @@ pypdf
 requests
 cryptography==44.0.3
 pyotp==2.9.0
+firebase-admin==6.5.0

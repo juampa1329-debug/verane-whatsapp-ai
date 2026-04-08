@@ -2423,7 +2423,7 @@ def _claim_due_scheduled_trigger_messages(now: datetime, limit: int) -> List[Dic
                       AND sm.run_at <= :now
                     ORDER BY sm.run_at ASC, sm.id ASC
                     LIMIT :limit
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF sm SKIP LOCKED
                 )
                 UPDATE trigger_scheduled_messages t
                 SET status = 'processing',

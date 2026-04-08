@@ -6,14 +6,6 @@ from typing import Any, Dict, Tuple
 import httpx
 
 
-META_GRAPH_VERSION = str(os.getenv("META_GRAPH_VERSION", "v20.0")).strip() or "v20.0"
-
-FACEBOOK_PAGE_ID = str(os.getenv("FACEBOOK_PAGE_ID", "")).strip()
-FACEBOOK_PAGE_TOKEN = str(os.getenv("FACEBOOK_PAGE_TOKEN", "")).strip()
-
-INSTAGRAM_ACCOUNT_ID = str(os.getenv("INSTAGRAM_ACCOUNT_ID", "")).strip()
-INSTAGRAM_TOKEN = str(os.getenv("INSTAGRAM_TOKEN", "")).strip()
-
 TIKTOK_API_BASE = str(os.getenv("TIKTOK_API_BASE", "https://business-api.tiktok.com")).strip().rstrip("/")
 TIKTOK_SEND_PATH = str(os.getenv("TIKTOK_SEND_PATH", "/open_api/v1.3/message/send/")).strip() or "/open_api/v1.3/message/send/"
 TIKTOK_ACCESS_TOKEN = str(os.getenv("TIKTOK_ACCESS_TOKEN", "")).strip()
@@ -55,13 +47,67 @@ def _extract_tiktok_message_id(payload: Any) -> str:
     return ""
 
 
+def _env_first(*names: str) -> str:
+    for name in names:
+        value = str(os.getenv(name, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def _meta_graph_version() -> str:
+    return _env_first("META_GRAPH_VERSION", "FACEBOOK_GRAPH_VERSION", "META_API_VERSION") or "v20.0"
+
+
 def _meta_credentials_for_channel(channel: str) -> Tuple[str, str]:
     ch = _normalize_channel(channel)
     if ch == "facebook":
-        return FACEBOOK_PAGE_ID, FACEBOOK_PAGE_TOKEN
+        return (
+            _env_first("FACEBOOK_PAGE_ID", "META_PAGE_ID", "META_MESSENGER_PAGE_ID", "MESSENGER_PAGE_ID"),
+            _env_first(
+                "FACEBOOK_PAGE_TOKEN",
+                "META_PAGE_TOKEN",
+                "META_MESSENGER_PAGE_TOKEN",
+                "PAGE_ACCESS_TOKEN",
+                "META_ACCESS_TOKEN",
+            ),
+        )
     if ch == "instagram":
-        return INSTAGRAM_ACCOUNT_ID, INSTAGRAM_TOKEN
+        return (
+            _env_first(
+                "INSTAGRAM_ACCOUNT_ID",
+                "META_INSTAGRAM_ACCOUNT_ID",
+                "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+                "IG_ACCOUNT_ID",
+            ),
+            _env_first(
+                "INSTAGRAM_TOKEN",
+                "META_INSTAGRAM_TOKEN",
+                "FACEBOOK_PAGE_TOKEN",
+                "META_PAGE_TOKEN",
+                "PAGE_ACCESS_TOKEN",
+                "META_ACCESS_TOKEN",
+            ),
+        )
     return "", ""
+
+
+def _meta_missing_reason(channel: str, account_id: str, token: str) -> str:
+    ch = _normalize_channel(channel)
+    if ch == "facebook":
+        if token:
+            return "FACEBOOK credentials not set"
+        return "FACEBOOK credentials not set (missing token: FACEBOOK_PAGE_TOKEN or META_PAGE_TOKEN)"
+    if ch == "instagram":
+        missing = []
+        if not account_id:
+            missing.append("INSTAGRAM_ACCOUNT_ID")
+        if not token:
+            missing.append("INSTAGRAM_TOKEN/FACEBOOK_PAGE_TOKEN")
+        if missing:
+            return f"INSTAGRAM credentials not set (missing: {', '.join(missing)})"
+        return "INSTAGRAM credentials not set"
+    return f"{ch.upper()} credentials not set"
 
 
 async def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout_sec: float = 20.0) -> Dict[str, Any]:
@@ -108,15 +154,26 @@ async def send_channel_text(channel: str, to: str, text_msg: str) -> Dict[str, A
 
     if ch in ("facebook", "instagram"):
         account_id, token = _meta_credentials_for_channel(ch)
-        if not account_id or not token:
-            return {
-                "saved": True,
-                "sent": False,
-                "reason": f"{ch.upper()} credentials not set",
-                "channel": ch,
-            }
+        if ch == "facebook":
+            if not token:
+                return {
+                    "saved": True,
+                    "sent": False,
+                    "reason": _meta_missing_reason(ch, account_id, token),
+                    "channel": ch,
+                }
+            account_path = account_id or "me"
+        else:
+            if not account_id or not token:
+                return {
+                    "saved": True,
+                    "sent": False,
+                    "reason": _meta_missing_reason(ch, account_id, token),
+                    "channel": ch,
+                }
+            account_path = account_id
 
-        url = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{account_id}/messages"
+        url = f"https://graph.facebook.com/{_meta_graph_version()}/{account_path}/messages"
         payload = {
             "recipient": {"id": to_id},
             "message": {"text": body},
@@ -203,7 +260,15 @@ async def send_comment_reply(channel: str, comment_id: str, text_msg: str) -> Di
     if not body:
         return {"saved": True, "sent": False, "reason": "text_required", "channel": ch}
 
-    token = FACEBOOK_PAGE_TOKEN if ch == "facebook" else (INSTAGRAM_TOKEN or FACEBOOK_PAGE_TOKEN)
+    fb_token = _env_first(
+        "FACEBOOK_PAGE_TOKEN",
+        "META_PAGE_TOKEN",
+        "META_MESSENGER_PAGE_TOKEN",
+        "PAGE_ACCESS_TOKEN",
+        "META_ACCESS_TOKEN",
+    )
+    ig_token = _env_first("INSTAGRAM_TOKEN", "META_INSTAGRAM_TOKEN")
+    token = fb_token if ch == "facebook" else (ig_token or fb_token)
     if not token:
         return {
             "saved": True,
@@ -213,7 +278,7 @@ async def send_comment_reply(channel: str, comment_id: str, text_msg: str) -> Di
         }
 
     endpoint = "replies" if ch == "instagram" else "comments"
-    url = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{cid}/{endpoint}"
+    url = f"https://graph.facebook.com/{_meta_graph_version()}/{cid}/{endpoint}"
     params = {"access_token": token}
     payload = {"message": body}
 
@@ -276,13 +341,24 @@ async def send_channel_media(
 
     if ch in ("facebook", "instagram"):
         account_id, token = _meta_credentials_for_channel(ch)
-        if not account_id or not token:
-            return {
-                "saved": True,
-                "sent": False,
-                "reason": f"{ch.upper()} credentials not set",
-                "channel": ch,
-            }
+        if ch == "facebook":
+            if not token:
+                return {
+                    "saved": True,
+                    "sent": False,
+                    "reason": _meta_missing_reason(ch, account_id, token),
+                    "channel": ch,
+                }
+            account_path = account_id or "me"
+        else:
+            if not account_id or not token:
+                return {
+                    "saved": True,
+                    "sent": False,
+                    "reason": _meta_missing_reason(ch, account_id, token),
+                    "channel": ch,
+                }
+            account_path = account_id
         if not murl and not mid:
             return {
                 "saved": True,
@@ -301,7 +377,7 @@ async def send_channel_media(
         elif mid:
             payload_data["attachment_id"] = mid
 
-        url = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{account_id}/messages"
+        url = f"https://graph.facebook.com/{_meta_graph_version()}/{account_path}/messages"
         payload = {
             "recipient": {"id": to_id},
             "message": {

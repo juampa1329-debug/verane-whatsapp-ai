@@ -1914,7 +1914,7 @@ def _meta_graph_version() -> str:
 def _meta_whatsapp_access_token() -> str:
     # Para WhatsApp templates NO usamos FACEBOOK_PAGE_TOKEN para evitar errores
     # de capacidad/permisos cuando el token pertenece a Pages/Messenger.
-    for key in ("WHATSAPP_TOKEN", "META_ACCESS_TOKEN"):
+    for key in ("WHATSAPP_PERMANENT_TOKEN", "WHATSAPP_TOKEN", "META_ACCESS_TOKEN"):
         value = str(os.getenv(key, "") or "").strip()
         if value:
             return value
@@ -1997,7 +1997,7 @@ def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
     if capability_or_auth:
         detail = (
             f"Meta {op_label} failed: {msg}. "
-            "Verifica que WHATSAPP_TOKEN sea un token de System User del WABA "
+            "Verifica que WHATSAPP_PERMANENT_TOKEN (o WHATSAPP_TOKEN legado) sea un token de System User del WABA "
             "con permisos whatsapp_business_management y whatsapp_business_messaging, "
             "y que la app tenga habilitado WhatsApp Business Platform."
         )
@@ -4350,7 +4350,7 @@ async def list_broadcast_meta_templates(limit: int = Query(200, ge=1, le=500)):
     if not token:
         raise HTTPException(
             status_code=400,
-            detail="Meta token no configurado para WhatsApp (WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
+            detail="Meta token no configurado para WhatsApp (WHATSAPP_PERMANENT_TOKEN/WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
         )
 
     graph_version = _meta_graph_version()
@@ -4378,7 +4378,7 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
     if not token:
         raise HTTPException(
             status_code=400,
-            detail="Meta token no configurado para WhatsApp (WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
+            detail="Meta token no configurado para WhatsApp (WHATSAPP_PERMANENT_TOKEN/WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
         )
 
     graph_version = _meta_graph_version()

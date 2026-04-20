@@ -20,7 +20,13 @@ FORWARD_URLS = os.getenv("WHATSAPP_FORWARD_URLS", "")
 FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "true").lower() == "true"
 FORWARD_TIMEOUT = float(os.getenv("WHATSAPP_FORWARD_TIMEOUT", "3"))
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+# Token permanente para Cloud API (preferido). Se mantiene fallback a WHATSAPP_TOKEN
+# por compatibilidad con despliegues existentes.
+WHATSAPP_TOKEN = (
+    os.getenv("WHATSAPP_PERMANENT_TOKEN", "")
+    or os.getenv("WHATSAPP_TOKEN", "")
+    or os.getenv("META_ACCESS_TOKEN", "")
+)
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_GRAPH_VERSION = os.getenv("WHATSAPP_GRAPH_VERSION", "v20.0")
 

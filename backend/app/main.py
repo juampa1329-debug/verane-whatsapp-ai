@@ -1911,8 +1911,10 @@ def _meta_graph_version() -> str:
     return str(os.getenv("WHATSAPP_GRAPH_VERSION", os.getenv("META_GRAPH_VERSION", "v20.0")) or "v20.0").strip() or "v20.0"
 
 
-def _meta_access_token() -> str:
-    for key in ("WHATSAPP_TOKEN", "META_ACCESS_TOKEN", "FACEBOOK_PAGE_TOKEN"):
+def _meta_whatsapp_access_token() -> str:
+    # Para WhatsApp templates NO usamos FACEBOOK_PAGE_TOKEN para evitar errores
+    # de capacidad/permisos cuando el token pertenece a Pages/Messenger.
+    for key in ("WHATSAPP_TOKEN", "META_ACCESS_TOKEN"):
         value = str(os.getenv(key, "") or "").strip()
         if value:
             return value
@@ -1965,6 +1967,45 @@ def _parse_meta_error(raw_text: str) -> str:
     return txt[:900]
 
 
+def _parse_meta_error_payload(raw_text: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(str(raw_text or "").strip() or "{}")
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    err = payload.get("error")
+    if isinstance(err, dict):
+        return err
+    return {}
+
+
+def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
+    err = _parse_meta_error_payload(raw_text)
+    code = int(err.get("code") or 0) if str(err.get("code") or "").strip().isdigit() else 0
+    msg = _parse_meta_error(raw_text)
+    msg_l = msg.lower()
+
+    # Errores típicos de permisos/capacidad/token -> devolver 400 con guía clara
+    capability_or_auth = (
+        code in {3, 10, 100, 102, 190, 200}
+        or "capability to make this api call" in msg_l
+        or "missing permissions" in msg_l
+        or "invalid oauth access token" in msg_l
+        or "unsupported get request" in msg_l
+    )
+    if capability_or_auth:
+        detail = (
+            f"Meta {op_label} failed: {msg}. "
+            "Verifica que WHATSAPP_TOKEN sea un token de System User del WABA "
+            "con permisos whatsapp_business_management y whatsapp_business_messaging, "
+            "y que la app tenga habilitado WhatsApp Business Platform."
+        )
+        return HTTPException(status_code=400, detail=detail)
+
+    return HTTPException(status_code=502, detail=f"Meta {op_label} failed: {msg}")
+
+
 def _map_meta_template_row(row: Dict[str, Any]) -> Dict[str, Any]:
     components = row.get("components") if isinstance(row.get("components"), list) else []
     quality = row.get("quality_score")
@@ -2005,7 +2046,7 @@ async def _resolve_meta_waba_id(token: str, graph_version: str) -> str:
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(url, params=params)
     if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Meta resolve WABA failed: {_parse_meta_error(resp.text)}")
+        raise _meta_graph_http_exception("resolve WABA", resp.text)
 
     data = resp.json() if resp.text else {}
     waba_id = str(((data or {}).get("whatsapp_business_account") or {}).get("id") or "").strip()
@@ -2028,7 +2069,7 @@ async def _fetch_meta_whatsapp_templates(token: str, graph_version: str, waba_id
         for _ in range(12):
             resp = await client.get(url, params=params)
             if resp.status_code >= 400:
-                raise HTTPException(status_code=502, detail=f"Meta list templates failed: {_parse_meta_error(resp.text)}")
+                raise _meta_graph_http_exception("list templates", resp.text)
 
             payload = resp.json() if resp.text else {}
             data = payload.get("data") if isinstance(payload, dict) else []
@@ -4287,9 +4328,12 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
 
 @app.get("/api/broadcast/meta/templates")
 async def list_broadcast_meta_templates(limit: int = Query(200, ge=1, le=500)):
-    token = _meta_access_token()
+    token = _meta_whatsapp_access_token()
     if not token:
-        raise HTTPException(status_code=400, detail="Meta token no configurado (WHATSAPP_TOKEN)")
+        raise HTTPException(
+            status_code=400,
+            detail="Meta token no configurado para WhatsApp (WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
+        )
 
     graph_version = _meta_graph_version()
     waba_id = await _resolve_meta_waba_id(token, graph_version)
@@ -4312,9 +4356,12 @@ async def sync_broadcast_meta_templates(limit: int = Query(200, ge=1, le=500)):
 
 @app.post("/api/broadcast/meta/templates")
 async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn):
-    token = _meta_access_token()
+    token = _meta_whatsapp_access_token()
     if not token:
-        raise HTTPException(status_code=400, detail="Meta token no configurado (WHATSAPP_TOKEN)")
+        raise HTTPException(
+            status_code=400,
+            detail="Meta token no configurado para WhatsApp (WHATSAPP_TOKEN/META_ACCESS_TOKEN)",
+        )
 
     graph_version = _meta_graph_version()
     waba_id = await _resolve_meta_waba_id(token, graph_version)
@@ -4346,7 +4393,7 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
         resp = await client.post(url, params=params, headers=headers, json=request_payload)
 
     if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Meta create template failed: {_parse_meta_error(resp.text)}")
+        raise _meta_graph_http_exception("create template", resp.text)
 
     data = resp.json() if resp.text else {}
     created = {

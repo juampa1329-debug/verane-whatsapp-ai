@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import httpx
 import json
 import os
 import re
@@ -1343,6 +1344,25 @@ class TemplateRenderIn(BaseModel):
     overrides: Dict[str, Any] = Field(default_factory=dict)
 
 
+class BroadcastMetaTemplateButtonIn(BaseModel):
+    type: str = "QUICK_REPLY"
+    text: str = ""
+    url: str = ""
+    phone_number: str = ""
+
+
+class BroadcastMetaTemplateCreateIn(BaseModel):
+    name: str
+    language: str = "es"
+    category: str = "MARKETING"
+    body_text: str = ""
+    header_type: str = ""
+    header_text: str = ""
+    footer_text: str = ""
+    buttons: List[BroadcastMetaTemplateButtonIn] = Field(default_factory=list)
+    allow_category_change: bool = True
+
+
 class CampaignIn(BaseModel):
     name: str
     objective: str = ""
@@ -1885,6 +1905,193 @@ def _collect_missing_params(text_val: str, resolved: Dict[str, Any]) -> List[str
             if key not in missing:
                 missing.append(key)
     return missing
+
+
+def _meta_graph_version() -> str:
+    return str(os.getenv("WHATSAPP_GRAPH_VERSION", os.getenv("META_GRAPH_VERSION", "v20.0")) or "v20.0").strip() or "v20.0"
+
+
+def _meta_access_token() -> str:
+    for key in ("WHATSAPP_TOKEN", "META_ACCESS_TOKEN", "FACEBOOK_PAGE_TOKEN"):
+        value = str(os.getenv(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _meta_waba_id_from_env() -> str:
+    for key in ("WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"):
+        value = str(os.getenv(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_meta_template_name(raw_name: str) -> str:
+    name = str(raw_name or "").strip().lower()
+    name = re.sub(r"[^a-z0-9_]+", "_", name)
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name[:200]
+
+
+def _extract_meta_template_body(components: Any) -> str:
+    for comp in (components or []):
+        if not isinstance(comp, dict):
+            continue
+        if str(comp.get("type") or "").strip().upper() != "BODY":
+            continue
+        text_val = str(comp.get("text") or "").strip()
+        if text_val:
+            return text_val
+    return ""
+
+
+def _parse_meta_error(raw_text: str) -> str:
+    txt = str(raw_text or "").strip()
+    if not txt:
+        return "Meta request failed"
+    try:
+        payload = json.loads(txt)
+        err = payload.get("error") if isinstance(payload, dict) else {}
+        if isinstance(err, dict):
+            msg = str(err.get("message") or "").strip()
+            code = str(err.get("code") or "").strip()
+            if msg and code:
+                return f"[{code}] {msg}"
+            if msg:
+                return msg
+    except Exception:
+        pass
+    return txt[:900]
+
+
+def _map_meta_template_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    components = row.get("components") if isinstance(row.get("components"), list) else []
+    quality = row.get("quality_score")
+    if isinstance(quality, dict):
+        quality_value = str(quality.get("score") or quality.get("quality_score") or "").strip()
+    else:
+        quality_value = str(quality or "").strip()
+    status = str(row.get("status") or "").strip().lower()
+    category = str(row.get("category") or "").strip().upper()
+    language = str(row.get("language") or "").strip()
+    return {
+        "id": str(row.get("id") or "").strip(),
+        "name": str(row.get("name") or "").strip(),
+        "status": status,
+        "category": category,
+        "language": language,
+        "quality_score": quality_value,
+        "is_marketing": category == "MARKETING",
+        "body_text": _extract_meta_template_body(components),
+        "components": components,
+    }
+
+
+async def _resolve_meta_waba_id(token: str, graph_version: str) -> str:
+    direct = _meta_waba_id_from_env()
+    if direct:
+        return direct
+
+    phone_number_id = str(os.getenv("WHATSAPP_PHONE_NUMBER_ID", "") or "").strip()
+    if not phone_number_id:
+        raise HTTPException(
+            status_code=400,
+            detail="WABA no configurado: define WHATSAPP_BUSINESS_ACCOUNT_ID o WHATSAPP_PHONE_NUMBER_ID",
+        )
+
+    url = f"https://graph.facebook.com/{graph_version}/{phone_number_id}"
+    params = {"fields": "whatsapp_business_account", "access_token": token}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(url, params=params)
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta resolve WABA failed: {_parse_meta_error(resp.text)}")
+
+    data = resp.json() if resp.text else {}
+    waba_id = str(((data or {}).get("whatsapp_business_account") or {}).get("id") or "").strip()
+    if not waba_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo resolver WABA ID desde WHATSAPP_PHONE_NUMBER_ID. Define WHATSAPP_BUSINESS_ACCOUNT_ID",
+        )
+    return waba_id
+
+
+async def _fetch_meta_whatsapp_templates(token: str, graph_version: str, waba_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+    max_items = max(1, min(int(limit or 200), 500))
+    rows: List[Dict[str, Any]] = []
+
+    url = f"https://graph.facebook.com/{graph_version}/{waba_id}/message_templates"
+    params: Optional[Dict[str, Any]] = {"limit": min(max_items, 100), "access_token": token}
+
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        for _ in range(12):
+            resp = await client.get(url, params=params)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=502, detail=f"Meta list templates failed: {_parse_meta_error(resp.text)}")
+
+            payload = resp.json() if resp.text else {}
+            data = payload.get("data") if isinstance(payload, dict) else []
+            if isinstance(data, list):
+                rows.extend([x for x in data if isinstance(x, dict)])
+            if len(rows) >= max_items:
+                break
+
+            next_url = ""
+            if isinstance(payload, dict):
+                paging = payload.get("paging") or {}
+                if isinstance(paging, dict):
+                    next_url = str(paging.get("next") or "").strip()
+            if not next_url:
+                break
+
+            url = next_url
+            params = None
+
+    return rows[:max_items]
+
+
+def _build_meta_template_components(payload: BroadcastMetaTemplateCreateIn) -> List[Dict[str, Any]]:
+    components: List[Dict[str, Any]] = []
+    body_text = str(payload.body_text or "").strip()
+    if not body_text:
+        raise HTTPException(status_code=400, detail="body_text es obligatorio")
+    components.append({"type": "BODY", "text": body_text})
+
+    header_type = str(payload.header_type or "").strip().upper()
+    header_text = str(payload.header_text or "").strip()
+    if header_type == "TEXT" and header_text:
+        components.append({"type": "HEADER", "format": "TEXT", "text": header_text})
+
+    footer_text = str(payload.footer_text or "").strip()
+    if footer_text:
+        components.append({"type": "FOOTER", "text": footer_text})
+
+    buttons_in = payload.buttons if isinstance(payload.buttons, list) else []
+    if buttons_in:
+        mapped_buttons: List[Dict[str, Any]] = []
+        for btn in buttons_in[:3]:
+            btn_type = str(btn.type or "QUICK_REPLY").strip().upper()
+            btn_text = str(btn.text or "").strip()
+            if not btn_text:
+                continue
+            if btn_type == "URL":
+                url = str(btn.url or "").strip()
+                if not url:
+                    continue
+                mapped_buttons.append({"type": "URL", "text": btn_text, "url": url})
+                continue
+            if btn_type in ("PHONE", "PHONE_NUMBER"):
+                phone_number = str(btn.phone_number or "").strip()
+                if not phone_number:
+                    continue
+                mapped_buttons.append({"type": "PHONE_NUMBER", "text": btn_text, "phone_number": phone_number})
+                continue
+            mapped_buttons.append({"type": "QUICK_REPLY", "text": btn_text})
+        if mapped_buttons:
+            components.append({"type": "BUTTONS", "buttons": mapped_buttons})
+
+    return components
 
 
 def _segment_filter_sql(rules: Dict[str, Any], prefix: str = "r") -> tuple[str, Dict[str, Any]]:
@@ -4071,6 +4278,93 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
         "messages_rendered": rendered_blocks,
         "resolved_params": resolved,
         "missing_params": missing_unique,
+    }
+
+
+# =========================================================
+# Broadcast / Meta WhatsApp Templates
+# =========================================================
+
+@app.get("/api/broadcast/meta/templates")
+async def list_broadcast_meta_templates(limit: int = Query(200, ge=1, le=500)):
+    token = _meta_access_token()
+    if not token:
+        raise HTTPException(status_code=400, detail="Meta token no configurado (WHATSAPP_TOKEN)")
+
+    graph_version = _meta_graph_version()
+    waba_id = await _resolve_meta_waba_id(token, graph_version)
+    rows = await _fetch_meta_whatsapp_templates(token, graph_version, waba_id, limit=limit)
+    templates = [_map_meta_template_row(r) for r in rows]
+    return {
+        "ok": True,
+        "source": "meta_whatsapp_manager",
+        "graph_version": graph_version,
+        "waba_id": waba_id,
+        "templates": templates,
+        "count": len(templates),
+    }
+
+
+@app.post("/api/broadcast/meta/templates/sync")
+async def sync_broadcast_meta_templates(limit: int = Query(200, ge=1, le=500)):
+    return await list_broadcast_meta_templates(limit=limit)
+
+
+@app.post("/api/broadcast/meta/templates")
+async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn):
+    token = _meta_access_token()
+    if not token:
+        raise HTTPException(status_code=400, detail="Meta token no configurado (WHATSAPP_TOKEN)")
+
+    graph_version = _meta_graph_version()
+    waba_id = await _resolve_meta_waba_id(token, graph_version)
+
+    name = _normalize_meta_template_name(payload.name)
+    if not name:
+        raise HTTPException(status_code=400, detail="name invalido (usa letras, numeros y guion bajo)")
+
+    category = str(payload.category or "MARKETING").strip().upper()
+    if category not in {"MARKETING", "UTILITY", "AUTHENTICATION"}:
+        category = "MARKETING"
+
+    language = str(payload.language or "es").strip().lower() or "es"
+    components = _build_meta_template_components(payload)
+
+    request_payload = {
+        "name": name,
+        "category": category,
+        "language": language,
+        "allow_category_change": bool(payload.allow_category_change),
+        "components": components,
+    }
+
+    url = f"https://graph.facebook.com/{graph_version}/{waba_id}/message_templates"
+    params = {"access_token": token}
+    headers = {"Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, params=params, headers=headers, json=request_payload)
+
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Meta create template failed: {_parse_meta_error(resp.text)}")
+
+    data = resp.json() if resp.text else {}
+    created = {
+        "id": str((data or {}).get("id") or "").strip(),
+        "name": name,
+        "status": str((data or {}).get("status") or "pending").strip().lower() or "pending",
+        "category": category,
+        "language": language,
+        "components": components,
+        "body_text": _extract_meta_template_body(components),
+        "is_marketing": category == "MARKETING",
+    }
+
+    return {
+        "ok": True,
+        "waba_id": waba_id,
+        "template": created,
+        "provider_response": data if isinstance(data, dict) else {},
     }
 
 

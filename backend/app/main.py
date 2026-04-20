@@ -2035,27 +2035,45 @@ async def _resolve_meta_waba_id(token: str, graph_version: str) -> str:
         return direct
 
     phone_number_id = str(os.getenv("WHATSAPP_PHONE_NUMBER_ID", "") or "").strip()
-    if not phone_number_id:
-        raise HTTPException(
-            status_code=400,
-            detail="WABA no configurado: define WHATSAPP_BUSINESS_ACCOUNT_ID o WHATSAPP_PHONE_NUMBER_ID",
-        )
+    # Intento 1: resolver desde phone_number_id (ruta clásica de Cloud API).
+    if phone_number_id:
+        url = f"https://graph.facebook.com/{graph_version}/{phone_number_id}"
+        params = {"fields": "whatsapp_business_account", "access_token": token}
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url, params=params)
+        if resp.status_code < 400:
+            data = resp.json() if resp.text else {}
+            waba_id = str(((data or {}).get("whatsapp_business_account") or {}).get("id") or "").strip()
+            if waba_id:
+                return waba_id
+        # Si falla aquí (ej: code 100 por field no existente), continuamos con fallback.
 
-    url = f"https://graph.facebook.com/{graph_version}/{phone_number_id}"
-    params = {"fields": "whatsapp_business_account", "access_token": token}
+    # Intento 2 (fallback robusto): listar WABAs disponibles para el token actual.
+    me_waba_url = f"https://graph.facebook.com/{graph_version}/me/whatsapp_business_accounts"
+    me_waba_params = {"fields": "id,name", "limit": 10, "access_token": token}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.get(url, params=params)
-    if resp.status_code >= 400:
-        raise _meta_graph_http_exception("resolve WABA", resp.text)
+        me_resp = await client.get(me_waba_url, params=me_waba_params)
+    if me_resp.status_code >= 400:
+        raise _meta_graph_http_exception("resolve WABA", me_resp.text)
 
-    data = resp.json() if resp.text else {}
-    waba_id = str(((data or {}).get("whatsapp_business_account") or {}).get("id") or "").strip()
-    if not waba_id:
-        raise HTTPException(
-            status_code=400,
-            detail="No se pudo resolver WABA ID desde WHATSAPP_PHONE_NUMBER_ID. Define WHATSAPP_BUSINESS_ACCOUNT_ID",
-        )
-    return waba_id
+    me_payload = me_resp.json() if me_resp.text else {}
+    me_data = me_payload.get("data") if isinstance(me_payload, dict) else []
+    if isinstance(me_data, list):
+        for row in me_data:
+            if not isinstance(row, dict):
+                continue
+            candidate = str(row.get("id") or "").strip()
+            if candidate:
+                return candidate
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "No se pudo resolver WABA ID automaticamente. "
+            "Define WHATSAPP_BUSINESS_ACCOUNT_ID en variables de entorno "
+            "o verifica permisos del token (whatsapp_business_management)."
+        ),
+    )
 
 
 async def _fetch_meta_whatsapp_templates(token: str, graph_version: str, waba_id: str, limit: int = 200) -> List[Dict[str, Any]]:

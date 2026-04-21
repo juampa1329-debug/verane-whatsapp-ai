@@ -1987,6 +1987,14 @@ def _parse_meta_error(raw_text: str) -> str:
         if isinstance(err, dict):
             msg = str(err.get("message") or "").strip()
             code = str(err.get("code") or "").strip()
+            err_data = err.get("error_data")
+            details = ""
+            if isinstance(err_data, dict):
+                details = str(err_data.get("details") or "").strip()
+            if not details:
+                details = str(err.get("error_user_msg") or "").strip()
+            if msg and details and details.lower() not in msg.lower():
+                msg = f"{msg} ({details})"
             if msg and code:
                 return f"[{code}] {msg}"
             if msg:
@@ -1994,6 +2002,66 @@ def _parse_meta_error(raw_text: str) -> str:
     except Exception:
         pass
     return txt[:900]
+
+
+def _meta_template_examples_catalog() -> Dict[str, str]:
+    return {
+        "customer_name": "Juan",
+        "customer_first_name": "Juan",
+        "customer_last_name": "Perez",
+        "customer_phone": "+573001112233",
+        "customer_email": "juan@email.com",
+        "customer_city": "Bogota",
+        "customer_state": "Cundinamarca",
+        "customer_country": "CO",
+        "origin": "Instagram Ads",
+        "purchase_date": "2026-04-20",
+        "date": "2026-04-20",
+        "business_name": "Verane Perfumeria",
+        "business_phone": "+573237028445",
+        "business_email": "ventas@verane.com",
+        "assistant_name": "Laura",
+        "assistant_phone": "+573000000000",
+        "campaign_name": "Promo mayo",
+        "objective": "Ventas",
+    }
+
+
+def _meta_sample_for_token(token: str) -> str:
+    catalog = _meta_template_examples_catalog()
+    key = str(token or "").strip().lower().replace("-", "_")
+    if key in catalog:
+        return catalog[key]
+    if key.isdigit():
+        idx = int(key or 0)
+        if idx == 1:
+            return "Juan"
+        if idx == 2:
+            return "Verane Perfumeria"
+        if idx == 3:
+            return "2026-04-20"
+    return "valor"
+
+
+def _meta_normalize_placeholders(raw_text: str) -> tuple[str, List[str]]:
+    text = str(raw_text or "")
+    pattern = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+    token_to_pos: Dict[str, int] = {}
+    ordered_tokens: List[str] = []
+
+    def _replace(match: re.Match) -> str:
+        token = str(match.group(1) or "").strip()
+        if not token:
+            return match.group(0)
+        if token not in token_to_pos:
+            token_to_pos[token] = len(token_to_pos) + 1
+            ordered_tokens.append(token)
+        return f"{{{{{token_to_pos[token]}}}}}"
+
+    normalized = pattern.sub(_replace, text)
+    examples = [_meta_sample_for_token(tok) for tok in ordered_tokens]
+    return normalized, examples
 
 
 def _parse_meta_error_payload(raw_text: str) -> Dict[str, Any]:
@@ -2009,9 +2077,19 @@ def _parse_meta_error_payload(raw_text: str) -> Dict[str, Any]:
     return {}
 
 
-def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
+def _meta_error_code(raw_text: str) -> int:
     err = _parse_meta_error_payload(raw_text)
-    code = int(err.get("code") or 0) if str(err.get("code") or "").strip().isdigit() else 0
+    raw_code = err.get("code")
+    if isinstance(raw_code, int):
+        return raw_code
+    raw_code_s = str(raw_code or "").strip()
+    if raw_code_s.isdigit():
+        return int(raw_code_s)
+    return 0
+
+
+def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
+    code = _meta_error_code(raw_text)
     msg = _parse_meta_error(raw_text)
     msg_l = msg.lower()
 
@@ -2207,24 +2285,48 @@ async def _fetch_meta_whatsapp_templates(token: str, graph_version: str, waba_id
 
 def _build_meta_template_components(payload: BroadcastMetaTemplateCreateIn) -> List[Dict[str, Any]]:
     components: List[Dict[str, Any]] = []
-    body_text = str(payload.body_text or "").strip()
-    if not body_text:
+    body_text_raw = str(payload.body_text or "").strip()
+    if not body_text_raw:
         raise HTTPException(status_code=400, detail="body_text es obligatorio")
-    components.append({"type": "BODY", "text": body_text})
+    body_text, body_examples = _meta_normalize_placeholders(body_text_raw)
+    if len(body_text) > 1024:
+        raise HTTPException(status_code=400, detail="body_text excede 1024 caracteres")
+
+    body_comp: Dict[str, Any] = {"type": "BODY", "text": body_text}
+    if body_examples:
+        body_comp["example"] = {"body_text": [body_examples]}
+    components.append(body_comp)
 
     header_type = str(payload.header_type or "").strip().upper()
-    header_text = str(payload.header_text or "").strip()
-    if header_type == "TEXT" and header_text:
-        components.append({"type": "HEADER", "format": "TEXT", "text": header_text})
+    header_text_raw = str(payload.header_text or "").strip()
+    if header_type and header_type not in {"TEXT", "IMAGE", "VIDEO", "DOCUMENT"}:
+        raise HTTPException(status_code=400, detail=f"header_type invalido: {header_type}")
+
+    if header_type == "TEXT":
+        if not header_text_raw:
+            raise HTTPException(status_code=400, detail="header_text es obligatorio cuando header_type=TEXT")
+        header_text, header_examples = _meta_normalize_placeholders(header_text_raw)
+        if len(header_text) > 60:
+            raise HTTPException(status_code=400, detail="header_text excede 60 caracteres")
+        header_comp: Dict[str, Any] = {"type": "HEADER", "format": "TEXT", "text": header_text}
+        if header_examples:
+            header_comp["example"] = {"header_text": header_examples}
+        components.append(header_comp)
     elif header_type in {"IMAGE", "VIDEO", "DOCUMENT"}:
-        comp: Dict[str, Any] = {"type": "HEADER", "format": header_type}
         media_handle = str(payload.header_media_handle or "").strip()
-        if media_handle:
-            comp["example"] = {"header_handle": [media_handle]}
+        if not media_handle:
+            raise HTTPException(
+                status_code=400,
+                detail=f"header_media_handle es obligatorio cuando header_type={header_type}",
+            )
+        comp: Dict[str, Any] = {"type": "HEADER", "format": header_type}
+        comp["example"] = {"header_handle": [media_handle]}
         components.append(comp)
 
     footer_text = str(payload.footer_text or "").strip()
     if footer_text:
+        if len(footer_text) > 60:
+            raise HTTPException(status_code=400, detail="footer_text excede 60 caracteres")
         components.append({"type": "FOOTER", "text": footer_text})
 
     buttons_in = payload.buttons if isinstance(payload.buttons, list) else []
@@ -2235,16 +2337,22 @@ def _build_meta_template_components(payload: BroadcastMetaTemplateCreateIn) -> L
             btn_text = str(btn.text or "").strip()
             if not btn_text:
                 continue
+            if len(btn_text) > 25:
+                raise HTTPException(status_code=400, detail=f"button text excede 25 caracteres: {btn_text[:25]}")
             if btn_type == "URL":
                 url = str(btn.url or "").strip()
                 if not url:
                     continue
+                if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+                    raise HTTPException(status_code=400, detail=f"URL invalida en boton: {url}")
                 mapped_buttons.append({"type": "URL", "text": btn_text, "url": url})
                 continue
             if btn_type in ("PHONE", "PHONE_NUMBER"):
                 phone_number = str(btn.phone_number or "").strip()
                 if not phone_number:
                     continue
+                if not re.match(r"^\+?[0-9]{7,20}$", phone_number):
+                    raise HTTPException(status_code=400, detail=f"phone_number invalido en boton: {phone_number}")
                 mapped_buttons.append({"type": "PHONE_NUMBER", "text": btn_text, "phone_number": phone_number})
                 continue
             mapped_buttons.append({"type": "QUICK_REPLY", "text": btn_text})
@@ -4528,9 +4636,10 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
         "name": name,
         "category": category,
         "language": language,
-        "allow_category_change": bool(payload.allow_category_change),
         "components": components,
     }
+    if bool(payload.allow_category_change):
+        request_payload["allow_category_change"] = True
 
     url = f"https://graph.facebook.com/{graph_version}/{waba_id}/message_templates"
     params = {"access_token": token}
@@ -4538,6 +4647,34 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, params=params, headers=headers, json=request_payload)
+        if resp.status_code >= 400:
+            code = _meta_error_code(resp.text)
+            msg_l = _parse_meta_error(resp.text).lower()
+            can_retry_without_allow = (
+                code == 100
+                and "allow_category_change" in request_payload
+                and (
+                    "allow_category_change" in msg_l
+                    or "invalid parameter" in msg_l
+                    or "param" in msg_l
+                )
+            )
+            if can_retry_without_allow:
+                retry_payload = {k: v for k, v in request_payload.items() if k != "allow_category_change"}
+                retry_resp = await client.post(url, params=params, headers=headers, json=retry_payload)
+                if retry_resp.status_code < 400:
+                    resp = retry_resp
+                else:
+                    print(
+                        "[BROADCAST_META] create template retry without allow_category_change failed",
+                        {
+                            "status": retry_resp.status_code,
+                            "name": name,
+                            "category": category,
+                            "language": language,
+                            "body": str(retry_resp.text or "")[:900],
+                        },
+                    )
 
     if resp.status_code >= 400:
         print(
@@ -4548,6 +4685,7 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
                 "category": category,
                 "language": language,
                 "components_count": len(components),
+                "request_payload": request_payload,
                 "body": str(resp.text or "")[:900],
             },
         )

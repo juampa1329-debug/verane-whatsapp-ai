@@ -1358,6 +1358,7 @@ class BroadcastMetaTemplateCreateIn(BaseModel):
     body_text: str = ""
     header_type: str = ""
     header_text: str = ""
+    header_media_handle: str = ""
     footer_text: str = ""
     buttons: List[BroadcastMetaTemplateButtonIn] = Field(default_factory=list)
     allow_category_change: bool = True
@@ -1815,23 +1816,48 @@ def _render_template(body: str, variables: Dict[str, Any]) -> str:
 
 
 def _template_params_catalog() -> List[Dict[str, str]]:
+    # group:
+    # - custom_field: campos de CRM/conversacion
+    # - system_variable: variables de sistema/automatizacion
     return [
-        {"key": "business_name", "label": "Nombre del negocio"},
-        {"key": "business_phone", "label": "Telefono del negocio"},
-        {"key": "business_email", "label": "Correo del negocio"},
-        {"key": "assistant_name", "label": "Nombre del Asistente"},
-        {"key": "assistant_phone", "label": "Telefono del Asistente"},
-        {"key": "customer_name", "label": "Nombre del cliente"},
-        {"key": "customer_country", "label": "Pais del cliente"},
-        {"key": "customer_phone", "label": "Telefono del cliente"},
-        {"key": "customer_tag", "label": "Etiqueta del cliente"},
-        {"key": "campaign_name", "label": "Anuncio"},
-        {"key": "first_message_date", "label": "Fecha primer mensaje"},
-        {"key": "last_message_date", "label": "Fecha ultimo mensaje"},
-        {"key": "nombre", "label": "Nombre (alias)"},
-        {"key": "phone", "label": "Telefono (alias)"},
-        {"key": "city", "label": "Ciudad"},
-        {"key": "payment_status", "label": "Estado de pago"},
+        {"key": "customer_name", "label": "Nombre del cliente", "group": "custom_field"},
+        {"key": "customer_first_name", "label": "Nombre (solo primer nombre)", "group": "custom_field"},
+        {"key": "customer_last_name", "label": "Apellido del cliente", "group": "custom_field"},
+        {"key": "customer_phone", "label": "Telefono del cliente", "group": "custom_field"},
+        {"key": "customer_email", "label": "Correo del cliente", "group": "custom_field"},
+        {"key": "customer_country", "label": "Pais del cliente", "group": "custom_field"},
+        {"key": "customer_state", "label": "Estado/Departamento", "group": "custom_field"},
+        {"key": "customer_city", "label": "Ciudad", "group": "custom_field"},
+        {"key": "customer_type", "label": "Tipo de cliente", "group": "custom_field"},
+        {"key": "customer_tag", "label": "Etiqueta del cliente", "group": "custom_field"},
+        {"key": "origin", "label": "Origen del lead", "group": "custom_field"},
+        {"key": "payment_status", "label": "Estado de pago", "group": "custom_field"},
+        {"key": "purchase_date", "label": "Fecha de compra", "group": "custom_field"},
+        {"key": "first_message_date", "label": "Fecha primer mensaje", "group": "custom_field"},
+        {"key": "last_message_date", "label": "Fecha ultimo mensaje", "group": "custom_field"},
+        {"key": "date", "label": "Fecha actual", "group": "custom_field"},
+        {"key": "city", "label": "Ciudad (alias)", "group": "custom_field"},
+        {"key": "correo", "label": "Correo (alias)", "group": "custom_field"},
+        {"key": "phone", "label": "Telefono (alias)", "group": "custom_field"},
+        {"key": "state", "label": "Estado (alias)", "group": "custom_field"},
+        {"key": "nombre", "label": "Nombre (alias)", "group": "custom_field"},
+
+        {"key": "business_name", "label": "Nombre del negocio", "group": "system_variable"},
+        {"key": "business_phone", "label": "Telefono del negocio", "group": "system_variable"},
+        {"key": "business_email", "label": "Correo del negocio", "group": "system_variable"},
+        {"key": "assistant_name", "label": "Nombre del asistente", "group": "system_variable"},
+        {"key": "assistant_phone", "label": "Telefono del asistente", "group": "system_variable"},
+        {"key": "campaign_name", "label": "Nombre de campana", "group": "system_variable"},
+        {"key": "objective", "label": "Objetivo de campana", "group": "system_variable"},
+
+        # Variables tipo sistema (estilo de los ejemplos compartidos)
+        {"key": "system_appointment_booking_id", "label": "system appointment booking id", "group": "system_variable"},
+        {"key": "system_appointment_date", "label": "system appointment date", "group": "system_variable"},
+        {"key": "system_appointment_google_meet_link", "label": "system appointment google meet link", "group": "system_variable"},
+        {"key": "system_appointment_invoice_link", "label": "system appointment invoice link", "group": "system_variable"},
+        {"key": "system_appointment_location", "label": "system appointment location", "group": "system_variable"},
+        {"key": "system_appointment_name", "label": "system appointment name", "group": "system_variable"},
+        {"key": "system_appointment_status", "label": "system appointment status", "group": "system_variable"},
     ]
 
 
@@ -1896,7 +1922,7 @@ def _collect_missing_params(text_val: str, resolved: Dict[str, Any]) -> List[str
     import re
 
     missing: List[str] = []
-    for token in re.findall(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", text_val or ""):
+    for token in re.findall(r"\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}", text_val or ""):
         key = (token or "").strip()
         if not key:
             continue
@@ -1924,7 +1950,10 @@ def _meta_whatsapp_access_token() -> str:
 def _meta_waba_id_from_env() -> str:
     for key in ("WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"):
         value = str(os.getenv(key, "") or "").strip()
-        if value:
+        # Ignorar placeholders comunes mal configurados en env.
+        if value.upper() in {"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID", "YOUR_WABA_ID"}:
+            continue
+        if value and value.isdigit():
             return value
     return ""
 
@@ -2048,30 +2077,79 @@ async def _resolve_meta_waba_id(token: str, graph_version: str) -> str:
                 return waba_id
         # Si falla aquí (ej: code 100 por field no existente), continuamos con fallback.
 
-    # Intento 2 (fallback robusto): listar WABAs disponibles para el token actual.
-    me_waba_url = f"https://graph.facebook.com/{graph_version}/me/whatsapp_business_accounts"
-    me_waba_params = {"fields": "id,name", "limit": 10, "access_token": token}
+    # Intento 2 (fallback robusto): resolver WABAs desde /me?fields=businesses{owned_whatsapp_business_accounts...}
+    me_url = f"https://graph.facebook.com/{graph_version}/me"
+    me_fields = (
+        "businesses{"
+        "id,name,"
+        "owned_whatsapp_business_accounts{"
+        "id,name,"
+        "phone_numbers{id,display_phone_number,verified_name}"
+        "}"
+        "}"
+    )
+    me_params = {"fields": me_fields, "access_token": token}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        me_resp = await client.get(me_waba_url, params=me_waba_params)
+        me_resp = await client.get(me_url, params=me_params)
     if me_resp.status_code >= 400:
         raise _meta_graph_http_exception("resolve WABA", me_resp.text)
 
     me_payload = me_resp.json() if me_resp.text else {}
-    me_data = me_payload.get("data") if isinstance(me_payload, dict) else []
-    if isinstance(me_data, list):
-        for row in me_data:
-            if not isinstance(row, dict):
-                continue
-            candidate = str(row.get("id") or "").strip()
-            if candidate:
-                return candidate
+    if isinstance(me_payload, dict):
+        businesses = (me_payload.get("businesses") or {}).get("data") if isinstance(me_payload.get("businesses"), dict) else []
+        if isinstance(businesses, list):
+            # Preferir WABA que contenga el phone_number_id configurado.
+            if phone_number_id:
+                for biz in businesses:
+                    if not isinstance(biz, dict):
+                        continue
+                    wabas = (
+                        (biz.get("owned_whatsapp_business_accounts") or {}).get("data")
+                        if isinstance(biz.get("owned_whatsapp_business_accounts"), dict)
+                        else []
+                    )
+                    if not isinstance(wabas, list):
+                        continue
+                    for waba in wabas:
+                        if not isinstance(waba, dict):
+                            continue
+                        phones = (
+                            (waba.get("phone_numbers") or {}).get("data")
+                            if isinstance(waba.get("phone_numbers"), dict)
+                            else []
+                        )
+                        if not isinstance(phones, list):
+                            continue
+                        for ph in phones:
+                            pid = str((ph or {}).get("id") or "").strip()
+                            if pid and pid == phone_number_id:
+                                candidate = str(waba.get("id") or "").strip()
+                                if candidate:
+                                    return candidate
+
+            # Fallback: primer WABA disponible.
+            for biz in businesses:
+                if not isinstance(biz, dict):
+                    continue
+                wabas = (
+                    (biz.get("owned_whatsapp_business_accounts") or {}).get("data")
+                    if isinstance(biz.get("owned_whatsapp_business_accounts"), dict)
+                    else []
+                )
+                if not isinstance(wabas, list):
+                    continue
+                for waba in wabas:
+                    candidate = str((waba or {}).get("id") or "").strip()
+                    if candidate:
+                        return candidate
 
     raise HTTPException(
         status_code=400,
         detail=(
             "No se pudo resolver WABA ID automaticamente. "
             "Define WHATSAPP_BUSINESS_ACCOUNT_ID en variables de entorno "
-            "o verifica permisos del token (whatsapp_business_management)."
+            "con un ID numerico valido, o verifica permisos del token "
+            "(whatsapp_business_management)."
         ),
     )
 
@@ -2121,6 +2199,12 @@ def _build_meta_template_components(payload: BroadcastMetaTemplateCreateIn) -> L
     header_text = str(payload.header_text or "").strip()
     if header_type == "TEXT" and header_text:
         components.append({"type": "HEADER", "format": "TEXT", "text": header_text})
+    elif header_type in {"IMAGE", "VIDEO", "DOCUMENT"}:
+        comp: Dict[str, Any] = {"type": "HEADER", "format": header_type}
+        media_handle = str(payload.header_media_handle or "").strip()
+        if media_handle:
+            comp["example"] = {"header_handle": [media_handle]}
+        components.append(comp)
 
     footer_text = str(payload.footer_text or "").strip()
     if footer_text:
@@ -4241,6 +4325,10 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
                     c.tags,
                     c.payment_status,
                     COALESCE(c.crm_meta->>'country', 'CO') AS country,
+                    COALESCE(c.crm_meta->>'email', '') AS email,
+                    COALESCE(c.crm_meta->>'state', '') AS state,
+                    COALESCE(c.crm_meta->>'origin', '') AS origin,
+                    COALESCE(c.crm_meta->>'purchase_date', '') AS purchase_date,
                     (
                         SELECT MIN(m0.created_at)
                         FROM messages m0
@@ -4260,17 +4348,32 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
             first_name = str(c.get("first_name") or "").strip()
             last_name = str(c.get("last_name") or "").strip()
             full_name = f"{first_name} {last_name}".strip()
+            customer_city = str(c.get("city") or "").strip()
+            customer_state = str(c.get("state") or "").strip()
+            customer_email = str(c.get("email") or "").strip()
+            customer_origin = str(c.get("origin") or "").strip()
+            purchase_date = str(c.get("purchase_date") or "").strip()
             resolved.update(
                 {
                     "nombre": full_name or phone,
                     "customer_name": full_name or phone,
+                    "customer_first_name": first_name or (full_name.split(" ")[0] if full_name else phone),
+                    "customer_last_name": last_name,
                     "customer_phone": phone,
+                    "customer_email": customer_email,
                     "phone": phone,
-                    "city": str(c.get("city") or "").strip(),
+                    "city": customer_city,
+                    "customer_city": customer_city,
+                    "state": customer_state,
+                    "customer_state": customer_state,
+                    "correo": customer_email,
                     "customer_type": str(c.get("customer_type") or "").strip(),
                     "customer_tag": str(c.get("tags") or "").strip(),
                     "payment_status": str(c.get("payment_status") or "").strip(),
                     "customer_country": str(c.get("country") or "CO").strip(),
+                    "origin": customer_origin,
+                    "purchase_date": purchase_date,
+                    "date": datetime.utcnow().strftime("%Y-%m-%d"),
                     "first_message_date": str(c.get("first_message_date") or "").strip(),
                     "last_message_date": str(c.get("last_message_date") or "").strip(),
                 }
@@ -4294,6 +4397,15 @@ def render_template_with_context(template_id: int, payload: TemplateRenderIn):
             "business_email": str(os.getenv("BUSINESS_EMAIL", "")).strip(),
             "assistant_name": str(os.getenv("ASSISTANT_NAME", "Asistente Verane")).strip(),
             "assistant_phone": str(os.getenv("ASSISTANT_PHONE", "")).strip(),
+            # Alias estilo system_... para mantener compatibilidad visual con
+            # constructores externos de templates.
+            "system_appointment_booking_id": str(os.getenv("SYSTEM_APPOINTMENT_BOOKING_ID", "")).strip(),
+            "system_appointment_date": str(os.getenv("SYSTEM_APPOINTMENT_DATE", "")).strip(),
+            "system_appointment_google_meet_link": str(os.getenv("SYSTEM_APPOINTMENT_GOOGLE_MEET_LINK", "")).strip(),
+            "system_appointment_invoice_link": str(os.getenv("SYSTEM_APPOINTMENT_INVOICE_LINK", "")).strip(),
+            "system_appointment_location": str(os.getenv("SYSTEM_APPOINTMENT_LOCATION", "")).strip(),
+            "system_appointment_name": str(os.getenv("SYSTEM_APPOINTMENT_NAME", "")).strip(),
+            "system_appointment_status": str(os.getenv("SYSTEM_APPOINTMENT_STATUS", "")).strip(),
         }
     )
 

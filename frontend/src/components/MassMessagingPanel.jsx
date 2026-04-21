@@ -161,6 +161,16 @@ function asErrorMessage(errLike) {
   return "Error inesperado";
 }
 
+async function parseApiResponseSafe(response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return { detail: raw };
+  }
+}
+
 function renderWithTokens(text, examples) {
   return String(text || "").replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_, key) => {
     const token = String(key || "").trim();
@@ -253,7 +263,7 @@ export default function MassMessagingPanel({ apiBase }) {
   const loadCatalog = async () => {
     try {
       const r = await fetch(`${API}/api/templates/params/catalog`);
-      const d = await r.json();
+      const d = await parseApiResponseSafe(r);
       if (!r.ok) throw new Error(asErrorMessage(d));
       const rows = Array.isArray(d?.params) ? d.params : [];
       setParamsCatalog(rows);
@@ -272,7 +282,7 @@ export default function MassMessagingPanel({ apiBase }) {
         : `${API}/api/broadcast/meta/templates?limit=300`;
       const method = fromSync ? "POST" : "GET";
       const r = await fetch(url, { method });
-      const d = await r.json();
+      const d = await parseApiResponseSafe(r);
       if (!r.ok) throw new Error(asErrorMessage(d));
       const rows = Array.isArray(d?.templates) ? d.templates : [];
       setTemplates(rows);
@@ -513,7 +523,7 @@ export default function MassMessagingPanel({ apiBase }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const d = await r.json();
+      const d = await parseApiResponseSafe(r);
       if (!r.ok) throw new Error(asErrorMessage(d));
 
       setStatus(`Plantilla creada en Meta: ${d?.template?.name || name}`);

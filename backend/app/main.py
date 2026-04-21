@@ -2017,7 +2017,7 @@ def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
 
     # Errores típicos de permisos/capacidad/token -> devolver 400 con guía clara
     capability_or_auth = (
-        code in {3, 10, 100, 102, 190, 200}
+        code in {3, 10, 102, 190, 200}
         or "capability to make this api call" in msg_l
         or "missing permissions" in msg_l
         or "invalid oauth access token" in msg_l
@@ -2029,6 +2029,16 @@ def _meta_graph_http_exception(op_label: str, raw_text: str) -> HTTPException:
             "Verifica que WHATSAPP_PERMANENT_TOKEN (o WHATSAPP_TOKEN legado) sea un token de System User del WABA "
             "con permisos whatsapp_business_management y whatsapp_business_messaging, "
             "y que la app tenga habilitado WhatsApp Business Platform."
+        )
+        return HTTPException(status_code=400, detail=detail)
+
+    # code 100 es genérico (parámetro inválido / campo inexistente / objeto no soportado)
+    if code == 100:
+        detail = (
+            f"Meta {op_label} failed: {msg}. "
+            "Revisa payload y configuración de IDs. "
+            "Si el mensaje menciona Object with ID 'WHATSAPP_BUSINESS_ACCOUNT_ID', "
+            "la variable está mal puesta como texto literal y debe ser un ID numérico real."
         )
         return HTTPException(status_code=400, detail=detail)
 
@@ -2165,6 +2175,13 @@ async def _fetch_meta_whatsapp_templates(token: str, graph_version: str, waba_id
         for _ in range(12):
             resp = await client.get(url, params=params)
             if resp.status_code >= 400:
+                print(
+                    "[BROADCAST_META] list templates failed",
+                    {
+                        "status": resp.status_code,
+                        "body": str(resp.text or "")[:900],
+                    },
+                )
                 raise _meta_graph_http_exception("list templates", resp.text)
 
             payload = resp.json() if resp.text else {}
@@ -4523,6 +4540,17 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
         resp = await client.post(url, params=params, headers=headers, json=request_payload)
 
     if resp.status_code >= 400:
+        print(
+            "[BROADCAST_META] create template failed",
+            {
+                "status": resp.status_code,
+                "name": name,
+                "category": category,
+                "language": language,
+                "components_count": len(components),
+                "body": str(resp.text or "")[:900],
+            },
+        )
         raise _meta_graph_http_exception("create template", resp.text)
 
     data = resp.json() if resp.text else {}

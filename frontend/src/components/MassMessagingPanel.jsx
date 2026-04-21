@@ -50,6 +50,14 @@ const dangerBtn = {
   color: "#ffc2c2",
 };
 
+const menuCard = {
+  border: "1px solid rgba(148,163,184,0.35)",
+  borderRadius: 12,
+  background: "#0f172a",
+  boxShadow: "0 20px 40px rgba(2,6,23,0.45)",
+  padding: 10,
+};
+
 const MODULES = [
   { id: "ai_agent", title: "AI Agent", description: "Skeleton: reglas IA para outbound y copys automaticos." },
   { id: "broadcast_campaign", title: "Broadcast Campaign", description: "Skeleton: campanas de envio masivo." },
@@ -88,7 +96,14 @@ const BUTTON_PRESET_OPTIONS = [
   { id: "quick_reply", label: "Quick reply buttons", hint: "hasta 3 botones" },
   { id: "visit_website", label: "Visit website", hint: "maximo 2 botones URL" },
   { id: "call_phone", label: "Call phone number", hint: "maximo 1 boton telefono" },
-  { id: "copy_offer_code", label: "Copy offer code", hint: "usa quick reply" },
+  { id: "copy_offer_code", label: "Copy offer code", hint: "maximo 1 boton" },
+];
+
+const COUNTRY_OPTIONS = [
+  { value: "+57", label: "Colombia (+57)" },
+  { value: "+52", label: "Mexico (+52)" },
+  { value: "+1", label: "USA (+1)" },
+  { value: "+34", label: "Espana (+34)" },
 ];
 
 const TOKEN_EXAMPLES = {
@@ -113,10 +128,10 @@ const TOKEN_EXAMPLES = {
 };
 
 function emptyButton(mode = "quick_reply") {
-  if (mode === "visit_website") return { mode, type: "URL", text: "", url: "" };
-  if (mode === "call_phone") return { mode, type: "PHONE_NUMBER", text: "", phone_number: "" };
-  if (mode === "copy_offer_code") return { mode, type: "QUICK_REPLY", text: "Copiar codigo" };
-  return { mode: "quick_reply", type: "QUICK_REPLY", text: "" };
+  if (mode === "visit_website") return { mode, type: "URL", text: "Visit website", url_type: "STATIC", url: "" };
+  if (mode === "call_phone") return { mode, type: "PHONE_NUMBER", text: "Call Phone Number", country_code: "+57", phone_number: "" };
+  if (mode === "copy_offer_code") return { mode, type: "QUICK_REPLY", text: "Copy Offer Code", offer_code: "" };
+  return { mode: "quick_reply", type: "QUICK_REPLY", subtype: "CUSTOM", text: "Quick Reply" };
 }
 
 function emptyForm() {
@@ -152,6 +167,15 @@ function renderWithTokens(text, examples) {
     if (!token) return "";
     return String(examples?.[token] || `{{${token}}}`);
   });
+}
+
+function getButtonMode(btn) {
+  const mode = String(btn?.mode || "").trim();
+  if (mode) return mode;
+  const type = String(btn?.type || "").trim().toUpperCase();
+  if (type === "URL") return "visit_website";
+  if (type === "PHONE_NUMBER") return "call_phone";
+  return "quick_reply";
 }
 
 function statusColor(status) {
@@ -206,6 +230,17 @@ export default function MassMessagingPanel({ apiBase }) {
 
   const bodyChars = String(form.body_text || "").length;
   const headerType = String(form.header_type || "").trim().toUpperCase();
+  const menuOpen = showCustomMenu || showVarsMenu || showAddButtonMenu;
+
+  const indexedButtons = useMemo(() => {
+    return (Array.isArray(form.buttons) ? form.buttons : []).map((btn, idx) => ({ ...btn, _idx: idx, _mode: getButtonMode(btn) }));
+  }, [form.buttons]);
+  const quickReplyRows = useMemo(() => {
+    return indexedButtons.filter((btn) => btn._mode === "quick_reply");
+  }, [indexedButtons]);
+  const ctaRows = useMemo(() => {
+    return indexedButtons.filter((btn) => ["visit_website", "call_phone", "copy_offer_code"].includes(btn._mode));
+  }, [indexedButtons]);
 
   const previewBody = useMemo(() => {
     return renderWithTokens(form.body_text || "", TOKEN_EXAMPLES);
@@ -255,11 +290,16 @@ export default function MassMessagingPanel({ apiBase }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const closeMenus = () => {
+    setShowCustomMenu(false);
+    setShowVarsMenu(false);
+    setShowAddButtonMenu(false);
+  };
+
   const insertTokenInBody = (key) => {
     const token = `{{${String(key || "").trim()}}}`;
     const ta = bodyRef.current;
-    setShowCustomMenu(false);
-    setShowVarsMenu(false);
+    closeMenus();
     if (!ta) {
       setForm((prev) => ({ ...prev, body_text: `${String(prev.body_text || "")}${token}` }));
       return;
@@ -292,6 +332,45 @@ export default function MassMessagingPanel({ apiBase }) {
     }));
   };
 
+  const setButtonMode = (idx, nextMode) => {
+    const rows = Array.isArray(form.buttons) ? form.buttons : [];
+    const others = rows.filter((_, i) => i !== idx);
+    const countUrl = others.filter((b) => getButtonMode(b) === "visit_website").length;
+    const countPhone = others.filter((b) => getButtonMode(b) === "call_phone").length;
+    const countCopy = others.filter((b) => getButtonMode(b) === "copy_offer_code").length;
+
+    if (nextMode === "visit_website" && countUrl >= 2) {
+      setError("Maximo 2 botones de tipo Visit website.");
+      return;
+    }
+    if (nextMode === "call_phone" && countPhone >= 1) {
+      setError("Maximo 1 boton de tipo Call phone number.");
+      return;
+    }
+    if (nextMode === "copy_offer_code" && countCopy >= 1) {
+      setError("Maximo 1 boton de tipo Copy offer code.");
+      return;
+    }
+
+    setError("");
+    const fresh = emptyButton(nextMode);
+    setForm((prev) => ({
+      ...prev,
+      buttons: (Array.isArray(prev.buttons) ? prev.buttons : []).map((b, i) => {
+        if (i !== idx) return b;
+        return {
+          ...fresh,
+          text: String(b?.text || "").trim() || fresh.text,
+          url: String(b?.url || "").trim() || fresh.url || "",
+          url_type: String(b?.url_type || "").trim() || fresh.url_type || "STATIC",
+          phone_number: String(b?.phone_number || "").trim() || fresh.phone_number || "",
+          country_code: String(b?.country_code || "").trim() || fresh.country_code || "+57",
+          offer_code: String(b?.offer_code || "").trim() || fresh.offer_code || "",
+        };
+      }),
+    }));
+  };
+
   const addButtonByPreset = (presetId) => {
     const current = Array.isArray(form.buttons) ? form.buttons : [];
     if (current.length >= 3) {
@@ -299,8 +378,9 @@ export default function MassMessagingPanel({ apiBase }) {
       return;
     }
 
-    const countUrl = current.filter((b) => String(b.type || "").toUpperCase() === "URL").length;
-    const countPhone = current.filter((b) => String(b.type || "").toUpperCase() === "PHONE_NUMBER").length;
+    const countUrl = current.filter((b) => getButtonMode(b) === "visit_website").length;
+    const countPhone = current.filter((b) => getButtonMode(b) === "call_phone").length;
+    const countCopy = current.filter((b) => getButtonMode(b) === "copy_offer_code").length;
 
     if (presetId === "visit_website" && countUrl >= 2) {
       setError("Maximo 2 botones de tipo Visit website.");
@@ -310,11 +390,15 @@ export default function MassMessagingPanel({ apiBase }) {
       setError("Maximo 1 boton de tipo Call phone number.");
       return;
     }
+    if (presetId === "copy_offer_code" && countCopy >= 1) {
+      setError("Maximo 1 boton de tipo Copy offer code.");
+      return;
+    }
 
     setError("");
     const next = emptyButton(presetId);
     setForm((prev) => ({ ...prev, buttons: [...(prev.buttons || []), next] }));
-    setShowAddButtonMenu(false);
+    closeMenus();
   };
 
   const runAiRewrite = () => {
@@ -356,6 +440,17 @@ export default function MassMessagingPanel({ apiBase }) {
       setError("Para header multimedia debes indicar header media handle.");
       return;
     }
+    for (const b of Array.isArray(form.buttons) ? form.buttons : []) {
+      const mode = getButtonMode(b);
+      if (mode === "visit_website" && !String(b.url || "").trim()) {
+        setError("Cada boton Visit website requiere URL.");
+        return;
+      }
+      if (mode === "call_phone" && !String(b.phone_number || "").trim()) {
+        setError("Cada boton Call phone number requiere numero.");
+        return;
+      }
+    }
 
     setError("");
     setStatus("");
@@ -372,13 +467,45 @@ export default function MassMessagingPanel({ apiBase }) {
         footer_text: String(form.footer_text || "").trim(),
         allow_category_change: !!form.allow_category_change,
         buttons: (Array.isArray(form.buttons) ? form.buttons : [])
-          .map((b) => ({
-            type: String(b.type || "QUICK_REPLY").trim().toUpperCase(),
-            text: String(b.text || "").trim(),
-            url: String(b.url || "").trim(),
-            phone_number: String(b.phone_number || "").trim(),
-          }))
-          .filter((b) => !!b.text),
+          .map((b) => {
+            const mode = getButtonMode(b);
+            const text = String(b.text || "").trim();
+            if (mode === "visit_website") {
+              return {
+                type: "URL",
+                text: text || "Visit website",
+                url: String(b.url || "").trim(),
+                phone_number: "",
+              };
+            }
+            if (mode === "call_phone") {
+              const cc = String(b.country_code || "").trim();
+              const num = String(b.phone_number || "").trim();
+              const full = num.startsWith("+") ? num : `${cc}${num}`.replace(/\s+/g, "");
+              return {
+                type: "PHONE_NUMBER",
+                text: text || "Call phone number",
+                url: "",
+                phone_number: full,
+              };
+            }
+            if (mode === "copy_offer_code") {
+              const code = String(b.offer_code || "").trim();
+              return {
+                type: "QUICK_REPLY",
+                text: text || (code ? `Copiar ${code}` : "Copy offer code"),
+                url: "",
+                phone_number: "",
+              };
+            }
+            return {
+              type: "QUICK_REPLY",
+              text: text || "Quick reply",
+              url: "",
+              phone_number: "",
+            };
+          })
+          .filter((b) => !!String(b.text || "").trim()),
       };
 
       const r = await fetch(`${API}/api/broadcast/meta/templates`, {
@@ -465,6 +592,19 @@ export default function MassMessagingPanel({ apiBase }) {
         </div>
       ) : null}
 
+      {activeModule === "message_template" && menuOpen ? (
+        <div
+          onClick={closeMenus}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 25,
+            background: "rgba(2, 6, 23, 0.42)",
+            backdropFilter: "blur(2px)",
+          }}
+        />
+      ) : null}
+
       {activeModule !== "message_template" ? (
         <div style={card}>
           <h3 style={{ marginTop: 0 }}>{activeModuleMeta.title}</h3>
@@ -474,7 +614,7 @@ export default function MassMessagingPanel({ apiBase }) {
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: editorCols, gap: 12, alignItems: "start" }}>
-          <div style={{ ...card, display: "grid", gap: 10 }}>
+          <div style={{ ...card, display: "grid", gap: 10, position: "relative", zIndex: menuOpen ? 40 : "auto" }}>
             <h3 style={{ margin: 0 }}>Message Template</h3>
 
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
@@ -587,7 +727,7 @@ export default function MassMessagingPanel({ apiBase }) {
               </div>
 
               {showCustomMenu ? (
-                <div style={{ position: "absolute", zIndex: 20, top: 58, left: 0, width: 300, maxHeight: 280, overflowY: "auto", ...card }}>
+                <div style={{ position: "absolute", zIndex: 55, top: 58, left: 0, width: isMobile ? "min(320px, calc(100vw - 56px))" : 300, maxHeight: 280, overflowY: "auto", ...menuCard }}>
                   {(customFields || []).map((p) => (
                     <button
                       key={`cf-${p.key}`}
@@ -602,7 +742,7 @@ export default function MassMessagingPanel({ apiBase }) {
               ) : null}
 
               {showVarsMenu ? (
-                <div style={{ position: "absolute", zIndex: 20, top: 58, left: 120, width: 340, maxHeight: 280, overflowY: "auto", ...card }}>
+                <div style={{ position: "absolute", zIndex: 55, top: 58, left: isMobile ? 0 : 120, width: isMobile ? "min(340px, calc(100vw - 56px))" : 340, maxHeight: 280, overflowY: "auto", ...menuCard }}>
                   {(systemVars || []).map((p) => (
                     <button
                       key={`sv-${p.key}`}
@@ -644,12 +784,16 @@ export default function MassMessagingPanel({ apiBase }) {
               <button
                 type="button"
                 style={smallBtn}
-                onClick={() => setShowAddButtonMenu((v) => !v)}
+                onClick={() => {
+                  setShowAddButtonMenu((v) => !v);
+                  setShowCustomMenu(false);
+                  setShowVarsMenu(false);
+                }}
               >
                 + Add button
               </button>
               {showAddButtonMenu ? (
-                <div style={{ position: "absolute", zIndex: 20, top: 44, left: 0, width: 340, ...card }}>
+                <div style={{ position: "absolute", zIndex: 55, bottom: 44, left: 0, width: isMobile ? "min(340px, calc(100vw - 56px))" : 360, ...menuCard }}>
                   {BUTTON_PRESET_OPTIONS.map((opt) => (
                     <button
                       key={opt.id}
@@ -667,48 +811,134 @@ export default function MassMessagingPanel({ apiBase }) {
               ) : null}
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
-              {(form.buttons || []).map((btn, idx) => {
-                const btnType = String(btn.type || "QUICK_REPLY").toUpperCase();
-                return (
-                  <div key={`btn-${idx}`} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: 8 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr auto", gap: 8 }}>
-                      <select
-                        style={input}
-                        value={btnType}
-                        onChange={(e) => updateButton(idx, { type: e.target.value })}
-                      >
-                        <option value="QUICK_REPLY">Quick reply</option>
-                        <option value="URL">Visit website</option>
-                        <option value="PHONE_NUMBER">Call phone number</option>
-                      </select>
-                      <input
-                        style={input}
-                        placeholder="Texto del boton"
-                        value={btn.text || ""}
-                        onChange={(e) => updateButton(idx, { text: e.target.value })}
-                      />
-                      <button type="button" style={dangerBtn} onClick={() => removeButton(idx)}>Quitar</button>
+            <div style={{ ...card, background: "rgba(255,255,255,0.03)" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Quick Reply - Optional</div>
+              {quickReplyRows.length === 0 ? (
+                <div style={{ fontSize: 12, opacity: 0.72 }}>No hay botones quick reply configurados.</div>
+              ) : null}
+              <div style={{ display: "grid", gap: 8 }}>
+                {quickReplyRows.map((btn) => (
+                  <div key={`qr-${btn._idx}`} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "160px 1fr auto", gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Type</div>
+                        <select
+                          style={input}
+                          value={btn.subtype || "CUSTOM"}
+                          onChange={(e) => updateButton(btn._idx, { subtype: e.target.value })}
+                        >
+                          <option value="CUSTOM">Custom</option>
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Button Text</div>
+                        <input
+                          style={input}
+                          placeholder="Quick Reply"
+                          value={btn.text || ""}
+                          onChange={(e) => updateButton(btn._idx, { text: e.target.value })}
+                        />
+                      </div>
+                      <button type="button" style={dangerBtn} onClick={() => removeButton(btn._idx)}>X</button>
                     </div>
-                    {btnType === "URL" ? (
-                      <input
-                        style={{ ...input, marginTop: 8 }}
-                        placeholder="https://..."
-                        value={btn.url || ""}
-                        onChange={(e) => updateButton(idx, { url: e.target.value })}
-                      />
-                    ) : null}
-                    {btnType === "PHONE_NUMBER" ? (
-                      <input
-                        style={{ ...input, marginTop: 8 }}
-                        placeholder="+57..."
-                        value={btn.phone_number || ""}
-                        onChange={(e) => updateButton(idx, { phone_number: e.target.value })}
-                      />
-                    ) : null}
                   </div>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+
+            <div style={{ ...card, background: "rgba(255,255,255,0.03)" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Call to Action - Optional</div>
+              {ctaRows.length === 0 ? (
+                <div style={{ fontSize: 12, opacity: 0.72 }}>No hay botones call to action configurados.</div>
+              ) : null}
+              <div style={{ display: "grid", gap: 8 }}>
+                {ctaRows.map((btn) => {
+                  const mode = btn._mode;
+                  return (
+                    <div key={`cta-${btn._idx}`} style={{ border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: 8 }}>
+                      {mode === "visit_website" ? (
+                        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "180px 1fr 140px 1fr auto", gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Type of Action</div>
+                            <select style={input} value={mode} onChange={(e) => setButtonMode(btn._idx, e.target.value)}>
+                              <option value="visit_website">Visit website</option>
+                              <option value="call_phone">Call phone number</option>
+                              <option value="copy_offer_code">Copy offer code</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Button Text</div>
+                            <input style={input} placeholder="Visit website" value={btn.text || ""} onChange={(e) => updateButton(btn._idx, { text: e.target.value })} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>URL Type</div>
+                            <select style={input} value={btn.url_type || "STATIC"} onChange={(e) => updateButton(btn._idx, { url_type: e.target.value })}>
+                              <option value="STATIC">Static</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Website URL</div>
+                            <input style={input} placeholder="https://..." value={btn.url || ""} onChange={(e) => updateButton(btn._idx, { url: e.target.value })} />
+                          </div>
+                          <button type="button" style={dangerBtn} onClick={() => removeButton(btn._idx)}>X</button>
+                        </div>
+                      ) : null}
+
+                      {mode === "call_phone" ? (
+                        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "180px 1fr 1fr 1fr auto", gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Type of Action</div>
+                            <select style={input} value={mode} onChange={(e) => setButtonMode(btn._idx, e.target.value)}>
+                              <option value="call_phone">Call phone number</option>
+                              <option value="visit_website">Visit website</option>
+                              <option value="copy_offer_code">Copy offer code</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Button Text</div>
+                            <input style={input} placeholder="Call Phone Number" value={btn.text || ""} onChange={(e) => updateButton(btn._idx, { text: e.target.value })} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Country</div>
+                            <select style={input} value={btn.country_code || "+57"} onChange={(e) => updateButton(btn._idx, { country_code: e.target.value })}>
+                              {COUNTRY_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Phone Number</div>
+                            <input style={input} placeholder="3237028445" value={btn.phone_number || ""} onChange={(e) => updateButton(btn._idx, { phone_number: e.target.value })} />
+                          </div>
+                          <button type="button" style={dangerBtn} onClick={() => removeButton(btn._idx)}>X</button>
+                        </div>
+                      ) : null}
+
+                      {mode === "copy_offer_code" ? (
+                        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "180px 1fr 1fr auto", gap: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Type of Action</div>
+                            <select style={input} value={mode} onChange={(e) => setButtonMode(btn._idx, e.target.value)}>
+                              <option value="copy_offer_code">Copy offer code</option>
+                              <option value="visit_website">Visit website</option>
+                              <option value="call_phone">Call phone number</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Button Text</div>
+                            <input style={input} placeholder="Copy Offer Code" value={btn.text || ""} onChange={(e) => updateButton(btn._idx, { text: e.target.value })} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, marginBottom: 4, opacity: 0.8 }}>Offer Code</div>
+                            <input style={input} placeholder="Enter sample" value={btn.offer_code || ""} onChange={(e) => updateButton(btn._idx, { offer_code: e.target.value })} />
+                          </div>
+                          <button type="button" style={dangerBtn} onClick={() => removeButton(btn._idx)}>X</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>

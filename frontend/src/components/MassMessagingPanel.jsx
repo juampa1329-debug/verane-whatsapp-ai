@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import useViewport from "../hooks/useViewport";
+import BroadcastCampaignPanel from "./BroadcastCampaignPanel";
 
 const shell = {
   flex: 1,
@@ -555,7 +556,7 @@ export default function MassMessagingPanel({ apiBase }) {
       <div style={{ ...card, display: "grid", gridTemplateColumns: gridCols, gap: 10 }}>
         {MODULES.map((mod, idx) => {
           const isActive = activeModule === mod.id;
-          const isLive = mod.id === "message_template";
+          const isLive = mod.id === "message_template" || mod.id === "broadcast_campaign";
           return (
             <button
               key={mod.id}
@@ -615,7 +616,9 @@ export default function MassMessagingPanel({ apiBase }) {
         />
       ) : null}
 
-      {activeModule !== "message_template" ? (
+      {activeModule === "broadcast_campaign" ? (
+        <BroadcastCampaignPanel apiBase={API} isMobile={isMobile} />
+      ) : activeModule !== "message_template" ? (
         <div style={card}>
           <h3 style={{ marginTop: 0 }}>{activeModuleMeta.title}</h3>
           <p style={{ margin: "8px 0", fontSize: 13, opacity: 0.82 }}>

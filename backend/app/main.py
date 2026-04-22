@@ -2,8 +2,10 @@
 
 import asyncio
 import base64
+import csv
 import hashlib
 import httpx
+import io
 import json
 import os
 import re
@@ -13,7 +15,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -4715,6 +4717,270 @@ async def create_broadcast_meta_template(payload: BroadcastMetaTemplateCreateIn)
 # Campaigns
 # =========================================================
 
+_CAMPAIGN_RECIPIENT_STATUS_FILTERS = {
+    "all",
+    "pending",
+    "processing",
+    "sent",
+    "delivered",
+    "read",
+    "replied",
+    "failed",
+}
+
+
+def _normalize_campaign_recipient_status_filter(raw: str) -> str:
+    token = str(raw or "all").strip().lower() or "all"
+    if token not in _CAMPAIGN_RECIPIENT_STATUS_FILTERS:
+        return "all"
+    return token
+
+
+def _campaign_report_filter_sql(search: str, recipient_status: str) -> tuple[str, Dict[str, Any], str]:
+    normalized_status = _normalize_campaign_recipient_status_filter(recipient_status)
+    clauses: List[str] = []
+    params: Dict[str, Any] = {}
+
+    if normalized_status != "all":
+        clauses.append("LOWER(cr.status) = :recipient_status")
+        params["recipient_status"] = normalized_status
+
+    q = str(search or "").strip().lower()
+    if q:
+        params["search"] = f"%{q}%"
+        clauses.append(
+            "("
+            "LOWER(COALESCE(cr.phone, '')) LIKE :search "
+            "OR LOWER(BTRIM(COALESCE(conv.first_name, '') || ' ' || COALESCE(conv.last_name, ''))) LIKE :search "
+            "OR LOWER(COALESCE(cr.wa_message_id, '')) LIKE :search "
+            "OR LOWER(COALESCE(cr.error, '')) LIKE :search"
+            ")"
+        )
+
+    extra_sql = f" AND {' AND '.join(clauses)}" if clauses else ""
+    return extra_sql, params, normalized_status
+
+
+def _build_campaign_report_payload(
+    *,
+    campaign_id: int,
+    search: str = "",
+    recipient_status: str = "all",
+    page: int = 1,
+    per_page: int = 10,
+) -> Dict[str, Any]:
+    safe_page = max(1, int(page or 1))
+    safe_per_page = max(1, min(int(per_page or 10), 200))
+    offset = (safe_page - 1) * safe_per_page
+
+    filter_sql, filter_params, normalized_status = _campaign_report_filter_sql(search, recipient_status)
+    campaign_params: Dict[str, Any] = {"campaign_id": int(campaign_id)}
+
+    with engine.begin() as conn:
+        campaign = conn.execute(
+            text(
+                """
+                SELECT
+                    c.id, c.name, c.objective, c.status, c.scheduled_at, c.launched_at,
+                    c.channel, c.created_at, c.updated_at,
+                    s.id AS segment_id, s.name AS segment_name, s.rules_json AS segment_rules_json,
+                    t.id AS template_id, t.name AS template_name
+                FROM campaigns c
+                LEFT JOIN customer_segments s ON s.id = c.segment_id
+                LEFT JOIN message_templates t ON t.id = c.template_id
+                WHERE c.id = :campaign_id
+                LIMIT 1
+                """
+            ),
+            campaign_params,
+        ).mappings().first()
+
+        if not campaign:
+            raise HTTPException(status_code=404, detail="campaign not found")
+
+        stats_row = conn.execute(
+            text(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'pending') AS pending,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'processing') AS processing,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'sent') AS sent,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'delivered') AS delivered,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'read') AS read,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'replied') AS replied,
+                    COUNT(*) FILTER (WHERE LOWER(status) = 'failed') AS failed
+                FROM campaign_recipients
+                WHERE campaign_id = :campaign_id
+                """
+            ),
+            campaign_params,
+        ).mappings().first()
+
+        count_params = {**campaign_params, **filter_params}
+        filtered_total = conn.execute(
+            text(
+                f"""
+                SELECT COUNT(*) AS total_filtered
+                FROM campaign_recipients cr
+                LEFT JOIN conversations conv ON conv.phone = cr.phone
+                WHERE cr.campaign_id = :campaign_id
+                {filter_sql}
+                """
+            ),
+            count_params,
+        ).scalar() or 0
+
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT
+                    cr.id AS recipient_id,
+                    cr.phone AS chat_id,
+                    COALESCE(
+                        NULLIF(BTRIM(COALESCE(conv.first_name, '') || ' ' || COALESCE(conv.last_name, '')), ''),
+                        cr.phone
+                    ) AS contact_name,
+                    LOWER(COALESCE(cr.status, 'pending')) AS recipient_status,
+                    COALESCE(cr.sent_at, CASE WHEN LOWER(cr.status) = 'failed' THEN m.created_at ELSE NULL END) AS sent_at,
+                    cr.delivered_at,
+                    cr.read_at AS opened_at,
+                    cr.replied_at,
+                    CASE
+                        WHEN LOWER(cr.status) = 'failed' THEN COALESCE(m.created_at, cr.created_at)
+                        ELSE NULL
+                    END AS failed_at,
+                    COALESCE(NULLIF(cr.wa_message_id, ''), NULLIF(m.wa_message_id, ''), '') AS provider_message_id,
+                    COALESCE(NULLIF(cr.error, ''), NULLIF(m.wa_error, ''), '') AS provider_error
+                FROM campaign_recipients cr
+                LEFT JOIN conversations conv ON conv.phone = cr.phone
+                LEFT JOIN messages m ON m.id = cr.message_id
+                WHERE cr.campaign_id = :campaign_id
+                {filter_sql}
+                ORDER BY cr.id ASC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {
+                **count_params,
+                "limit": safe_per_page,
+                "offset": offset,
+            },
+        ).mappings().all()
+
+    d = dict(stats_row or {})
+    total = int(d.get("total") or 0)
+    pending = int(d.get("pending") or 0)
+    processing = int(d.get("processing") or 0)
+    sent_exact = int(d.get("sent") or 0)
+    delivered_exact = int(d.get("delivered") or 0)
+    read_exact = int(d.get("read") or 0)
+    replied_exact = int(d.get("replied") or 0)
+    failed = int(d.get("failed") or 0)
+
+    sent_total = sent_exact + delivered_exact + read_exact + replied_exact
+    delivered_total = delivered_exact + read_exact + replied_exact
+    opened_total = read_exact + replied_exact
+    processed_total = max(0, total - pending - processing)
+    unreached_total = failed
+
+    def _pct(num: int, den: int) -> float:
+        if den <= 0:
+            return 0.0
+        return round((num / den) * 100, 2)
+
+    rules = _safe_json_dict((campaign or {}).get("segment_rules_json"))
+    included_labels: List[str] = []
+    tag = str(rules.get("tag") or "").strip()
+    if tag:
+        included_labels.append(tag)
+    excluded_labels_raw = rules.get("exclude_tags")
+    excluded_labels: List[str] = []
+    if isinstance(excluded_labels_raw, list):
+        excluded_labels = [str(x).strip() for x in excluded_labels_raw if str(x).strip()]
+    elif isinstance(excluded_labels_raw, str) and excluded_labels_raw.strip():
+        excluded_labels = [excluded_labels_raw.strip()]
+
+    items: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows, start=offset + 1):
+        items.append(
+            {
+                "index": idx,
+                "recipient_id": int(row.get("recipient_id") or 0),
+                "chat_id": str(row.get("chat_id") or "").strip(),
+                "name": str(row.get("contact_name") or "").strip(),
+                "status": str(row.get("recipient_status") or "pending").strip(),
+                "sent_at": row.get("sent_at"),
+                "delivered_at": row.get("delivered_at"),
+                "opened_at": row.get("opened_at"),
+                "replied_at": row.get("replied_at"),
+                "failed_at": row.get("failed_at"),
+                "message_id": str(row.get("provider_message_id") or "").strip(),
+                "error": str(row.get("provider_error") or "").strip(),
+            }
+        )
+
+    pages = max(1, (int(filtered_total) + safe_per_page - 1) // safe_per_page) if int(filtered_total) > 0 else 1
+
+    return {
+        "campaign": {
+            "id": int((campaign or {}).get("id") or 0),
+            "name": str((campaign or {}).get("name") or "").strip(),
+            "objective": str((campaign or {}).get("objective") or "").strip(),
+            "status": str((campaign or {}).get("status") or "").strip().lower(),
+            "scheduled_at": (campaign or {}).get("scheduled_at"),
+            "launched_at": (campaign or {}).get("launched_at"),
+            "channel": _normalize_channel(str((campaign or {}).get("channel") or "whatsapp"), default="whatsapp"),
+            "template_id": (campaign or {}).get("template_id"),
+            "template_name": str((campaign or {}).get("template_name") or "").strip(),
+            "segment_id": (campaign or {}).get("segment_id"),
+            "segment_name": str((campaign or {}).get("segment_name") or "").strip(),
+            "created_at": (campaign or {}).get("created_at"),
+            "updated_at": (campaign or {}).get("updated_at"),
+        },
+        "filters": {
+            "search": str(search or "").strip(),
+            "recipient_status": normalized_status,
+        },
+        "rules_summary": {
+            "included_labels": included_labels,
+            "excluded_labels": excluded_labels,
+            "country": str(rules.get("country") or "").strip() or "N/A",
+            "custom_field_value": str(rules.get("payment_status") or rules.get("customer_type") or "").strip() or "N/A",
+            "added_after": str(rules.get("added_after") or rules.get("created_after") or "").strip() or "N/A",
+            "added_before": str(rules.get("added_before") or rules.get("created_before") or "").strip() or "N/A",
+            "assign_label_after_broadcast": str(rules.get("assign_tag_after") or "").strip() or "N/A",
+            "recent_subscriber_filter": bool(rules.get("recent_subscriber") or False),
+        },
+        "metrics": {
+            "status": str((campaign or {}).get("status") or "").strip().lower(),
+            "targeted": total,
+            "message_count": 1,
+            "processed": processed_total,
+            "processed_pct": _pct(processed_total, total),
+            "sent": sent_total,
+            "sent_pct": _pct(sent_total, total),
+            "delivered": delivered_total,
+            "delivered_pct": _pct(delivered_total, sent_total),
+            "opened": opened_total,
+            "opened_pct": _pct(opened_total, delivered_total),
+            "unreached": unreached_total,
+            "unreached_pct": _pct(unreached_total, total),
+            "pending": pending,
+            "processing": processing,
+            "failed": failed,
+        },
+        "recipients": {
+            "page": safe_page,
+            "per_page": safe_per_page,
+            "total": total,
+            "filtered_total": int(filtered_total),
+            "pages": pages,
+            "items": items,
+        },
+    }
+
+
 @app.get("/api/campaigns")
 def list_campaigns(
     status: str = Query("all", description="all|draft|scheduled|running|paused|completed|archived"),
@@ -5060,6 +5326,171 @@ def campaign_stats(campaign_id: int):
         "read_rate_pct": round((read / delivered) * 100, 2) if delivered else 0.0,
         "reply_rate_pct": round((replied / read) * 100, 2) if read else 0.0,
         "coverage_pct": round((sent / total) * 100, 2) if total else 0.0,
+    }
+
+
+@app.get("/api/campaigns/{campaign_id}/report")
+def campaign_report(
+    campaign_id: int,
+    search: str = Query("", description="buscar por telefono, nombre, message_id o error"),
+    recipient_status: str = Query("all", alias="status", description="all|pending|processing|sent|delivered|read|replied|failed"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=200),
+):
+    payload = _build_campaign_report_payload(
+        campaign_id=int(campaign_id),
+        search=search,
+        recipient_status=recipient_status,
+        page=page,
+        per_page=per_page,
+    )
+    return payload
+
+
+@app.get("/api/campaigns/{campaign_id}/export.csv")
+def campaign_export_csv(
+    campaign_id: int,
+    search: str = Query("", description="buscar por telefono, nombre, message_id o error"),
+    recipient_status: str = Query("all", alias="status", description="all|pending|processing|sent|delivered|read|replied|failed"),
+):
+    payload = _build_campaign_report_payload(
+        campaign_id=int(campaign_id),
+        search=search,
+        recipient_status=recipient_status,
+        page=1,
+        per_page=200,
+    )
+
+    # Si hay más de 200 filas filtradas, paginamos internamente para exportar todo.
+    rows: List[Dict[str, Any]] = list((payload.get("recipients") or {}).get("items") or [])
+    filtered_total = int(((payload.get("recipients") or {}).get("filtered_total")) or 0)
+    if filtered_total > 200:
+        pages = int((payload.get("recipients") or {}).get("pages") or 1)
+        for p in range(2, pages + 1):
+            page_data = _build_campaign_report_payload(
+                campaign_id=int(campaign_id),
+                search=search,
+                recipient_status=recipient_status,
+                page=p,
+                per_page=200,
+            )
+            rows.extend(list((page_data.get("recipients") or {}).get("items") or []))
+
+    def _fmt_dt(v: Any) -> str:
+        if isinstance(v, datetime):
+            return v.strftime("%Y-%m-%d %H:%M:%S")
+        return str(v or "").strip()
+
+    buff = io.StringIO()
+    writer = csv.writer(buff)
+    writer.writerow(
+        [
+            "#",
+            "Chat ID",
+            "Nombre",
+            "Status",
+            "Sent at",
+            "Delivered at",
+            "Opened at",
+            "Failed at",
+            "Message ID",
+            "Error",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                int(row.get("index") or 0),
+                str(row.get("chat_id") or "").strip(),
+                str(row.get("name") or "").strip(),
+                str(row.get("status") or "").strip(),
+                _fmt_dt(row.get("sent_at")),
+                _fmt_dt(row.get("delivered_at")),
+                _fmt_dt(row.get("opened_at")),
+                _fmt_dt(row.get("failed_at")),
+                str(row.get("message_id") or "").strip(),
+                str(row.get("error") or "").strip(),
+            ]
+        )
+
+    campaign_name = str(((payload.get("campaign") or {}).get("name")) or f"campaign_{int(campaign_id)}").strip()
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", campaign_name).strip("_") or f"campaign_{int(campaign_id)}"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_name}_report.csv"',
+        "Cache-Control": "no-store",
+    }
+    return Response(content=buff.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+
+
+@app.post("/api/campaigns/{campaign_id}/resend-failed")
+async def campaign_resend_failed(
+    campaign_id: int,
+    run_now: bool = Query(True),
+    batch_size: int = Query(150, ge=1, le=1000),
+):
+    with engine.begin() as conn:
+        campaign = conn.execute(
+            text(
+                """
+                SELECT id, name, status, channel
+                FROM campaigns
+                WHERE id = :campaign_id
+                LIMIT 1
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        ).mappings().first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="campaign not found")
+
+        channel = _normalize_channel(str(campaign.get("channel") or "whatsapp"), default="whatsapp")
+        if channel != "whatsapp":
+            raise HTTPException(status_code=409, detail="channel_not_supported_for_retry_yet")
+
+        rs = conn.execute(
+            text(
+                """
+                UPDATE campaign_recipients
+                SET status = 'pending',
+                    sent_at = NULL,
+                    delivered_at = NULL,
+                    read_at = NULL,
+                    replied_at = NULL,
+                    error = NULL,
+                    wa_message_id = NULL,
+                    message_id = NULL
+                WHERE campaign_id = :campaign_id
+                  AND LOWER(status) = 'failed'
+                """
+            ),
+            {"campaign_id": int(campaign_id)},
+        )
+        requeued = int(rs.rowcount or 0)
+
+        if requeued > 0:
+            conn.execute(
+                text(
+                    """
+                    UPDATE campaigns
+                    SET status = 'running',
+                        launched_at = COALESCE(launched_at, NOW()),
+                        updated_at = NOW()
+                    WHERE id = :campaign_id
+                    """
+                ),
+                {"campaign_id": int(campaign_id)},
+            )
+
+    tick_result: Dict[str, Any] = {}
+    if run_now and requeued > 0:
+        tick_result = await campaign_engine_tick(batch_size=min(int(batch_size), int(requeued)), send_delay_ms=0)
+
+    return {
+        "ok": True,
+        "campaign_id": int(campaign_id),
+        "requeued": int(requeued),
+        "run_now": bool(run_now),
+        "tick": tick_result,
     }
 
 

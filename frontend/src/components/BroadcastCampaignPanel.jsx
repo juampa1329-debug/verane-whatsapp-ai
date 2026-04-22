@@ -60,6 +60,24 @@ const recipientStatusOptions = [
 ];
 
 const perPageOptions = [10, 25, 50, 100];
+const scheduleModeOptions = [
+  { value: "draft", label: "Guardar como draft" },
+  { value: "scheduled", label: "Programar para envio" },
+];
+
+function emptyCreateForm() {
+  return {
+    name: "",
+    meta_template_name: "",
+    meta_template_language: "",
+    meta_template_category: "",
+    meta_template_body: "",
+    segment_id: "",
+    scheduled_at: "",
+    mode: "draft",
+    is_mockup: true,
+  };
+}
 
 function asErrorMessage(errLike) {
   try {
@@ -106,6 +124,128 @@ function downloadBlob(blob, filename) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function extractTemplateTokens(body) {
+  const txt = String(body || "");
+  const seen = new Set();
+  const out = [];
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  let match = regex.exec(txt);
+  while (match) {
+    const token = String(match[1] || "").trim();
+    if (token && !seen.has(token)) {
+      seen.add(token);
+      out.push(token);
+    }
+    match = regex.exec(txt);
+  }
+  return out;
+}
+
+function buildMockRecipients(total = 202) {
+  const base = [];
+  const start = 573010000000;
+  for (let i = 0; i < total; i += 1) {
+    const phone = String(start + i);
+    const status = i < 118 ? "read" : i < 195 ? "delivered" : i < 198 ? "sent" : "failed";
+    const sentAt = new Date(Date.now() - (total - i) * 60000);
+    base.push({
+      recipient_id: i + 1,
+      chat_id: phone,
+      name: i % 3 === 0 ? `Cliente ${i + 1}` : "",
+      status,
+      sent_at: sentAt.toISOString(),
+      delivered_at: status === "read" || status === "delivered" ? new Date(sentAt.getTime() + 8000).toISOString() : null,
+      opened_at: status === "read" ? new Date(sentAt.getTime() + 19000).toISOString() : null,
+      replied_at: null,
+      failed_at: status === "failed" ? new Date(sentAt.getTime() + 6000).toISOString() : null,
+      message_id: `wamid.mock.${i + 1}.${Date.now()}`,
+      error: status === "failed" ? "Error mockup de prueba (sin envio real)." : "",
+    });
+  }
+  return base;
+}
+
+function buildMockReportPayload(campaign, stats, { page = 1, perPage = 10, search = "", recipientStatus = "all" } = {}) {
+  const rows = Array.isArray(campaign?.__mockRecipients) ? campaign.__mockRecipients : [];
+  const q = String(search || "").trim().toLowerCase();
+  const st = String(recipientStatus || "all").toLowerCase();
+  let filtered = rows;
+  if (st !== "all") {
+    filtered = filtered.filter((r) => String(r?.status || "").toLowerCase() === st);
+  }
+  if (q) {
+    filtered = filtered.filter((r) => {
+      const chatId = String(r?.chat_id || "").toLowerCase();
+      const name = String(r?.name || "").toLowerCase();
+      const messageId = String(r?.message_id || "").toLowerCase();
+      return chatId.includes(q) || name.includes(q) || messageId.includes(q);
+    });
+  }
+
+  const total = Number(stats?.total || rows.length || 0);
+  const safePerPage = Math.max(1, Number(perPage || 10));
+  const safePage = Math.max(1, Number(page || 1));
+  const offset = (safePage - 1) * safePerPage;
+  const paged = filtered.slice(offset, offset + safePerPage).map((r, idx) => ({ ...r, index: offset + idx + 1 }));
+  const pages = Math.max(1, Math.ceil(filtered.length / safePerPage));
+
+  return {
+    campaign: {
+      id: campaign?.id,
+      name: campaign?.name || "Mockup broadcast",
+      objective: campaign?.objective || "",
+      status: campaign?.status || "draft",
+      scheduled_at: campaign?.scheduled_at || null,
+      launched_at: null,
+      channel: "whatsapp",
+      template_id: null,
+      template_name: campaign?.template_name || "",
+      meta_template_name: campaign?.meta_template_name || "",
+      meta_template_language: campaign?.meta_template_language || "",
+      meta_template_category: campaign?.meta_template_category || "",
+      meta_template_body: campaign?.meta_template_body || "",
+      segment_id: null,
+      segment_name: campaign?.segment_name || "Mock segment",
+    },
+    rules_summary: {
+      included_labels: ["mock", "prueba"],
+      excluded_labels: [],
+      country: "CO",
+      custom_field_value: "N/A",
+      added_after: "N/A",
+      added_before: "N/A",
+      assign_label_after_broadcast: "N/A",
+      recent_subscriber_filter: false,
+    },
+    metrics: {
+      status: campaign?.status || "draft",
+      targeted: total,
+      message_count: 1,
+      processed: Number(stats?.processed || 0),
+      processed_pct: Number(stats?.processed_pct || 0),
+      sent: Number(stats?.sent || 0),
+      sent_pct: Number(stats?.sent_pct || 0),
+      delivered: Number(stats?.delivered || 0),
+      delivered_pct: Number(stats?.delivered_pct || 0),
+      opened: Number(stats?.read || 0),
+      opened_pct: Number(stats?.read_rate_pct || 0),
+      unreached: Number(stats?.failed || 0),
+      unreached_pct: pct(Number(stats?.failed || 0), total),
+      pending: Number(stats?.pending || 0),
+      processing: Number(stats?.processing || 0),
+      failed: Number(stats?.failed || 0),
+    },
+    recipients: {
+      page: safePage,
+      per_page: safePerPage,
+      total,
+      filtered_total: filtered.length,
+      pages,
+      items: paged,
+    },
+  };
 }
 
 function actionIcon(kind) {
@@ -196,16 +336,26 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
   const [reportPage, setReportPage] = useState(1);
   const [reportPerPage, setReportPerPage] = useState(10);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createForm, setCreateForm] = useState(emptyCreateForm);
+  const [metaTemplates, setMetaTemplates] = useState([]);
+  const [segments, setSegments] = useState([]);
+  const [loadingCreateDeps, setLoadingCreateDeps] = useState(false);
+  const [mockCampaigns, setMockCampaigns] = useState([]);
+  const [mockStatsByCampaign, setMockStatsByCampaign] = useState({});
+
   const filteredCampaigns = useMemo(() => {
+    const allRows = [...(mockCampaigns || []), ...(campaigns || [])];
     const q = String(search || "").trim().toLowerCase();
-    if (!q) return campaigns;
-    return (campaigns || []).filter((c) => {
+    if (!q) return allRows;
+    return allRows.filter((c) => {
       const name = String(c?.name || "").toLowerCase();
       const objective = String(c?.objective || "").toLowerCase();
       const tpl = String(c?.template_name || "").toLowerCase();
       return name.includes(q) || objective.includes(q) || tpl.includes(q) || String(c?.id || "").includes(q);
     });
-  }, [campaigns, search]);
+  }, [campaigns, mockCampaigns, search]);
 
   const loadCampaigns = useCallback(async () => {
     setLoading(true);
@@ -245,10 +395,59 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
     }
   }, [API, campaignStatus]);
 
+  const loadCreateDependencies = useCallback(async () => {
+    setLoadingCreateDeps(true);
+    setError("");
+    try {
+      const [tplResp, segResp] = await Promise.all([
+        fetch(`${API}/api/broadcast/meta/templates?limit=300`),
+        fetch(`${API}/api/customers/segments`),
+      ]);
+      const [tplData, segData] = await Promise.all([parseApiResponseSafe(tplResp), parseApiResponseSafe(segResp)]);
+      if (!tplResp.ok) throw new Error(asErrorMessage(tplData));
+      if (!segResp.ok) throw new Error(asErrorMessage(segData));
+      const tplRows = (Array.isArray(tplData?.templates) ? tplData.templates : []).filter(
+        (t) => String(t?.status || "").toLowerCase() === "approved"
+      );
+      const segRows = Array.isArray(segData?.segments) ? segData.segments : [];
+      setMetaTemplates(tplRows);
+      setSegments(segRows);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoadingCreateDeps(false);
+    }
+  }, [API]);
+
+  const openCreateModal = async () => {
+    setCreateOpen(true);
+    setCreateForm(emptyCreateForm());
+    await loadCreateDependencies();
+  };
+
+  const closeCreateModal = () => {
+    setCreateOpen(false);
+    setCreateForm(emptyCreateForm());
+  };
+
   const loadReport = useCallback(
     async ({ campaignId, page = reportPage, perPage = reportPerPage, q = reportSearch, st = reportStatus } = {}) => {
       const id = Number(campaignId || reportCampaignId || 0);
       if (!id) return;
+      if (id < 0) {
+        const mockRow = (mockCampaigns || []).find((c) => Number(c?.id || 0) === id) || null;
+        const mockStats = mockStatsByCampaign[id] || {};
+        if (mockRow) {
+          const mockPayload = buildMockReportPayload(mockRow, mockStats, {
+            page,
+            perPage,
+            search: q,
+            recipientStatus: st,
+          });
+          setReportData(mockPayload);
+          return;
+        }
+      }
       setReportLoading(true);
       setError("");
       try {
@@ -263,7 +462,7 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
         setReportLoading(false);
       }
     },
-    [API, reportCampaignId, reportPage, reportPerPage, reportSearch, reportStatus]
+    [API, reportCampaignId, reportPage, reportPerPage, reportSearch, reportStatus, mockCampaigns, mockStatsByCampaign]
   );
 
   useEffect(() => {
@@ -293,12 +492,151 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
     await loadReport({ campaignId: id, page: 1, perPage: 10, q: "", st: "all" });
   };
 
+  const createCampaign = async () => {
+    const name = String(createForm.name || "").trim();
+    const tplName = String(createForm.meta_template_name || "").trim();
+    if (!name) {
+      setError("Debes indicar nombre de campana.");
+      return;
+    }
+    if (!tplName) {
+      setError("Debes seleccionar una plantilla Meta aprobada.");
+      return;
+    }
+
+    const selectedTemplate = (metaTemplates || []).find((t) => String(t?.name || "").trim() === tplName) || null;
+    if (!selectedTemplate) {
+      setError("No se encontro la plantilla seleccionada en Meta.");
+      return;
+    }
+
+    const mode = String(createForm.mode || "draft").toLowerCase();
+    const shouldSchedule = mode === "scheduled";
+    const scheduledRaw = String(createForm.scheduled_at || "").trim();
+    if (shouldSchedule && !scheduledRaw) {
+      setError("Debes seleccionar fecha y hora para una campana programada.");
+      return;
+    }
+
+    const scheduledAtIso = shouldSchedule ? new Date(scheduledRaw).toISOString() : null;
+    if (shouldSchedule && (!scheduledAtIso || scheduledAtIso === "Invalid Date")) {
+      setError("Fecha de programacion invalida.");
+      return;
+    }
+
+    setCreateSaving(true);
+    setError("");
+    try {
+      if (createForm.is_mockup) {
+        const mockId = -Date.now();
+        const mockRecipients = buildMockRecipients(202);
+        const mockRow = {
+          id: mockId,
+          name,
+          objective: `[MOCKUP] ${String(selectedTemplate?.body_text || "").slice(0, 120)}`,
+          status: shouldSchedule ? "scheduled" : "draft",
+          scheduled_at: scheduledAtIso,
+          launched_at: null,
+          channel: "whatsapp",
+          template_name: "",
+          meta_template_name: String(selectedTemplate?.name || ""),
+          meta_template_language: String(selectedTemplate?.language || "es"),
+          meta_template_category: String(selectedTemplate?.category || "MARKETING"),
+          meta_template_body: String(selectedTemplate?.body_text || ""),
+          __mock: true,
+          __mockRecipients: mockRecipients,
+        };
+        const mockStats = {
+          total: 202,
+          pending: 0,
+          processing: 0,
+          sent: 3,
+          delivered: 77,
+          read: 118,
+          replied: 0,
+          failed: 4,
+          sent_pct: 100,
+          delivered_pct: 97,
+          read_rate_pct: 61,
+          reply_rate_pct: 0,
+          coverage_pct: 100,
+          processed: 202,
+          processed_pct: 100,
+        };
+
+        setMockCampaigns((prev) => [mockRow, ...prev]);
+        setMockStatsByCampaign((prev) => ({ ...prev, [mockId]: mockStats }));
+        setStatus("Mockup creado (sin envio real, sin costo).");
+        closeCreateModal();
+        return;
+      }
+
+      const payload = {
+        name,
+        objective: `[META_TEMPLATE] ${String(selectedTemplate?.name || "")}`,
+        segment_id: createForm.segment_id ? Number(createForm.segment_id) : null,
+        template_id: null,
+        meta_template_name: String(selectedTemplate?.name || ""),
+        meta_template_language: String(selectedTemplate?.language || "es"),
+        meta_template_category: String(selectedTemplate?.category || "MARKETING"),
+        meta_template_body: String(selectedTemplate?.body_text || ""),
+        status: shouldSchedule ? "scheduled" : "draft",
+        scheduled_at: shouldSchedule ? scheduledAtIso : null,
+        channel: "whatsapp",
+      };
+      const r = await fetch(`${API}/api/campaigns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const d = await parseApiResponseSafe(r);
+      if (!r.ok) throw new Error(asErrorMessage(d));
+      setStatus("Campana creada. Quedo registrada con plantilla Meta.");
+      closeCreateModal();
+      await loadCampaigns();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setCreateSaving(false);
+    }
+  };
+
   const exportCsv = async (campaignId) => {
     const id = Number(campaignId || 0);
     if (!id) return;
     setBusy(id, "csv", true);
     setError("");
     try {
+      if (id < 0) {
+        const mockRow = (mockCampaigns || []).find((c) => Number(c?.id || 0) === id) || null;
+        const mockStats = mockStatsByCampaign[id] || {};
+        if (!mockRow) throw new Error("Mockup no encontrado.");
+        const payload = buildMockReportPayload(mockRow, mockStats, { page: 1, perPage: 1000, search: "", recipientStatus: "all" });
+        const items = Array.isArray(payload?.recipients?.items) ? payload.recipients.items : [];
+        const lines = [
+          ["#", "Chat ID", "Nombre", "Status", "Sent at", "Delivered at", "Opened at", "Failed at", "Message ID", "Error"].join(","),
+          ...items.map((r) =>
+            [
+              r.index,
+              r.chat_id,
+              String(r.name || "").replace(/,/g, " "),
+              r.status,
+              fmtDate(r.sent_at),
+              fmtDate(r.delivered_at),
+              fmtDate(r.opened_at),
+              fmtDate(r.failed_at),
+              String(r.message_id || "").replace(/,/g, " "),
+              String(r.error || "").replace(/,/g, " "),
+            ].join(",")
+          ),
+        ];
+        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+        const name = String(mockRow?.name || `mock_${Math.abs(id)}`).replace(/[^a-zA-Z0-9_-]+/g, "_");
+        downloadBlob(blob, `${name}_report_mock.csv`);
+        setStatus(`CSV mock exportado: ${name}_report_mock.csv`);
+        return;
+      }
+
       const r = await fetch(`${API}/api/campaigns/${encodeURIComponent(id)}/export.csv?status=all&search=`);
       if (!r.ok) {
         const d = await parseApiResponseSafe(r);
@@ -322,6 +660,11 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
     setBusy(id, "retry", true);
     setError("");
     try {
+      if (id < 0) {
+        setStatus("Mockup: reenviar fallidos simulado (sin envio real).");
+        return;
+      }
+
       const r = await fetch(`${API}/api/campaigns/${encodeURIComponent(id)}/resend-failed?run_now=true&batch_size=150`, { method: "POST" });
       const d = await parseApiResponseSafe(r);
       if (!r.ok) throw new Error(asErrorMessage(d));
@@ -341,13 +684,25 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
   const removeCampaign = async (campaignId) => {
     const id = Number(campaignId || 0);
     if (!id) return;
-    const row = (campaigns || []).find((c) => Number(c?.id || 0) === id);
+    const row = [...(mockCampaigns || []), ...(campaigns || [])].find((c) => Number(c?.id || 0) === id);
     const label = String(row?.name || `#${id}`);
     const ok = window.confirm(`Se eliminara la campana "${label}" y sus destinatarios.\n\nDeseas continuar?`);
     if (!ok) return;
     setBusy(id, "delete", true);
     setError("");
     try {
+      if (id < 0) {
+        setMockCampaigns((prev) => prev.filter((c) => Number(c?.id || 0) !== id));
+        setMockStatsByCampaign((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        if (reportOpen && reportCampaignId === id) setReportOpen(false);
+        setStatus(`Mockup eliminado: ${label}`);
+        return;
+      }
+
       const r = await fetch(`${API}/api/campaigns/${encodeURIComponent(id)}`, { method: "DELETE" });
       const d = await parseApiResponseSafe(r);
       if (!r.ok) throw new Error(asErrorMessage(d));
@@ -380,9 +735,14 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
             <h3 style={{ margin: 0 }}>WhatsApp Broadcasting</h3>
             <div style={{ marginTop: 4, fontSize: 12, opacity: 0.78 }}>Listado de campanas para lanzar, reportar y gestionar resultados.</div>
           </div>
-          <button type="button" style={smallBtn} onClick={loadCampaigns} disabled={loading}>
-            {loading ? "Cargando..." : "Recargar"}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" style={primaryBtn} onClick={openCreateModal}>
+              + Crear campana
+            </button>
+            <button type="button" style={smallBtn} onClick={loadCampaigns} disabled={loading}>
+              {loading ? "Cargando..." : "Recargar"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -434,7 +794,7 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
               ) : (
                 filteredCampaigns.map((c, idx) => {
                   const id = Number(c?.id || 0);
-                  const stats = statsByCampaign[id] || {};
+                  const stats = id < 0 ? mockStatsByCampaign[id] || {} : statsByCampaign[id] || {};
                   const total = Number(stats?.total || 0);
                   const pending = Number(stats?.pending || 0);
                   const processing = Number(stats?.processing || 0);
@@ -526,6 +886,173 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
           </table>
         </div>
       </div>
+
+      {createOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 96,
+            background: "rgba(2,6,23,0.52)",
+            backdropFilter: "blur(4px)",
+            padding: isMobile ? 8 : 18,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div
+            className="custom-scrollbar"
+            style={{
+              width: "min(980px, 100%)",
+              maxHeight: "92vh",
+              overflow: "auto",
+              borderRadius: 14,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))",
+              boxShadow: "0 30px 60px rgba(0,0,0,0.45)",
+              padding: 14,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Crear campana masiva</h3>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.78 }}>
+                  Configura campana con plantilla Meta aprobada. Puedes crear mockup sin costo real.
+                </div>
+              </div>
+              <button type="button" style={smallBtn} onClick={closeCreateModal}>
+                Cerrar
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+              <label>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Nombre de campana *</div>
+                <input
+                  style={input}
+                  placeholder="Promo mayo mayorista"
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, name: e.target.value }))}
+                />
+              </label>
+              <label>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Plantilla Meta aprobada *</div>
+                <select
+                  style={input}
+                  value={createForm.meta_template_name}
+                  onChange={(e) => {
+                    const nextName = e.target.value;
+                    const tpl = (metaTemplates || []).find((t) => String(t?.name || "").trim() === String(nextName || "").trim()) || null;
+                    setCreateForm((p) => ({
+                      ...p,
+                      meta_template_name: nextName,
+                      meta_template_language: String(tpl?.language || ""),
+                      meta_template_category: String(tpl?.category || ""),
+                      meta_template_body: String(tpl?.body_text || ""),
+                    }));
+                  }}
+                  disabled={loadingCreateDeps}
+                >
+                  <option value="">{loadingCreateDeps ? "Cargando plantillas..." : "Seleccionar plantilla"}</option>
+                  {(metaTemplates || []).map((t) => (
+                    <option key={`${t.id || t.name}`} value={t.name}>
+                      {t.name} ({String(t.category || "").toUpperCase()} / {String(t.language || "").toLowerCase()})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Segmento de audiencia</div>
+                <select
+                  style={input}
+                  value={createForm.segment_id}
+                  onChange={(e) => setCreateForm((p) => ({ ...p, segment_id: e.target.value }))}
+                  disabled={loadingCreateDeps}
+                >
+                  <option value="">Sin segmento (usar logica por defecto)</option>
+                  {(segments || []).map((s) => (
+                    <option key={s.id} value={String(s.id)}>
+                      {s.name || `Segmento ${s.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Modo</div>
+                <select style={input} value={createForm.mode} onChange={(e) => setCreateForm((p) => ({ ...p, mode: e.target.value }))}>
+                  {scheduleModeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {String(createForm.mode || "") === "scheduled" ? (
+                <label>
+                  <div style={{ fontSize: 12, marginBottom: 4 }}>Fecha y hora programada *</div>
+                  <input
+                    style={input}
+                    type="datetime-local"
+                    value={createForm.scheduled_at}
+                    onChange={(e) => setCreateForm((p) => ({ ...p, scheduled_at: e.target.value }))}
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={!!createForm.is_mockup}
+                onChange={(e) => setCreateForm((p) => ({ ...p, is_mockup: e.target.checked }))}
+              />
+              Crear como mockup de prueba (sin envio real ni costo)
+            </label>
+
+            <div style={card}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                <strong>Vista de plantilla</strong>
+                {createForm.meta_template_category ? (
+                  <span style={{ border: "1px solid rgba(125,211,252,0.35)", borderRadius: 999, padding: "2px 8px", fontSize: 11 }}>
+                    {String(createForm.meta_template_category || "").toUpperCase()}
+                  </span>
+                ) : null}
+                {createForm.meta_template_language ? (
+                  <span style={{ border: "1px solid rgba(255,255,255,0.2)", borderRadius: 999, padding: "2px 8px", fontSize: 11 }}>
+                    {String(createForm.meta_template_language || "").toLowerCase()}
+                  </span>
+                ) : null}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.84, whiteSpace: "pre-wrap" }}>
+                {String(createForm.meta_template_body || "").trim() || "Selecciona una plantilla para ver su contenido."}
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {extractTemplateTokens(createForm.meta_template_body).length ? (
+                  extractTemplateTokens(createForm.meta_template_body).map((tk) => (
+                    <span key={tk} style={{ border: "1px solid rgba(148,163,184,0.35)", borderRadius: 999, padding: "2px 8px", fontSize: 11 }}>
+                      {"{{"}{tk}{"}}"}
+                    </span>
+                  ))
+                ) : (
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>Sin variables detectadas en esta plantilla.</span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={primaryBtn} onClick={createCampaign} disabled={createSaving}>
+                {createSaving ? "Guardando..." : createForm.is_mockup ? "Crear mockup de prueba" : "Crear campana"}
+              </button>
+              <button type="button" style={smallBtn} onClick={() => setCreateForm(emptyCreateForm())} disabled={createSaving}>
+                Limpiar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {reportOpen ? (
         <div
@@ -753,4 +1280,3 @@ export default function BroadcastCampaignPanel({ apiBase, isMobile = false }) {
     </div>
   );
 }
-

@@ -504,6 +504,10 @@ def ensure_schema():
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns (status)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_campaigns_scheduled_at ON campaigns (scheduled_at)"""))
         conn.execute(text("""CREATE INDEX IF NOT EXISTS idx_campaigns_updated_at ON campaigns (updated_at DESC)"""))
+        conn.execute(text("""ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_template_name TEXT"""))
+        conn.execute(text("""ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_template_language TEXT"""))
+        conn.execute(text("""ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_template_category TEXT"""))
+        conn.execute(text("""ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS meta_template_body TEXT"""))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS campaign_recipients (
@@ -1371,6 +1375,10 @@ class CampaignIn(BaseModel):
     objective: str = ""
     segment_id: Optional[int] = None
     template_id: Optional[int] = None
+    meta_template_name: Optional[str] = None
+    meta_template_language: Optional[str] = None
+    meta_template_category: Optional[str] = None
+    meta_template_body: Optional[str] = None
     status: str = "draft"
     scheduled_at: Optional[datetime] = None
     channel: str = "whatsapp"
@@ -1381,6 +1389,10 @@ class CampaignPatch(BaseModel):
     objective: Optional[str] = None
     segment_id: Optional[int] = None
     template_id: Optional[int] = None
+    meta_template_name: Optional[str] = None
+    meta_template_language: Optional[str] = None
+    meta_template_category: Optional[str] = None
+    meta_template_body: Optional[str] = None
     status: Optional[str] = None
     scheduled_at: Optional[datetime] = None
     channel: Optional[str] = None
@@ -4783,6 +4795,7 @@ def _build_campaign_report_payload(
                 SELECT
                     c.id, c.name, c.objective, c.status, c.scheduled_at, c.launched_at,
                     c.channel, c.created_at, c.updated_at,
+                    c.meta_template_name, c.meta_template_language, c.meta_template_category, c.meta_template_body,
                     s.id AS segment_id, s.name AS segment_name, s.rules_json AS segment_rules_json,
                     t.id AS template_id, t.name AS template_name
                 FROM campaigns c
@@ -4933,6 +4946,10 @@ def _build_campaign_report_payload(
             "channel": _normalize_channel(str((campaign or {}).get("channel") or "whatsapp"), default="whatsapp"),
             "template_id": (campaign or {}).get("template_id"),
             "template_name": str((campaign or {}).get("template_name") or "").strip(),
+            "meta_template_name": str((campaign or {}).get("meta_template_name") or "").strip(),
+            "meta_template_language": str((campaign or {}).get("meta_template_language") or "").strip(),
+            "meta_template_category": str((campaign or {}).get("meta_template_category") or "").strip(),
+            "meta_template_body": str((campaign or {}).get("meta_template_body") or "").strip(),
             "segment_id": (campaign or {}).get("segment_id"),
             "segment_name": str((campaign or {}).get("segment_name") or "").strip(),
             "created_at": (campaign or {}).get("created_at"),
@@ -5003,6 +5020,7 @@ def list_campaigns(
         rows = conn.execute(text(f"""
             SELECT
                 c.id, c.name, c.objective, c.segment_id, c.template_id,
+                c.meta_template_name, c.meta_template_language, c.meta_template_category, c.meta_template_body,
                 c.status, c.scheduled_at, c.launched_at, c.channel,
                 c.created_at, c.updated_at,
                 s.name AS segment_name,
@@ -5054,18 +5072,28 @@ def create_campaign(payload: CampaignIn):
 
         row = conn.execute(text("""
             INSERT INTO campaigns (
-                name, objective, segment_id, template_id, status, scheduled_at, channel, created_at, updated_at
+                name, objective, segment_id, template_id,
+                meta_template_name, meta_template_language, meta_template_category, meta_template_body,
+                status, scheduled_at, channel, created_at, updated_at
             )
             VALUES (
-                :name, :objective, :segment_id, :template_id, :status, :scheduled_at, :channel, NOW(), NOW()
+                :name, :objective, :segment_id, :template_id,
+                :meta_template_name, :meta_template_language, :meta_template_category, :meta_template_body,
+                :status, :scheduled_at, :channel, NOW(), NOW()
             )
             RETURNING
-                id, name, objective, segment_id, template_id, status, scheduled_at, launched_at, channel, created_at, updated_at
+                id, name, objective, segment_id, template_id,
+                meta_template_name, meta_template_language, meta_template_category, meta_template_body,
+                status, scheduled_at, launched_at, channel, created_at, updated_at
         """), {
             "name": name,
             "objective": payload.objective or "",
             "segment_id": payload.segment_id,
             "template_id": payload.template_id,
+            "meta_template_name": str(payload.meta_template_name or "").strip() or None,
+            "meta_template_language": str(payload.meta_template_language or "").strip() or None,
+            "meta_template_category": str(payload.meta_template_category or "").strip().upper() or None,
+            "meta_template_body": str(payload.meta_template_body or "").strip() or None,
             "status": status,
             "scheduled_at": payload.scheduled_at,
             "channel": channel,
@@ -5101,6 +5129,22 @@ def update_campaign(campaign_id: int, payload: CampaignPatch):
     if "template_id" in data:
         sets.append("template_id = :template_id")
         params["template_id"] = data.get("template_id")
+
+    if "meta_template_name" in data:
+        sets.append("meta_template_name = :meta_template_name")
+        params["meta_template_name"] = str(data.get("meta_template_name") or "").strip() or None
+
+    if "meta_template_language" in data:
+        sets.append("meta_template_language = :meta_template_language")
+        params["meta_template_language"] = str(data.get("meta_template_language") or "").strip() or None
+
+    if "meta_template_category" in data:
+        sets.append("meta_template_category = :meta_template_category")
+        params["meta_template_category"] = str(data.get("meta_template_category") or "").strip().upper() or None
+
+    if "meta_template_body" in data:
+        sets.append("meta_template_body = :meta_template_body")
+        params["meta_template_body"] = str(data.get("meta_template_body") or "").strip() or None
 
     if "status" in data:
         sets.append("status = :status")
@@ -5162,7 +5206,9 @@ def update_campaign(campaign_id: int, payload: CampaignPatch):
             SET {", ".join(sets)}
             WHERE id = :campaign_id
             RETURNING
-                id, name, objective, segment_id, template_id, status, scheduled_at, launched_at, channel, created_at, updated_at
+                id, name, objective, segment_id, template_id,
+                meta_template_name, meta_template_language, meta_template_category, meta_template_body,
+                status, scheduled_at, launched_at, channel, created_at, updated_at
         """), params).mappings().first()
 
     if not row:
@@ -5221,7 +5267,7 @@ def launch_campaign(campaign_id: int, max_recipients: int = Query(300, ge=1, le=
     now = datetime.utcnow()
     with engine.begin() as conn:
         campaign = conn.execute(text("""
-            SELECT id, segment_id, scheduled_at, channel
+            SELECT id, segment_id, scheduled_at, channel, template_id, meta_template_name
             FROM campaigns
             WHERE id = :campaign_id
             LIMIT 1
@@ -5231,6 +5277,8 @@ def launch_campaign(campaign_id: int, max_recipients: int = Query(300, ge=1, le=
             raise HTTPException(status_code=404, detail="campaign not found")
         if _normalize_channel(str(campaign.get("channel") or "whatsapp"), default="whatsapp") != "whatsapp":
             raise HTTPException(status_code=409, detail="channel_not_supported_for_launch_yet")
+        if not campaign.get("template_id") and str(campaign.get("meta_template_name") or "").strip():
+            raise HTTPException(status_code=409, detail="meta_template_launch_pending_implementation")
 
         rules: Dict[str, Any] = {}
         if campaign.get("segment_id"):

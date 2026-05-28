@@ -13,11 +13,13 @@ Recover SaaS production deployment/schema readiness so Coolify runs the real Saa
   - The running API container reported command `uvicorn app.main:app`, contained `/app/app`, and did not contain `/app/app_saas` or `/app/migrations`.
   - Running `python -m app_saas.tools.migrate /app/migrations` inside that container fails because it is the legacy non-SaaS image.
   - Running the startup command directly on the VPS host can fail with `python: command not found`; that command belongs inside the SaaS API container or Coolify Start Command.
+  - Follow-up deploy log showed Coolify imports `juampa1329-debug/Scentra-AI` directly, not the monorepo. In that repo the SaaS is at root, so `Base Directory = /saas-version` fails with `lstat .../saas-version/backend: no such file or directory`.
 - Completed fix:
   - `saas-version/backend/Dockerfile` now defaults to the same safe startup gate as Compose: `migrate -> schema_check -> uvicorn`.
-  - `docs/ENVIRONMENT.md`, `docs/KNOWN_ISSUES.md`, and `saas-version/infra/coolify-production.md` now document the correct Coolify Dockerfile settings and the legacy-container risk.
+  - `docs/ENVIRONMENT.md`, `docs/KNOWN_ISSUES.md`, and `saas-version/infra/coolify-production.md` now document both Coolify source modes and the legacy-container risk.
 - Required production action:
-  - In Coolify API app set `Base Directory = saas-version`, `Dockerfile Location = /backend/Dockerfile`, `Port Exposes = 8000`.
+  - In the current Coolify API app connected to `Scentra-AI`, set `Base Directory = /`, `Dockerfile Location = /backend/Dockerfile`, `Port Exposes = 8000`.
+  - Only use `Base Directory = /saas-version` if the connected repo is the monorepo `verane-whatsapp-ai`.
   - Redeploy the API.
   - Verify the new container has `/app/app_saas` and `/app/migrations`.
   - Verify `https://api.scentra-ai.online/saas/v1/ready` returns `200`.

@@ -28,10 +28,12 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 - Hardened SaaS Dockerfile-only deployment for Coolify:
   - Production inspection showed the API Coolify app was building from root `/backend/Dockerfile`, yielding a legacy container that runs `uvicorn app.main:app` and does not contain `/app/app_saas` or `/app/migrations`.
   - `saas-version/backend/Dockerfile` now runs the same default startup gate as Compose: `python -m app_saas.tools.migrate /app/migrations && python -m app_saas.tools.schema_check /app/migrations && uvicorn app_saas.main:app --host 0.0.0.0 --port 8000`.
-  - Coolify Dockerfile mode must use base directory `saas-version`, Dockerfile `/backend/Dockerfile`, exposed port `8000`.
+  - Follow-up Coolify deploy logs showed the connected repo is `juampa1329-debug/Scentra-AI`, where the SaaS files are already at repo root. For that direct repo use base directory `/`, Dockerfile `/backend/Dockerfile`, exposed port `8000`.
+  - Use base directory `/saas-version` only when Coolify imports the monorepo `juampa1329-debug/verane-whatsapp-ai`.
+  - If the build fails with `lstat .../saas-version/backend: no such file or directory`, Coolify is using the direct SaaS repo and the base directory must be `/`.
   - Do not run the startup command directly in the VPS host shell; host Ubuntu may not have Python and cannot import container code. Run it through Coolify/start command or inside the rebuilt SaaS API container.
 - Not changed: application routes, webhook logic, AI runtime, worker processing, migrations, database data, provider credentials, frontend behavior or tenant settings.
-- Production action required: fix Coolify build settings, redeploy API, confirm the new container has `/app/app_saas` and `/app/migrations`, then verify `GET /saas/v1/ready` returns `200`.
+- Production action required: for the current `Scentra-AI` Coolify app set base directory `/`, redeploy API, confirm the new container has `/app/app_saas` and `/app/migrations`, then verify `GET /saas/v1/ready` returns `200`.
 
 - Added production compatibility for WhatsApp/Meta webhook callbacks without `endpoint_key`:
   - `webhooks/router.py` now accepts `GET|POST /saas/v1/webhooks/whatsapp` and `GET|POST /saas/v1/webhooks/meta` in addition to the canonical `/saas/v1/webhooks/{provider}/{endpoint_key}` route.

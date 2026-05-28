@@ -6,7 +6,9 @@ Accepted
 
 ## Context
 
-Production Coolify inspection on 2026-05-28 showed the API app configured with base directory `/` and Dockerfile `/backend/Dockerfile`. That builds the legacy non-SaaS backend, whose container runs `uvicorn app.main:app` and does not contain `/app/app_saas` or `/app/migrations`.
+Production Coolify inspection on 2026-05-28 showed the running API container was legacy/non-SaaS: it ran `uvicorn app.main:app` and did not contain `/app/app_saas` or `/app/migrations`.
+
+Follow-up deploy logs showed the connected Coolify source repository is `juampa1329-debug/Scentra-AI`, where the SaaS files are already at repository root. Setting `Base Directory: saas-version` for that direct repo fails because `/saas-version/backend` does not exist in the artifact.
 
 The SaaS Compose service already starts the API with:
 
@@ -20,9 +22,17 @@ Dockerfile-only deployments did not enforce this gate by default.
 
 `saas-version/backend/Dockerfile` must use the same startup gate as the Compose API service.
 
-Coolify Dockerfile deployments for the SaaS API must use:
+Coolify Dockerfile deployments for the SaaS API depend on which repository is connected.
 
-- Base directory: `saas-version`
+When Coolify imports `juampa1329-debug/Scentra-AI`, SaaS files are already at repository root and the API app must use:
+
+- Base directory: `/`
+- Dockerfile location: `/backend/Dockerfile`
+- Exposed port: `8000`
+
+When Coolify imports the monorepo `juampa1329-debug/verane-whatsapp-ai`, use:
+
+- Base directory: `/saas-version`
 - Dockerfile location: `/backend/Dockerfile`
 - Exposed port: `8000`
 
@@ -34,4 +44,3 @@ The startup command is container-scoped. It must not be treated as a VPS host-sh
 - A wrong Coolify base directory still needs operator correction, but the documented deploy contract is explicit.
 - Compose behavior remains compatible because Compose already overrides the API command with the same gate.
 - No application route, worker, webhook, AI runtime, database migration or frontend behavior changes.
-

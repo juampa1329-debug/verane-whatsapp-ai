@@ -25,6 +25,15 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Investigated SaaS message-flow symptoms reported from production screenshots:
+  - Real customer WhatsApp messages must enter through `webhooks/router.py`, be stored in `saas_webhook_events`, be converted by `workers/ingest.py` into `saas_conversations`/`saas_messages`, and only then can triggers, AI pending replies and outbound dispatch run.
+  - If a real WhatsApp message does not appear in the Inbox, the first diagnostic cut is Meta webhook delivery/subscription, not the LLM provider.
+  - Existing tenant UI already exposes the correct emergency path in `Configuracion -> Diagnostico`: refresh diagnostics, verify WABA `subscribed_apps`, simulate inbound, process pending webhooks/AI/outbound, inspect queues/errors and AI Gateway runs.
+  - Added operator manual `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md` and PDF artifact `docs/Scentra_Manual_Operativo_SaaS.pdf`.
+  - Fixed the Inbox CRM predictive intelligence mini-card layout so `.crm-predictive-card` spans the full CRM mini-form width instead of compressing into a narrow half column.
+- Not changed: webhook processing logic, Meta credentials/subscriptions, AI provider runtime, outbound dispatch, auth, billing, schema/migrations, worker retry semantics, agent ownership and tenant data.
+- Production action required after redeploy: open `Configuracion -> Diagnostico`, send a real WhatsApp test, compare `Ultimos webhooks` with `Simular entrada`, and use `Verificar WABA subscribed_apps` when real Meta events are missing.
+
 - Hardened SaaS CRM internal notes against repeated AI summaries:
   - Added `backend/app_saas/crm/notes.py` with note compaction and AI-note merge helpers.
   - Conversation AI now instructs models to return only new `crm.notes` content and backend-side merges AI notes by compact note units instead of appending whole repeated summaries.

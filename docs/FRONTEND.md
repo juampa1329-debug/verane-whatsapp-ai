@@ -126,8 +126,16 @@ Admin views detected:
 
 - `App.jsx` loads `/crm/config` for active CRM custom fields and pipeline stages.
 - Inbox CRM side panel now renders tenant custom fields, dynamic pipeline stages, duplicate candidates with merge action, predictive intelligence, tasks, AI context and Meta status events. It intentionally does not render a full conversation timeline because the main Inbox thread is the canonical conversation history.
+- The predictive intelligence mini-card in the Inbox CRM side panel must span the full CRM mini-form width. Keep `.crm-predictive-card` in the full-width grid selector in `frontend/src/styles.css`; otherwise the card compresses into a narrow half column.
 - `CrmPanel.jsx` can create tenant custom fields, apply industry pipeline presets, add pipeline stages, and edit customer fichas with custom-field values.
 - Custom-field values are sent as `custom_fields` and persisted backend-side into `profile_json.custom_fields`.
+
+## Client Diagnostics UI
+
+- `Configuracion -> Diagnostico` is the tenant operator path for no-inbound/no-AI/no-outbound incidents.
+- The panel calls `/saas/v1/diagnostics/overview`, `/saas/v1/diagnostics/run?limit=50`, `/saas/v1/diagnostics/whatsapp/simulate-inbound`, and `/saas/v1/internal/whatsapp/check-subscription`.
+- If a real WhatsApp message is missing from Inbox but `Simular entrada` succeeds, the frontend should guide operators toward Meta callback/WABA `subscribed_apps`/verify-token/fields rather than AI settings.
+- Keep this view readable for non-engineers; it is the primary production support surface inside the client app.
 
 ## Phase 6 Client Knowledge/RAG UI
 

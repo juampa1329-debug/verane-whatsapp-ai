@@ -54,6 +54,33 @@ All mounted under `/saas/v1`:
 - `billing`: `/billing/*`
 - `webhooks`: `/webhooks/*`
 
+## WhatsApp Message Flow And Diagnostics
+
+Operational flow for a normal inbound WhatsApp message:
+
+1. Meta calls `webhooks/router.py` at `/saas/v1/webhooks/{provider}/{endpoint_key}`.
+2. The route stores the payload in `saas_webhook_events` with status `received`.
+3. `workers/ingest.py` normalizes WhatsApp `messages` payloads into `saas_conversations` and `saas_messages`.
+4. Ingest executes triggers and skips AI when a matched trigger uses `block_ai`.
+5. If AI is allowed, ingest schedules a pending conversation AI reply.
+6. AI processing generates a response through the AI Gateway.
+7. Outbound processing sends queued fragments/messages through Meta Cloud API.
+8. Meta statuses return through webhook and are exposed in the Inbox status timeline.
+
+Diagnostic endpoints:
+
+- `GET /saas/v1/diagnostics/overview`: tenant-safe overview of runtime, integrations, webhooks, queues, AI, social Meta and WhatsApp symptoms.
+- `POST /saas/v1/diagnostics/run?limit=50`: owner/admin/supervisor operation that processes pending webhooks, AI replies and outbound messages.
+- `POST /saas/v1/diagnostics/whatsapp/simulate-inbound`: inserts a synthetic Meta-style WhatsApp webhook and verifies whether Scentra can create/update Inbox records.
+- `POST /saas/v1/internal/whatsapp/check-subscription`: verifies WABA `subscribed_apps` status when Meta delivery is suspected.
+
+Support interpretation:
+
+- If real WhatsApp messages do not appear in `saas_webhook_events` or `Ultimos webhooks`, troubleshoot Meta callback URL, verify token, WABA subscription and subscribed fields before AI runtime.
+- If synthetic inbound succeeds but real inbound is absent, the Scentra DB/worker path is healthy enough to process messages and the cut is external Meta delivery/subscription.
+- If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas and `saas_ai_pending_replies`.
+- If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
+
 ## Module Map
 
 - `admin/`: platform admin auth, MFA, tenants, plans, subscriptions, billing ops, audit, observability, Security Center.

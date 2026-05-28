@@ -4,9 +4,27 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Prevent SaaS AI/CRM internal notes from repeatedly appending the same information.
+Diagnose SaaS WhatsApp/AI message-flow interruption, fix compressed Inbox CRM predictive mini-card, and add an operator manual for daily use/troubleshooting.
 
 ## Status
+
+- Completed current operator/UX task:
+  - Traced the production message path from Meta webhook to Inbox, triggers, AI pending reply and outbound dispatch.
+  - Confirmed the correct first diagnostic cut: if a real WhatsApp message does not appear in the Inbox, troubleshoot Meta webhook delivery/WABA subscription before AI provider behavior.
+  - Documented the exact app flow in `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md`, including how to use each SaaS section, how IA is activated/nourished, how agents are assigned, and how to triage no-inbound/no-IA cases.
+  - Generated `docs/Scentra_Manual_Operativo_SaaS.pdf` from the manual.
+  - Fixed the compressed predictive intelligence card by making `.crm-predictive-card` span the full CRM mini-form width.
+- Validation for current task:
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `git -C saas-version diff --check` passed for the SaaS CSS change.
+  - Root docs/memory `git diff --check` passed for the manual and memory updates.
+- Not changed:
+  - No backend webhook logic, Meta integration config, AI runtime, outbound worker, schema, migrations, auth, billing, tenant data or agent ownership behavior was changed.
+- Production acceptance after redeploy:
+  - Open `Configuracion -> Diagnostico`.
+  - Send one real WhatsApp inbound message and confirm it appears in `Ultimos webhooks`.
+  - Run `Simular entrada`; if simulation works but real webhooks do not appear, fix Meta callback/subscribed_apps/verify token/fields.
+  - Run `Procesar pendientes` and verify Inbox, IA queue and outbound queue.
 
 - Completed CRM note deduplication:
   - Added a CRM note helper that compacts repeated `IA:` note units while preserving human/non-AI notes.

@@ -134,7 +134,7 @@ Admin views detected:
 
 - `Configuracion -> Diagnostico` is the tenant operator path for no-inbound/no-AI/no-outbound incidents.
 - The panel calls `/saas/v1/diagnostics/overview`, `/saas/v1/diagnostics/run?limit=50`, `/saas/v1/diagnostics/whatsapp/simulate-inbound`, and `/saas/v1/internal/whatsapp/check-subscription`.
-- The panel shows server/client diagnostic date-time, current webhook callback URLs, endpoint `last_seen_at`, recent webhook received/processed timestamps, and whether a WhatsApp event entered through stale-endpoint fallback.
+- The panel shows server/client diagnostic date-time, current webhook callback URLs, legacy no-key WhatsApp/meta compatibility URLs, endpoint `last_seen_at`, recent webhook received/processed timestamps, and whether a WhatsApp event entered through stale-endpoint fallback.
 - If a real WhatsApp message is missing from Inbox but `Simular entrada` succeeds, the frontend should guide operators toward Meta callback/WABA `subscribed_apps`/verify-token/fields rather than AI settings.
 - Keep this view readable for non-engineers; it is the primary production support surface inside the client app.
 

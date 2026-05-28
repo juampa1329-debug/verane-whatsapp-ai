@@ -4,9 +4,29 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Recover SaaS WhatsApp inbound when Meta still posts to an old webhook endpoint key, and make diagnostics timestamped enough to verify production delivery.
+Recover SaaS WhatsApp inbound when Meta still posts to an old webhook endpoint key or no-key legacy webhook URL, and make diagnostics timestamped enough to verify production delivery.
 
 ## Status
+
+- Follow-up production symptom:
+  - The user confirmed `Simular mensaje entrante` creates Inbox records, and outbound messages sent from Scentra arrive in WhatsApp, but real WhatsApp inbound still does not appear in Scentra.
+  - This narrows the issue to Meta delivery/callback routing before Scentra ingestion, not CRM, worker normalization, outbound dispatch or the AI provider.
+- Added compatibility fix:
+  - `backend/app_saas/webhooks/router.py` now accepts `GET|POST /saas/v1/webhooks/whatsapp` and `GET|POST /saas/v1/webhooks/meta` for legacy Meta callbacks that do not include `{endpoint_key}`.
+  - No-key GET verification matches the Meta `hub.verify_token` against active WhatsApp/meta endpoint token hashes.
+  - No-key POST delivery resolves the tenant by WABA/Phone Number ID using the existing connected WhatsApp integration fallback.
+  - Stored headers mark no-key recovery as `x-scentra-endpoint-fallback=legacy_no_key_payload_asset`.
+  - `diagnostics/overview` returns `legacy_callback_url` for WhatsApp/meta endpoints and the frontend debug panel displays it.
+- Validation for this fix:
+  - `python -m py_compile saas-version/backend/app_saas/webhooks/router.py saas-version/backend/app_saas/diagnostics/router.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed with the existing large-bundle warning.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+- Not changed:
+  - No worker logic, AI runtime, outbound sending, Meta provider credentials, WABA subscription mutation, database migration, billing behavior or tenant data was changed.
+- Production acceptance after redeploy:
+  - Send one real WhatsApp inbound message.
+  - If `Ultimos webhooks` shows `legacy_no_key_payload_asset`/fallback, Meta was using `/saas/v1/webhooks/whatsapp` or `/meta`; update Meta Developers to the canonical callback with endpoint key.
+  - If `Ultimos webhooks` stays empty while simulation succeeds, Meta is not reaching this API URL at all; inspect the actual callback URL and subscribed `messages` field in Meta Developers.
 
 - Current production symptom:
   - Real WhatsApp messages still do not appear in the Inbox after prior UI/read-path fixes.

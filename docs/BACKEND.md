@@ -79,7 +79,8 @@ Support interpretation:
 - If real WhatsApp messages do not appear in `saas_webhook_events` or `Ultimos webhooks`, troubleshoot Meta callback URL, verify token, WABA subscription and subscribed fields before AI runtime.
 - If synthetic inbound succeeds but real inbound is absent, the Scentra DB/worker path is healthy enough to process messages and the cut is external Meta delivery/subscription.
 - If Meta still posts to an old `/webhooks/{provider}/{endpoint_key}` URL whose endpoint key no longer exists, WhatsApp POSTs can be recovered by matching payload WABA/Phone Number ID to an active connected WhatsApp integration and active webhook endpoint. Diagnostics mark those events as `fallback URL antigua`.
-- GET verification still requires the exact current endpoint key and verify token; stale-endpoint fallback only applies to Meta-style POST payloads.
+- If Meta still posts to a legacy no-key callback such as `/saas/v1/webhooks/whatsapp` or `/saas/v1/webhooks/meta`, WhatsApp GET verification can match the active endpoint by verify token and WhatsApp POSTs can be recovered by WABA/Phone Number ID. Stored events use `x-scentra-endpoint-fallback=legacy_no_key_payload_asset`.
+- Canonical GET verification still uses the exact current endpoint key and verify token. The no-key compatibility GET route exists only for legacy WhatsApp/meta callbacks and resolves the endpoint by matching the verify token.
 - If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas and `saas_ai_pending_replies`.
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
 

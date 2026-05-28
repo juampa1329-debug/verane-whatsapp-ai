@@ -50,9 +50,11 @@ flowchart LR
 ```mermaid
 flowchart LR
   Meta["Meta WhatsApp POST"] --> Route["/webhooks/{provider}/{endpoint_key}"]
+  Meta --> Legacy["/webhooks/whatsapp or /webhooks/meta"]
   Route --> Exact["Exact endpoint lookup"]
   Exact -->|found| Auth["token / signature / Meta app secret checks"]
   Exact -->|missing or inactive| Fallback["payload WABA/Phone fallback"]
+  Legacy --> Fallback
   Fallback --> Integration["active WhatsApp integration + active endpoint"]
   Integration --> Auth
   Auth --> Event["saas_webhook_events received"]
@@ -60,9 +62,9 @@ flowchart LR
   Ingest --> Inbox["saas_conversations + saas_messages"]
 ```
 
-- Fallback is POST-only for Meta-style WhatsApp payloads and exists to recover stale endpoint keys.
-- GET verification still uses exact endpoint key plus verify token.
-- Diagnostics expose callback URLs, event timestamps and stale-endpoint fallback markers.
+- Fallback exists for Meta-style WhatsApp payloads and recovers stale endpoint keys or legacy no-key callbacks.
+- Canonical GET verification uses exact endpoint key plus verify token; no-key WhatsApp/meta GET verification resolves the active endpoint by verify token.
+- Diagnostics expose callback URLs, legacy no-key compatibility URLs, event timestamps and fallback markers.
 
 ## Reliability Phase 12 API Flow
 

@@ -25,6 +25,15 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Added production compatibility for WhatsApp/Meta webhook callbacks without `endpoint_key`:
+  - `webhooks/router.py` now accepts `GET|POST /saas/v1/webhooks/whatsapp` and `GET|POST /saas/v1/webhooks/meta` in addition to the canonical `/saas/v1/webhooks/{provider}/{endpoint_key}` route.
+  - GET verification for the no-key routes resolves the active tenant endpoint by matching the provided Meta verify token against active WhatsApp/meta webhook endpoint token hashes.
+  - POST delivery for the no-key routes reuses the existing safe payload-asset fallback: the tenant is resolved by WABA/Phone Number ID from the Meta payload and an active connected WhatsApp integration.
+  - Stored webhook headers mark this path with `x-scentra-endpoint-fallback=legacy_no_key_payload_asset` so diagnostics can show whether Meta is still using a legacy callback URL.
+  - Diagnostics now include `legacy_callback_url` for WhatsApp/meta endpoints, displayed in the client debug panel.
+- Not changed: outbound sending, worker ingestion, AI generation, provider credentials, Meta subscription mutation, schema/migrations, billing or tenant data.
+- Production action after redeploy: send one real WhatsApp inbound. If `Ultimos webhooks` now shows an event with legacy fallback, update Meta Developers to the canonical endpoint-key callback URL shown in Scentra. If it remains empty, Meta is not reaching the API domain/path at all and the actual Meta callback URL/subscribed field must be inspected.
+
 - Added production recovery for WhatsApp inbound when Meta still posts to a stale webhook endpoint key:
   - `webhooks/router.py` still prefers exact `/saas/v1/webhooks/{provider}/{endpoint_key}` lookup.
   - If the endpoint key is missing/inactive and the request is a Meta-style WhatsApp POST, the route can recover by matching payload WABA/Phone Number ID to an active connected WhatsApp integration and active webhook endpoint for the tenant.

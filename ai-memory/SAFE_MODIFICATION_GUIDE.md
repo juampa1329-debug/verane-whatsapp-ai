@@ -34,6 +34,7 @@ Scope: SaaS only.
 - Add a new migration when schema changes.
 - Search for table/column references in backend and frontends.
 - Preserve tenant_id and RLS expectations.
+- If the new table/column is required by auth, registration, app boot, Inbox, Admin boot, billing lifecycle, workers or dashboards, update `saas-version/backend/app_saas/shared/schema_readiness.py`.
 - Update docs and diagrams.
 
 ## Integration Change Checklist

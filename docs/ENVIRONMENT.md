@@ -165,7 +165,8 @@ Important compose defaults:
 - `SAAS_JWT_SECRET` defaults to `change-me-local-saas-secret`; never use this in production.
 - `SAAS_CORS_ORIGINS` includes local and production Scentra domains.
 - API/worker services pass through Phase 1 security env vars for CAPTCHA, rate limits, lockout, reset expiry/path, and SMTP.
-- `api` command applies migrations from `/app/migrations` before starting.
+- `api` command applies migrations from `/app/migrations`, runs `app_saas.tools.schema_check /app/migrations`, and starts Uvicorn only if the schema readiness contract passes.
+- API Docker healthcheck calls `/saas/v1/ready`, not `/health`, so Coolify/Traefik should not route traffic to a container whose database schema is incomplete.
 - `admin-frontend` defaults to production API/client URLs unless `ADMIN_VITE_*` build vars override them.
 - `platform-admin-seed` is not part of default `up`; run it explicitly with the `admin-seed` profile.
 - ML services are not part of default `up`; run them explicitly with the `ml` profile. API/worker defaults keep `SAAS_ML_ENABLED=false`.
@@ -173,6 +174,7 @@ Important compose defaults:
 - `ml-service` depends on DB and MLflow; it can log training jobs/artifacts/inference/drift plus datasets/evaluations to Postgres when migrations `049` and `050` exist.
 - Local validation on non-default admin ports must include that origin in `SAAS_CORS_ORIGINS`; default compose includes local admin port `8011`.
 - Avoid running multiple SaaS Compose projects on the same external `coolify` network at once unless aliases are isolated; duplicate `scentra-saas-db` aliases can make API containers reach the wrong DB.
+- Zero-downtime production deployments should run migrations/schema checks before switching traffic, or use rolling/blue-green behavior. A failed schema check intentionally prevents a new API container from becoming ready.
 
 Voice Intelligence runtime:
 

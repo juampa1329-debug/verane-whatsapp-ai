@@ -6,8 +6,8 @@ This is a compact map for agent navigation. Inspect router files for schemas, pa
 
 ## Health
 
-- `GET /health`
-- `GET /ready`
+- `GET /health`: lightweight liveness.
+- `GET /ready`: DB connectivity plus schema readiness contract; returns `503` with `schema_not_ready` when migrations/tables/columns are incomplete.
 
 ## Tenant Auth
 

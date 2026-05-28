@@ -13,6 +13,14 @@ File: `saas-version/backend/app_saas/main.py`.
 - Request middleware adds request metadata and guards CORS error responses.
 - On startup, the API can launch an embedded worker loop when `settings.saas_embedded_worker_enabled` is true.
 
+## Health And Readiness
+
+- `/saas/v1/health` is liveness only and should stay lightweight.
+- `/saas/v1/ready` checks PostgreSQL connectivity plus the SaaS schema readiness contract from `app_saas.shared.schema_readiness`.
+- The readiness contract verifies migration application state and critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths.
+- `app_saas.tools.schema_check` runs the same contract as a CLI gate after migrations and before Uvicorn in Docker.
+- Production deploys should route traffic only to containers that pass `/ready`; a container with pending migrations or missing critical schema must remain unhealthy instead of serving user-facing 500s.
+
 ## Router Modules
 
 All mounted under `/saas/v1`:

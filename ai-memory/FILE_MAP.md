@@ -6,7 +6,7 @@ Scope: SaaS only.
 
 - `saas-version/README.md`: SaaS workspace notes.
 - `saas-version/*/AGENTS.md` and `saas-version/backend/app_saas/**/AGENTS.md`: hierarchical Codex CLI domain rules.
-- `saas-version/docker-compose.saas.yml`: SaaS db/api/worker compose.
+- `saas-version/docker-compose.saas.yml`: SaaS db/api/worker compose; API runs migrate + schema_check before Uvicorn and healthchecks `/saas/v1/ready`.
 - `saas-version/admin-frontend/Dockerfile`: production admin frontend image for `admin.scentra-ai.online`.
 - `saas-version/infra/`: deployment notes.
 - `saas-version/docs/`: product/phase docs already present inside SaaS workspace.
@@ -21,11 +21,13 @@ Scope: SaaS only.
 - `saas-version/backend/app_saas/main.py`: FastAPI app and router mounting.
 - `saas-version/backend/app_saas/config.py`: settings/env parsing.
 - `saas-version/backend/app_saas/db.py`: engine/session/tenant context.
-- `saas-version/backend/app_saas/shared/`: auth, secrets, captcha, request/security events.
+- `saas-version/backend/app_saas/shared/`: auth, secrets, captcha, request/security events, schema readiness.
 - `saas-version/backend/app_saas/shared/email.py`: stdlib SMTP helper for password recovery emails.
 - `saas-version/backend/app_saas/shared/mfa.py`: Phase 13 email OTP challenge creation, verification and security notices.
+- `saas-version/backend/app_saas/shared/schema_readiness.py`: critical SaaS migration/table/column readiness contract for startup and `/ready`.
 - `saas-version/backend/app_saas/tools/`: migrations/admin tools.
 - `saas-version/backend/app_saas/tools/create_platform_admin.py`: first platform admin seed tool.
+- `saas-version/backend/app_saas/tools/schema_check.py`: deploy/startup CLI that exits non-zero when schema readiness fails.
 - `saas-version/backend/app_saas/workers/`: async processors.
 - `saas-version/backend/app_saas/workers/billing.py`: recurring billing lifecycle processor with advisory lock/interval throttle.
 - `saas-version/backend/app_saas/workers/intelligence.py`: Phase 11 derived event pipeline, feature recompute, gated baseline prediction, model-metric worker, Agent OS sync, Autonomous Operations analysis and Enterprise AI Network refresh.

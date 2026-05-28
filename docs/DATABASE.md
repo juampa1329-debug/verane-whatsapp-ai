@@ -16,6 +16,7 @@ Behavior:
 - `db_session()` provides transaction/session lifecycle.
 - `set_tenant_context(conn, tenant_id)` sets `app.current_tenant` for DB-level tenant context.
 - Migration runner applies SQL files from `saas-version/migrations`.
+- Schema readiness is checked by `app_saas.shared.schema_readiness` and CLI `app_saas.tools.schema_check`; Docker runs this check after migrations and before API startup.
 
 ## Migration Timeline
 
@@ -105,6 +106,7 @@ Behavior:
 
 - Some SaaS migrations/services create non-`saas_` table names such as `social_posts`, `social_comments`, and `comment_ai_settings`. If SaaS shares a DB/schema with another app, verify collisions before touching social features.
 - Runtime code contains defensive `CREATE TABLE IF NOT EXISTS` in some services. Schema truth is therefore split between migrations and service code; inspect both before changing tables.
+- When adding a runtime-critical table or column used by login, registration, tenant boot, Inbox, Admin boot, billing lifecycle, worker startup or global dashboards, update `backend/app_saas/shared/schema_readiness.py` so drift is caught before traffic reaches the API.
 - RLS policies exist in migrations. Do not remove explicit tenant filters in application SQL just because RLS exists.
 - Generated build/dependency folders exist under SaaS frontends; do not treat them as schema/source.
 

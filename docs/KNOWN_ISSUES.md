@@ -7,13 +7,14 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - `saas-version/docker-compose.saas.yml` has a local default `SAAS_JWT_SECRET=change-me-local-saas-secret`. Production must override it.
 - `saas-version/keys/saasprivate.key` exists. Treat it as secret material; do not expose, copy, or commit elsewhere without explicit verification.
 - API embedded worker and standalone `worker` service can both run. Queue processors must remain idempotent and concurrency-safe.
-- Verified production incident on 2026-05-28: tenant login 500 was caused by DB schema drift where `saas_users.locked_until` and `saas_billing_subscriptions.payment_failed_notice_sent_at` were missing. Production also showed missing `saas_billing_invoices`, confirming broader billing migration drift. Migration `069_saas_auth_billing_schema_drift_repair.sql` repairs this permanently; until redeployed, run the provided idempotent SQL hotfix directly in production PostgreSQL.
-- Verified follow-up production incident on 2026-05-28: after login, `/conversations`, `/dashboard/overview`, `/integrations`, `/advisor/briefing`, and `/auth/register` can still return 500 when production DB is missing later CRM, verticalization, campaign or Intelligence schema. Migration `070_saas_crm_intelligence_schema_drift_repair.sql` repairs the affected app-boot and registration schema. Production should still run the migration or equivalent SQL manually before relying on demo/user registration.
+- Verified production incident on 2026-05-28: tenant login 500 was caused by DB schema drift where `saas_users.locked_until` and `saas_billing_subscriptions.payment_failed_notice_sent_at` were missing. Production also showed missing `saas_billing_invoices`, confirming broader billing migration drift. Migration `069_saas_auth_billing_schema_drift_repair.sql` repairs this permanently.
+- Verified follow-up production incident on 2026-05-28: after login, `/conversations`, `/dashboard/overview`, `/integrations`, `/advisor/briefing`, and `/auth/register` can return 500 when production DB is missing later CRM, verticalization, campaign or Intelligence schema. Migration `070_saas_crm_intelligence_schema_drift_repair.sql` repairs the affected app-boot and registration schema.
 
 ## High
 
 - Some SaaS social tables are not prefixed with `saas_` (`social_posts`, `social_comments`, `comment_ai_settings`). Shared schemas can collide with non-SaaS tables.
 - Schema definition is split between migrations and runtime defensive `CREATE TABLE IF NOT EXISTS` in services. Inspect both before DB edits.
+- Docker/API readiness now runs the schema readiness contract before serving traffic. Residual risk: future runtime-critical schema additions must update `backend/app_saas/shared/schema_readiness.py`; otherwise a newly introduced drift class may not be caught before a route uses it.
 - No dedicated automated test suite was detected for SaaS during inspection; changes need targeted manual or added tests if user requests.
 - Password recovery is implemented and smoke-tested locally, but production email delivery depends on valid SMTP env vars. Without SMTP, production users will not receive reset links.
 - Email OTP MFA challenge enforcement is implemented in Phase 13 for tenant/admin login. TOTP/authenticator-app support is not implemented.

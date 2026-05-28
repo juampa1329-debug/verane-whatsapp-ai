@@ -25,6 +25,13 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Added a production schema readiness gate to prevent SaaS containers from serving traffic when PostgreSQL drift would produce route-level 500s.
+- New backend helper `app_saas.shared.schema_readiness` checks migration state plus critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths.
+- New CLI `app_saas.tools.schema_check` runs the same contract after migrations and exits non-zero when pending migrations, missing tables or missing columns are detected.
+- `/saas/v1/health` remains lightweight liveness; `/saas/v1/ready` now verifies DB connectivity and schema readiness and returns `503 schema_not_ready` if the API must not receive production traffic.
+- Docker API startup now runs `migrate -> schema_check -> uvicorn`, and Docker healthcheck now targets `/saas/v1/ready` instead of `/health`.
+- No business routes, auth policy, provider runtime, migrations, tenant data, worker processors or frontend contracts were changed.
+- Operational note: production rolling/blue-green deploys should apply migrations/schema checks before switching traffic; if schema readiness fails, the new container should stay out of service instead of partially serving users.
 - Investigated follow-up production 500s after login:
   - `GET /saas/v1/conversations?limit=200` failed while selecting Phase 4/8/11 CRM and predictive columns from `saas_conversations` and `saas_intelligence_predictions`.
   - Browser also showed 500s for `POST /saas/v1/auth/register`, `/dashboard/overview`, `/integrations`, and `/advisor/briefing`.

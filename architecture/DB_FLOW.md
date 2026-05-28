@@ -8,6 +8,8 @@ Scope: SaaS only.
 flowchart LR
   SQL["saas-version/migrations/*.sql"] --> Migrator["app_saas.tools.migrate"]
   Migrator --> DB["PostgreSQL"]
+  DB --> SchemaCheck["app_saas.tools.schema_check"]
+  SchemaCheck --> ReadyGate["/saas/v1/ready"]
   API["FastAPI app"] --> DB
   Worker["Worker runner"] --> DB
 ```
@@ -24,8 +26,9 @@ flowchart TB
   SQL001 --> SQL002["002 guarded legacy tenantization"]
   SQL002 --> SQL003["003 guarded legacy cutover"]
   SQL003 --> SQL004["004 guarded RLS policies"]
-  SQL004 --> SQLRest["005-066 SaaS schema"]
-  SQLRest --> Ready["API/worker can use SaaS schema"]
+  SQL004 --> SQLRest["005-070 SaaS schema"]
+  SQLRest --> Check["Schema readiness check"]
+  Check --> Ready["API/worker can use SaaS schema"]
 ```
 
 ## Tenant Data Flow
@@ -42,6 +45,7 @@ flowchart TB
 ## DB Rules
 
 - Migrations are the first schema source.
+- Docker runs `app_saas.tools.schema_check` after migrations and before Uvicorn; `/saas/v1/ready` runs the same schema contract at healthcheck time.
 - Runtime SQL can also create/check tables; inspect service code.
 - Keep explicit tenant filters.
 - Preserve `tenant_id` columns and indexes in tenant-scoped data.
@@ -200,3 +204,23 @@ Notes:
 - Migration `069` is forward-only and idempotent.
 - It exists for production databases where old migration versions were present but expected columns were missing.
 - It does not change auth policy, token shape, billing status semantics or tenant data ownership.
+
+## Schema Readiness Gate
+
+```mermaid
+flowchart TB
+  Deploy["API deploy"] --> Migrate["python -m app_saas.tools.migrate /app/migrations"]
+  Migrate --> Contract["python -m app_saas.tools.schema_check /app/migrations"]
+  Contract -->|passes| Uvicorn["Start Uvicorn"]
+  Contract -->|fails| NoTraffic["Container exits / stays not ready"]
+  Healthcheck["Docker healthcheck"] --> Ready["GET /saas/v1/ready"]
+  Ready --> ContractRuntime["DB + migrations + critical schema"]
+  ContractRuntime -->|passes| Traffic["Coolify/Traefik can route"]
+  ContractRuntime -->|fails| Block["503 schema_not_ready"]
+```
+
+Notes:
+
+- `/health` remains liveness only; `/ready` is the production traffic gate.
+- The contract catches pending migrations plus missing critical tables/columns after a migration was marked applied.
+- Update the contract when adding runtime-critical schema used by auth, registration, app boot, Inbox, Admin boot, billing lifecycle, workers or dashboards.

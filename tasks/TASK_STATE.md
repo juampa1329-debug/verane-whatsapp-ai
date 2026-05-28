@@ -4,9 +4,24 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Repair production 500s caused by PostgreSQL schema drift in SaaS auth, billing, CRM, verticalization and Intelligence tables/columns, while preserving current demo-account access.
+Prevent production 500s caused by PostgreSQL schema drift by adding an API readiness/schema gate while preserving current SaaS runtime behavior.
 
 ## Status
+
+- Added schema readiness prevention layer:
+  - `saas-version/backend/app_saas/shared/schema_readiness.py` defines the critical schema contract for current SaaS runtime boot paths.
+  - `saas-version/backend/app_saas/tools/schema_check.py` runs the contract as a deploy/startup CLI.
+  - `/saas/v1/ready` now checks DB connectivity, migration application state and critical tables/columns; `/saas/v1/health` remains liveness only.
+  - `saas-version/docker-compose.saas.yml` now runs `migrate -> schema_check -> uvicorn` and healthchecks `/saas/v1/ready`.
+- Purpose:
+  - A container with pending migrations or missing critical schema should fail readiness/startup instead of taking traffic and producing user-facing 500s.
+- Not changed:
+  - No migrations, route business logic, auth policy, billing state machine, provider/Meta runtime, worker processors, tenant data or frontend contract changed.
+- Remaining acceptance:
+  - Rebuild/redeploy API.
+  - Run the production repair migrations `069` and `070` if not already applied.
+  - Confirm `GET /saas/v1/ready` returns `200` before switching traffic.
+  - For future schema-critical fields, update the readiness contract in the same PR/change.
 
 - Production incident identified:
   - `POST /saas/v1/auth/login` returned 500 even for invalid credentials.

@@ -25,6 +25,14 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Investigated production `POST /saas/v1/auth/login` 500.
+- Production logs showed PostgreSQL schema drift, not a frontend/password issue:
+  - `saas_users.locked_until` missing in tenant login.
+  - `saas_billing_subscriptions.payment_failed_notice_sent_at` missing in billing lifecycle worker.
+- Added forward migration `069_saas_auth_billing_schema_drift_repair.sql` to repair auth, tenant, MFA/security-event and billing lifecycle columns/tables when older migrations were marked applied before all columns existed.
+- Hardened tenant auth/tenant-list responses by using safe fallbacks for nullable `plan_code` and `industry_code`.
+- No auth policy, JWT payload contract, password hashing, CAPTCHA behavior, billing lifecycle semantics, tenant isolation, frontend contract or provider runtime was changed.
+- Emergency production SQL can be run manually before redeploy to restore demo account login immediately; the migration makes the repair permanent for future deploys.
 - Implemented AI Gateway model/provider resilience for SaaS conversation AI, assigned/custom agents and Advisor.
 - `ai_gateway/service.py` now tries retryable model candidates inside the same provider before moving to the next provider in the chain. Retryable conditions include `429`, `503`, other transient 5xx/timeout/unavailable/high-demand/empty-output signals.
 - Model candidates are derived from the selected credential model, optional `settings.metadata_json.model_fallbacks_json`, the provider default model and provider static models; `model_fallback_attempt_limit` defaults to `4`.

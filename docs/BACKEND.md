@@ -136,6 +136,8 @@ Code-operational at repository level.
 
 Code-complete and smoke-tested on 2026-05-24 for clean Docker/PostgreSQL bootstrap.
 
+- Production schema-drift repair exists in migration `069_saas_auth_billing_schema_drift_repair.sql` for environments where migration versions were marked applied but login columns such as `saas_users.locked_until` were missing.
+- Tenant auth and tenant-list responses now coalesce nullable `plan_code` and `industry_code` to compatibility defaults before Pydantic response serialization.
 - Cloudflare Turnstile is verified server-side when `SAAS_CAPTCHA_ENABLED=true`.
 - Tenant login/register and platform admin login/bootstrap use endpoint-specific rate limits by combined key, principal/email, and IP.
 - Failed login counters and `locked_until` live on `saas_users`; tenant and platform-admin login both return controlled lockout responses.

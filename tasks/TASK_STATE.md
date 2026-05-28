@@ -4,9 +4,22 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Implement effective AI model/provider redundancy for SaaS conversation AI, assigned/custom agents, Agent OS runtime paths and Advisor so transient provider/model outages do not stall customer conversations.
+Repair production login 500 caused by PostgreSQL schema drift in SaaS auth/billing columns, while preserving current demo-account access.
 
 ## Status
+
+- Production incident identified:
+  - `POST /saas/v1/auth/login` returned 500 even for invalid credentials.
+  - Backend logs confirmed `psycopg2.errors.UndefinedColumn` for `saas_users.locked_until`.
+  - Embedded worker logs also confirmed missing `saas_billing_subscriptions.payment_failed_notice_sent_at`.
+- Immediate operator hotfix provided:
+  - Run idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` SQL in Coolify/PostgreSQL to restore login for demo accounts without waiting for redeploy.
+- Code repair in progress/completed locally:
+  - Added `saas-version/migrations/069_saas_auth_billing_schema_drift_repair.sql`.
+  - The migration repairs Phase 1 auth columns, tenant industry columns, password reset/security event/MFA tables and Phase 9 billing lifecycle columns/indexes.
+  - Hardened `auth/router.py` and `tenants/router.py` to coalesce nullable `plan_code`/`industry_code` values in tenant membership responses.
+- Not changed:
+  - No auth policy, JWT contract, CAPTCHA behavior, password hashing, billing state machine, frontend contract, provider runtime or tenant isolation was changed.
 
 - Completed AI Gateway resilience hardening:
   - `saas-version/backend/app_saas/ai_gateway/service.py` now retries retryable model candidates inside the same provider before moving to the next provider in the configured chain.

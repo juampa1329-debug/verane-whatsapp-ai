@@ -181,3 +181,22 @@ Notes:
 - Update rows contain aggregate metrics, feature summaries, quality score, privacy metadata and hashes only.
 - Aggregates require minimum participant/sample thresholds before active global signals.
 - Model promotion is not automatic and remains outside the DB flow.
+
+## Migration 069 Schema Drift Repair
+
+```mermaid
+flowchart TB
+  ProdDB["Production PostgreSQL with drift"] --> M069["069 auth/billing repair migration"]
+  M069 --> Users["saas_users login lockout/MFA columns"]
+  M069 --> Tenants["saas_tenants industry defaults"]
+  M069 --> Security["saas_security_events/password reset/MFA tables"]
+  M069 --> Billing["billing lifecycle notice columns/indexes"]
+  Users --> Login["/saas/v1/auth/login"]
+  Billing --> Worker["billing lifecycle worker"]
+```
+
+Notes:
+
+- Migration `069` is forward-only and idempotent.
+- It exists for production databases where old migration versions were present but expected columns were missing.
+- It does not change auth policy, token shape, billing status semantics or tenant data ownership.

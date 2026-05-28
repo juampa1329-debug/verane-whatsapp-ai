@@ -1,0 +1,1617 @@
+%PDF-1.4
+% Scentra generated report
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R 31 0 R 33 0 R 35 0 R 37 0 R 39 0 R 41 0 R 43 0 R 45 0 R 47 0 R 49 0 R 51 0 R 53 0 R 55 0 R] /Count 26 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 3850 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Seguimiento Proyecto SaaS Scentra) Tj
+T* () Tj
+T* (SEGUIMIENTO DEL PROYECTO SAAS SCENTRA +AI) Tj
+T* () Tj
+T* (Alcance: solo saas-version/.) Tj
+T* (Fecha de corte: 2026-05-28.) Tj
+T* (Fuente: inspeccion del codigo real del SaaS y validaciones locales disponibles.) Tj
+T* () Tj
+T* (RESUMEN EJECUTIVO) Tj
+T* () Tj
+T* (Scentra +AI SaaS es una plataforma multi-tenant para CRM conversacional, Inbox, campanas,) Tj
+T* (  triggers, remarketing, integraciones Meta, billing, observabilidad, Knowledge/RAG, agentes) Tj
+T* (  IA, inteligencia predictiva visible en producto, AI Ecosystem, Enterprise AI Network) Tj
+T* (  vertical, Federated Learning privacy-safe, Autonomous Revenue Engine supervisado, AI) Tj
+T* (  Enterprise Memory Network tenant-scoped, Product Ops con base de localizacion, una ruta) Tj
+T* (  documentada para ampliar agentes externos mediante Fase 15.1, un AI Workflow Composer) Tj
+T* (  premium-gated para disenar/simular/aprobar workflows AI, y un Trust AI Center para gobierno,) Tj
+T* (  riesgos, model cards, incidentes, auditoria y reportes de compliance AI.) Tj
+T* () Tj
+T* (Las fases 1 a 14 estan cerradas a nivel de codigo/repositorio. La Fase 11 ya tiene una base) Tj
+T* (  operativa de Scentra Intelligence Engine con eventos, feature store, predicciones baseline,) Tj
+T* (  recomendaciones con gating premium separado, grants premium, cuotas, API tenant, API Admin,) Tj
+T* (  vista tenant Inteligencia, vista Admin AI Predictivo, integracion de contexto predictivo en) Tj
+T* (  Advisor, worker automatico para eventos/features/predicciones, base ModelOps para) Tj
+T* (  feedback/metricas de modelos, registro/gobierno de rollout de modelos desde Admin, canary) Tj
+T* (  routing deterministico, captura inline limitada para eventos criticos de CRM/Billing,) Tj
+T* (  infraestructura ML real opcional, una capa visible de Predictive Intelligence en) Tj
+T* (  Dashboard/Inbox/CRM/floating Advisor, un Multi-Agent Operating System para coordinar agentes) Tj
+T* (  especializados, Autonomous Operational Intelligence supervisada, un AI Platform Ecosystem) Tj
+T* (  para marketplace/plugins/tools/SDK/developer apps e integraciones AI gobernadas, y) Tj
+T* (  Enterprise AI Network con benchmarks verticales anonimizados, playbooks, advisors) Tj
+T* (  sectoriales y knowledge network. La Fase 12 agrega un control-plane Admin de) Tj
+T* (  performance/reliability con SLOs, backpressure, auditoria de indices, retention dry-run,) Tj
+T* (  backup readiness y worker reliability sin modificar runtime Meta/WhatsApp/Instagram. La Fase) Tj
+T* (  13 agrega MFA por email OTP para tenant/admin, Security Center Admin, export CSV de) Tj
+T* (  auditoria, compliance exports y solicitudes de borrado revisables. La Fase 14 agrega) Tj
+T* (  catalogos locales es-CO, normalizacion de copy critico y gates de Product Ops para release.) Tj
+T* () Tj
+T* (El bootstrap limpio Docker/PostgreSQL de Fase 11 fue validado con proyecto temporal) Tj
+T* (  codexsaasmltrain, volumen PostgreSQL nuevo, perfil opcional ml y migraciones 001 a 050.) Tj
+T* (  Pasaron API health, Swagger, Admin, worker, ML service, MLflow, Qdrant, auto-labeling,) Tj
+T* (  feature pipelines, build de dataset, entrenamiento autolabel, prediccion, drift,) Tj
+T* (  entrenamiento desde Admin, registro en model registry y smoke de inferencia shadow. Despues) Tj
+T* (  de integrar Predictive Intelligence + Advisor, Agent OS, Autonomous Operations, AI Platform) Tj
+T* (  Ecosystem, Enterprise AI Network, Fase 12 Performance/Reliability, Fase 13) Tj
+T* (  Security/Compliance, Fase 14 Localization/Product Ops y Fase 18 Workflow Composer, el stack) Tj
+T* (  SaaS fue reconstruido con Docker Compose, aplico/salto migraciones hasta 057, inicio) Tj
+T* (  API/worker/admin/PostgreSQL, respondio API health y Swagger /docs, paso builds tenant/Admin,) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 4278 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  clean bootstrap temporal 001 a 057, smoke API del Composer y smoke browser del panel) Tj
+T* (  Composer. En Fase 22 pasaron compileall backend, builds tenant/Admin, Docker rebuild) Tj
+T* (  API/worker/Admin, migracion activa hasta 058, bootstrap PostgreSQL limpio aislado 001 a 058,) Tj
+T* (  API health, Swagger, Admin health, OpenAPI Trust, smoke tenant Trust y smoke Admin Trust. En) Tj
+T* (  Fase 16 pasaron compileall backend, builds tenant/Admin, Docker rebuild API/worker/Admin,) Tj
+T* (  migracion activa hasta 059, bootstrap PostgreSQL limpio aislado 001 a 059, API health,) Tj
+T* (  Swagger, Admin health, OpenAPI realtime, smokes tenant/Admin realtime, log scans y browser) Tj
+T* (  smoke de AI Inteligencia. En Fase 24.2 pasaron py_compile backend, build tenant, Compose) Tj
+T* (  config, Docker rebuild API/worker, migracion activa hasta 060, compileall backend en) Tj
+T* (  contenedor, API health, Swagger, OpenAPI voice endpoint y check PostgreSQL de tabla/feature) Tj
+T* (  flag. En Fase 24.3 pasaron py_compile backend, builds tenant/Admin, SQL scans, Compose) Tj
+T* (  config, Docker rebuild API/worker/Admin, migracion activa hasta 061, API health, Swagger,) Tj
+T* (  Admin health, OpenAPI vision endpoint, DB check de tabla/flags, compileall en contenedor,) Tj
+T* (  log scan, browser smoke y bootstrap PostgreSQL limpio 001 a 061. En Fase 24.4 pasaron) Tj
+T* (  py_compile backend, builds tenant/Admin, SQL scans, Compose config, Docker rebuild) Tj
+T* (  API/worker/Admin, migracion activa hasta 062, API health, Swagger, Admin health, OpenAPI) Tj
+T* (  web/image search, DB check de tablas/flags, compileall en contenedor, smoke autenticado con) Tj
+T* (  fallo seguro sin credencial de busqueda, browser smoke Swagger y bootstrap PostgreSQL limpio) Tj
+T* (  001 a 062. En Fase 24.5 pasaron py_compile backend, build tenant, Compose config, SQL scans,) Tj
+T* (  Docker rebuild API/worker, migracion activa hasta 063, API health, Swagger, OpenAPI) Tj
+T* (  endpoints de herramientas multimodales de agentes, DB check de migracion/flags, compileall) Tj
+T* (  en contenedor, smoke autenticado de herramienta con fallo seguro sin credencial de busqueda,) Tj
+T* (  browser smoke de Agent OS y bootstrap PostgreSQL limpio 001 a 063. En Fase 24.6 pasaron) Tj
+T* (  py_compile/import backend, builds tenant/Admin, SQL scans, Compose config, Docker rebuild) Tj
+T* (  API/worker/Admin, migracion activa hasta 064, API health, Swagger, OpenAPI endpoints de) Tj
+T* (  memoria multimodal, DB check de tabla/flags, smoke autenticado de sync/materializacion,) Tj
+T* (  browser smoke de Agent OS y bootstrap PostgreSQL limpio 001 a 064. En Fase 24.7 pasaron) Tj
+T* (  py_compile backend, build tenant, Docker rebuild API/worker, API health, OpenAPI del) Tj
+T* (  endpoint de referencia aprobada y smoke browser del frontend sin errores de consola. En Fase) Tj
+T* (  24.8 pasaron py_compile backend, build Admin, Compose config, SQL scans, Docker rebuild) Tj
+T* (  API/worker/Admin, migracion activa hasta 065, API health, Swagger, Admin health, OpenAPI) Tj
+T* (  Phase 24.8, smoke autenticado Admin premium-gating/provider-policy, log scan, browser smoke) Tj
+T* (  Admin login y bootstrap PostgreSQL limpio 001 a 065. En Fases 19 y 20 pasaron py_compile) Tj
+T* (  backend, builds tenant/Admin, Compose config, SQL scans, Docker rebuild API/worker/Admin,) Tj
+T* (  migracion activa 066, API health, Swagger, OpenAPI Revenue/Memory Network, DB check de 10) Tj
+T* (  tablas, smoke autenticado full-mode con tenant temporal para revenue) Tj
+T* (  opportunities/approve/execute y memory sync/publish, browser smoke Admin sin errores y) Tj
+T* (  bootstrap PostgreSQL limpio aislado 001 a 066. En Fase 24.9/24.10 pasaron py_compile) Tj
+T* (  backend, builds tenant/Admin, Compose config, SQL scans, tracked diff whitespace y scan) Tj
+T* (  manual de whitespace en archivos tocados; la migracion/API/Swagger/bootstrap Docker hasta) Tj
+T* (  067 queda pendiente porque Docker no estuvo accesible desde la ultima sesion.) Tj
+T* () Tj
+T* (TECNOLOGIA DETECTADA) Tj
+T* () Tj
+T* (- Backend: FastAPI en saas-version/backend/app_saas.) Tj
+T* (- API base: /saas/v1.) Tj
+T* (- Base de datos: PostgreSQL 16.) Tj
+T* (- Acceso DB: SQLAlchemy Core/raw SQL.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 3528 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Migraciones: SQL en saas-version/migrations, ejecutadas por app_saas.tools.migrate.) Tj
+T* (- Frontend cliente: React 19 + Vite en saas-version/frontend.) Tj
+T* (- Frontend admin: React 19 + Vite en saas-version/admin-frontend.) Tj
+T* (- Workers: Python en app_saas.workers, con worker embebido en API y servicio standalone.) Tj
+T* (- Deploy local/prod: saas-version/docker-compose.saas.yml.) Tj
+T* (- Integraciones principales: WhatsApp Cloud, Instagram Business, Facebook/Meta, WooCommerce,) Tj
+T* (  Stripe, MercadoPago, Wompi, proveedores IA.) Tj
+T* (- Infraestructura ML opcional: perfil Docker ml con MLflow, ML service FastAPI/BentoML image,) Tj
+T* (  XGBoost, LightGBM, scikit-learn y Qdrant. Apagada por defecto.) Tj
+T* () Tj
+T* (PROGRESO POR FASES) Tj
+T* () Tj
+T* (|  Fase  |  Area  |  Progreso  |  Estado  |) Tj
+T* (|  ---  |  ---  |  ---:  |  ---  |) Tj
+T* (|  1  |  Seguridad Base  |  100%  |  Operativa a nivel codigo; smoke local previo aprobado) Tj
+T* (  |) Tj
+T* (|  2  |  Scentra Admin  |  100%  |  Operativa a nivel codigo; smoke local previo aprobado  |) Tj
+T* (|  3  |  Observabilidad y Diagnostico  |  100%  |  Operativa a nivel codigo; smoke local) Tj
+T* (  previo aprobado  |) Tj
+T* (|  4  |  Inbox Robusto  |  100%  |  Operativa a nivel codigo; build/browser smoke previo) Tj
+T* (  aprobado  |) Tj
+T* (|  5  |  CRM Comercial  |  100%  |  Operativa a nivel codigo; migracion validada por stack) Tj
+T* (  limpio de Fase 6  |) Tj
+T* (|  6  |  Knowledge Base y RAG  |  100%  |  Operativa a nivel codigo; smoke local previo) Tj
+T* (  aprobado  |) Tj
+T* (|  7  |  Campanas, Triggers y Remarketing  |  100%  |  Cerrada a nivel codigo; validacion) Tj
+T* (  local aprobada  |) Tj
+T* (|  8  |  AI Agents Enterprise  |  100%  |  Cerrada a nivel codigo; validacion local aprobada) Tj
+T* (  |) Tj
+T* (|  9  |  Billing y Monetizacion  |  100%  |  Cerrada a nivel codigo; validacion local) Tj
+T* (  aprobada  |) Tj
+T* (|  10  |  Verticalizacion  |  100%  |  Cerrada a nivel codigo; validacion local aprobada  |) Tj
+T* (|  11  |  ML, Predictive Intelligence, Agent OS, Autonomous Ops, AI Ecosystem & Enterprise) Tj
+T* (  AI Network  |  100%  |  Operativa a nivel codigo con event contracts, auto-labeling, feature) Tj
+T* (  pipelines, datasets Postgres, MLflow/BentoML image, XGBoost/LightGBM autolabel training,) Tj
+T* (  artifacts, Admin controls, drift/inference logs, shadow inference, dashboards predictivos,) Tj
+T* (  badges Inbox/CRM, floating Advisor predictivo, Agent OS multiagente, AI Operations) Tj
+T* (  supervisado, AI Ecosystem control-plane y Enterprise AI Network con benchmarks verticales) Tj
+T* (  anonimizados, advisors, playbooks y knowledge network; acceptance productiva requiere datos) Tj
+T* (  reales revisados, ajuste de cohortes y diseno de sandbox antes de plugins ejecutables  |) Tj
+T* (|  12  |  Performance, Reliability & Scale  |  100%  |  Operativa y validada localmente con) Tj
+T* (  migracion 055, SLOs, backpressure, auditoria de indices, retention dry-run, backup) Tj
+T* (  readiness, worker reliability, endpoints Admin y panel Admin Performance; falta acceptance) Tj
+T* (  de carga real y tuning  |) Tj
+T* (|  13  |  Security, 2FA & Compliance  |  100%  |  Operativa a nivel codigo con email OTP MFA) Tj
+T* (  tenant/admin, Security Center Admin, export CSV de auditoria, exports de privacidad y) Tj
+T* (  solicitudes de borrado; acceptance productiva requiere SMTP/Turnstile/secretos/CORS reales y) Tj
+T* (  aprobacion legal de retencion  |) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 3924 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(|  14  |  Localization & Product Ops  |  100%  |  Operativa a nivel codigo con catalogos) Tj
+T* (  locales tenant/Admin, normalizacion critica de textos, auditoria de copy, release gate,) Tj
+T* (  docs/ADR y sin nuevas dependencias  |) Tj
+T* (|  15  |  Agent Framework Research & Integration  |  60%  |  Fase) Tj
+T* (  15.1A/15.1B/15.1C/15.2/15.3 completadas como artefactos offline: 184 templates normalizados,) Tj
+T* (  29 drafts evaluados, 7 handoffs, 7 playbooks, 4 runbooks y 6 rubricas generadas; sin) Tj
+T* (  importacion DB/runtime  |) Tj
+T* (|  16  |  AI Real-Time Intelligence Layer  |  100%  |  Operativa a nivel codigo como) Tj
+T* (  control-plane realtime premium: eventos sanitizados, sesiones/cursors, alertas consultivas,) Tj
+T* (  vista tenant, overview Admin, metric snapshots y SSE acotado; acceptance productiva requiere) Tj
+T* (  pruebas de trafico antes de prometer SLAs realtime  |) Tj
+T* (|  17  |  Federated Learning & Global Intelligence  |  100%  |  Operativa a nivel codigo) Tj
+T* (  como control-plane federado opt-in, premium-gated y aggregate-only: politicas tenant,) Tj
+T* (  paquetes estadisticos locales, rondas federadas, agregados ponderados, signals globales,) Tj
+T* (  worker auto-participation bajo opt-in/full gates y UI tenant; acceptance productiva requiere) Tj
+T* (  Docker/bootstrap por 068, prueba multi-tenant, revision privacidad/legal y runbook ModelOps) Tj
+T* (  |) Tj
+T* (|  18  |  AI Workflow Composer  |  100%  |  Operativa a nivel codigo como control-plane) Tj
+T* (  premium: plantillas, editor de grafo, preflight, simulacion sin efectos, aprobaciones,) Tj
+T* (  versiones, rollback y activacion composer_only; despliegue runtime a triggers/flows/campanas) Tj
+T* (  requiere diseno futuro  |) Tj
+T* (|  19  |  Autonomous Revenue Engine  |  100%  |  Operativa y endurecida como control-plane) Tj
+T* (  premium: politicas configurables, allowed action types, limite mensual de ejecuciones) Tj
+T* (  metadata, oportunidades, forecasts, reportes, playbooks, endpoints tenant, worker) Tj
+T* (  integration y UI Inteligencia; no envia mensajes, no muta CRM/campanas/workflows y no) Tj
+T* (  ejecuta cobros.  |) Tj
+T* (|  20  |  AI Enterprise Memory Network  |  100%  |  Operativa y endurecida como grafo de) Tj
+T* (  memoria tenant-scoped: politicas, nodos, aristas, sync runs, review/export/import/delete,) Tj
+T* (  worker integration, controles UI y enforcement de scopes/retencion/revision de contenido) Tj
+T* (  cliente; no comparte contenido crudo entre tenants ni publica memoria candidata sin) Tj
+T* (  revision.  |) Tj
+T* (|  22  |  AI Trust, Compliance & Governance  |  100%  |  Operativa a nivel codigo como) Tj
+T* (  control-plane premium: politicas, attestations, risk assessments, model cards, incidentes,) Tj
+T* (  reportes, auditoria, UI tenant Trust AI y vista Admin Trust AI; certificacion legal y) Tj
+T* (  enforcement automatico quedan fuera de alcance  |) Tj
+T* (|  24  |  Voice & Multimodal Intelligence  |  100%  |  Fase 24.1 a 24.10 cerradas a nivel) Tj
+T* (  codigo: adjuntos en AI Gateway, Voice Intelligence, Vision Intelligence, busqueda web/imagen) Tj
+T* (  con aprobacion, herramientas multimodales para agentes, memoria/training events, UX Inbox,) Tj
+T* (  Admin/Premium Gating, observabilidad de costo/latencia/errores/calidad/fuentes y Safe) Tj
+T* (  Rollout con flags apagados por defecto, demo mode y canary. El envio automatico por) Tj
+T* (  IA/agentes sigue fuera de alcance.  |) Tj
+T* () Tj
+T* (FASES CERRADAS 1 A 7) Tj
+T* () Tj
+T* (- Fase 1 Seguridad Base: CAPTCHA backend/frontend, rate limit, logs de seguridad, bloqueo) Tj
+T* (  temporal, recuperar cuenta, cambio de password y preparacion 2FA.) Tj
+T* (- Fase 2 Admin: admin frontend deployable, dominio admin configurado en Compose/Traefik, seed) Tj
+T* (  seguro de superadmin, gestion de tenants, planes, suscripciones, feature flags, auditoria y) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 2945 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  colas.) Tj
+T* (- Fase 3 Observabilidad: health global, worker heartbeat, Meta/AI Gateway, colas, dead-letter,) Tj
+T* (  retry, correlation ID, diagnostico por canal e historial de errores Meta.) Tj
+T* (- Fase 4 Inbox: polling robusto, filtros, asignacion humana, SLA, comentarios separados,) Tj
+T* (  adjuntos/audio/emojis/productos, notificaciones y estados.) Tj
+T* (- Fase 5 CRM: campos personalizados, pipelines configurables, timeline, dedupe/merge,) Tj
+T* (  segmentos y actualizacion CRM limitada por politicas IA.) Tj
+T* (- Fase 6 Knowledge/RAG: upload PDF/TXT/CSV, URL ingestion segura, indexacion visible, busqueda) Tj
+T* (  sparse-vector + lexical, citas internas, reindex y evaluaciones de calidad.) Tj
+T* (- Fase 7 Campanas/Triggers/Remarketing: simulador, preflight, bloqueo de activacion,) Tj
+T* (  versiones/rollback, quiet hours globales/locales, A/B, cooldown, block_ai, remarketing por) Tj
+T* (  flows y validacion Meta template antes de enviar.) Tj
+T* () Tj
+T* (FASE 8 CERRADA: AI AGENTS ENTERPRISE) Tj
+T* () Tj
+T* (Objetivo: que los agentes sean producto premium, medible, gobernable, asignable por) Tj
+T* (  conversacion y seguro ante doble respuesta IA.) Tj
+T* () Tj
+T* (Implementado:) Tj
+T* () Tj
+T* (- Catalogo de agentes de fabrica y Custom Agent.) Tj
+T* (- Plantillas de system prompt para agentes de fabrica.) Tj
+T* (- System prompt rellenable con variables JSON y prompt renderizado.) Tj
+T* (- Creacion de Custom Agent desde UI cliente.) Tj
+T* (- Preflight obligatorio antes de activar agentes.) Tj
+T* (- Persistencia de ultimo preflight y registros de eval en saas_ai_agent_evals.) Tj
+T* (- Presupuesto por agente con hard-stop real antes de ejecutar IA.) Tj
+T* (- Score de salud, metricas runtime, tokens, costo estimado y fallos.) Tj
+T* (- Tool approvals y acciones sugeridas preservadas.) Tj
+T* (- Memoria individual por agente y boveda de memorias.) Tj
+T* (- Importar/exportar/restaurar/borrar memorias.) Tj
+T* (- Al archivar/eliminar un agente, la memoria se conserva por defecto para poder borrarla) Tj
+T* (  despues.) Tj
+T* (- Memoria colectiva por tenant confirmada e inyectada en el prompt runtime.) Tj
+T* (- Asignacion manual de agente IA desde Inbox/CRM.) Tj
+T* (- Filtro de Inbox por agente IA asignado.) Tj
+T* (- Asignacion automatica por router/orquestador al mejor agente activo.) Tj
+T* (- Cuando una conversacion queda asignada a un agente, la IA general deja de responder esa) Tj
+T* (  conversacion.) Tj
+T* (- Si el agente asignado esta inactivo/no disponible, el runtime no hace fallback silencioso a) Tj
+T* (  IA general; requiere liberar o reasignar.) Tj
+T* () Tj
+T* (Archivos clave:) Tj
+T* () Tj
+T* (- saas-version/migrations/043_saas_ai_agents_phase8_operational.sql) Tj
+T* (- saas-version/migrations/044_saas_billing_phase9_operational.sql) Tj
+T* (- saas-version/backend/app_saas/agents/service.py) Tj
+T* (- saas-version/backend/app_saas/agents/router.py) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 2473 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- saas-version/backend/app_saas/agents/orchestrator.py) Tj
+T* (- saas-version/backend/app_saas/agents/schemas.py) Tj
+T* (- saas-version/backend/app_saas/ai_agent/service.py) Tj
+T* (- saas-version/backend/app_saas/crm/router.py) Tj
+T* (- saas-version/backend/app_saas/crm/schemas.py) Tj
+T* (- saas-version/frontend/src/AiAgentsPanel.jsx) Tj
+T* (- saas-version/frontend/src/App.jsx) Tj
+T* (- saas-version/frontend/src/styles.css) Tj
+T* () Tj
+T* (Validaciones de Fase 8:) Tj
+T* () Tj
+T* (- python -m py_compile sobre modulos backend tocados de agents, orchestrator, AI conversation) Tj
+T* (  y CRM.) Tj
+T* (- npm --prefix saas-version/frontend run build.) Tj
+T* (- npm --prefix saas-version/admin-frontend run build.) Tj
+T* (- docker compose -f saas-version/docker-compose.saas.yml config.) Tj
+T* (- Revision SQL BOM: sin BOM.) Tj
+T* (- Revision UTF-8 estricta SQL: OK.) Tj
+T* () Tj
+T* (Pendiente de entorno:) Tj
+T* () Tj
+T* (- Las migraciones quedaron cubiertas por el rebuild posterior hasta 054; falta acceptance con) Tj
+T* (  conversaciones reales, presupuesto hard-stop y memoria/vault en staging.) Tj
+T* () Tj
+T* (FASE 9: BILLING Y MONETIZACION) Tj
+T* () Tj
+T* (Implementado:) Tj
+T* () Tj
+T* (- Checkout con proveedores Stripe, MercadoPago y Wompi.) Tj
+T* (- Webhooks de pago con verificacion de firma antes de mutar estado.) Tj
+T* (- Activacion de checkout, invoices/eventos Stripe, pagos MercadoPago y eventos) Tj
+T* (  aprobados/fallidos Wompi.) Tj
+T* (- Creditos manuales desde Admin.) Tj
+T* (- Facturas/historial y descarga PDF desde cliente y Admin.) Tj
+T* (- Estados trial, active, past_due, cancelled, suspended.) Tj
+T* (- Limites por plan, cuotas y bloqueo central de escrituras sensibles por impago/suspension.) Tj
+T* (- Job recurrente de lifecycle en worker embebido y standalone.) Tj
+T* (- Vencimiento de trial/suscripcion, gracia past_due, suspension, invoices) Tj
+T* (  abiertas/uncollectible y avisos por email.) Tj
+T* (- Variables Docker para intervalo lifecycle y dias de gracia.) Tj
+T* () Tj
+T* (Aceptacion de produccion:) Tj
+T* () Tj
+T* (- Probar webhooks reales/sandbox con Wompi, Stripe y MercadoPago usando secretos productivos.) Tj
+T* (- Confirmar requisitos legales/tributarios de factura PDF por pais antes de usarla como) Tj
+T* (  factura fiscal oficial.) Tj
+T* (- Las migraciones quedaron cubiertas por el rebuild posterior hasta 054; falta acceptance) Tj
+T* (  sandbox/live de proveedores y factura legal.) Tj
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 2572 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+() Tj
+T* (FASE 10: VERTICALIZACION) Tj
+T* () Tj
+T* (Implementado:) Tj
+T* () Tj
+T* (- Catalogo de agentes por industria.) Tj
+T* (- Filtros/politicas base por restaurante, hotel, salud, educacion, legal, seguros,) Tj
+T* (  inmobiliaria, belleza y mas.) Tj
+T* (- Agentes verticales de fabrica.) Tj
+T* (- Migracion 045_saas_verticalization_phase10.sql para industry_code, snapshot del pack) Tj
+T* (  vertical y auditoria de aplicaciones.) Tj
+T* (- Dominio backend app_saas/verticals con catalogo, router, schemas, service y reglas locales.) Tj
+T* (- Packs para general, retail, ecommerce, restaurante, hotel, salud, educacion, inmobiliaria,) Tj
+T* (  soporte tecnico, automotriz, servicios financieros, legal, seguros, belleza y servicios.) Tj
+T* (- Registro y creacion de tenant con seleccion de industria.) Tj
+T* (- Cambio de industria desde Admin con aplicacion segura del pack.) Tj
+T* (- Aplicacion idempotente de pipeline CRM, campos personalizados, labels, plantillas CRM,) Tj
+T* (  segmentos, triggers inactivos, flows draft, quiet hours base y agentes recomendados) Tj
+T* (  opcionales.) Tj
+T* (- UI cliente en Ajustes > Industria con estado del pack, KPIs, agentes recomendados, historial) Tj
+T* (  y boton de aplicacion.) Tj
+T* (- UI Admin en detalle de tenant con selector de industria y fecha de pack aplicado.) Tj
+T* () Tj
+T* (Validaciones:) Tj
+T* () Tj
+T* (- Backend compileall aprobado para verticals, main, auth, tenants, admin y agents service.) Tj
+T* (- npm run build aprobado en frontend cliente.) Tj
+T* (- npm run build aprobado en admin frontend.) Tj
+T* (- docker compose -f saas-version/docker-compose.saas.yml config --quiet aprobado.) Tj
+T* (- SQL sin BOM y UTF-8 estricto OK.) Tj
+T* (- git diff --check limitado al scope SaaS/docs aprobado.) Tj
+T* () Tj
+T* (Aceptacion pendiente:) Tj
+T* () Tj
+T* (- Las migraciones quedaron cubiertas por el rebuild posterior hasta 054.) Tj
+T* (- Probar cada pack vertical en staging con datos reales antes de aplicarlo a tenants) Tj
+T* (  productivos maduros.) Tj
+T* (- Activar triggers/flows solo despues de revision y preflight humano.) Tj
+T* () Tj
+T* (FASE 11: ML & PREDICTIVE INTELLIGENCE / SCENTRA INTELLIGENCE ENGINE) Tj
+T* () Tj
+T* (Implementado:) Tj
+T* () Tj
+T* (- Migracion 046_saas_intelligence_engine_phase11.sql.) Tj
+T* (- Migracion 047_saas_intelligence_modelops_phase11.sql.) Tj
+T* (- Migracion 048_saas_intelligence_model_rollouts_phase11.sql.) Tj
+T* (- Migracion 049_saas_ml_infrastructure_phase11.sql.) Tj
+T* (- Migracion 050_saas_ml_training_strategy_phase11.sql.) Tj
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Length 3205 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Migracion 051_saas_multi_agent_operating_system_phase11.sql.) Tj
+T* (- Migracion 052_saas_autonomous_operational_intelligence_phase11.sql.) Tj
+T* (- Migracion 053_saas_ai_platform_ecosystem_phase11.sql.) Tj
+T* (- Migracion 054_saas_enterprise_ai_network_phase11.sql.) Tj
+T* (- Event store multi-tenant: saas_intelligence_events.) Tj
+T* (- Feature store base: saas_intelligence_feature_values.) Tj
+T* (- Predicciones: saas_intelligence_predictions.) Tj
+T* (- Recomendaciones: saas_intelligence_recommendations.) Tj
+T* (- Grants/licencias premium AI: saas_intelligence_feature_grants.) Tj
+T* (- Usage/quota: saas_intelligence_usage.) Tj
+T* (- Model registry base: saas_intelligence_model_registry.) Tj
+T* (- Feedback de predicciones: saas_intelligence_prediction_feedback.) Tj
+T* (- Metricas por tenant/modelo: saas_intelligence_model_metrics.) Tj
+T* (- Gobierno de rollout de modelos: columnas de rollout en saas_intelligence_model_registry y) Tj
+T* (  eventos en saas_intelligence_model_rollout_events.) Tj
+T* (- Jobs de entrenamiento ML: saas_ml_training_jobs.) Tj
+T* (- Artifacts de modelos ML: saas_ml_model_artifacts.) Tj
+T* (- Runs de inferencia ML: saas_ml_inference_runs.) Tj
+T* (- Snapshots de drift ML: saas_ml_drift_snapshots.) Tj
+T* (- Contratos de eventos: saas_intelligence_event_contracts.) Tj
+T* (- Cursores de replay: saas_intelligence_event_replay_cursors.) Tj
+T* (- Auto-labels: saas_ml_auto_labels.) Tj
+T* (- Feature sets: saas_ml_feature_sets.) Tj
+T* (- Runs de pipelines de features: saas_ml_feature_pipeline_runs.) Tj
+T* (- Datasets de entrenamiento: saas_ml_training_datasets.) Tj
+T* (- Evaluaciones offline de modelos: saas_ml_model_evaluations.) Tj
+T* (- Mensajes inter-agente: saas_ai_agent_messages.) Tj
+T* (- Traces runtime de agentes: saas_ai_agent_runtime_traces.) Tj
+T* (- Tool runs con aprobacion: saas_ai_agent_tool_runs.) Tj
+T* (- Subscripciones event-driven: saas_ai_agent_event_subscriptions.) Tj
+T* (- Politicas de operaciones AI: saas_ai_operation_policies.) Tj
+T* (- Playbooks de operaciones AI: saas_ai_operation_playbooks.) Tj
+T* (- Anomalias operacionales AI: saas_ai_operation_anomalies.) Tj
+T* (- Acciones autonomas supervisadas: saas_ai_operation_actions.) Tj
+T* (- Reportes operacionales AI: saas_ai_operation_reports.) Tj
+T* (- Marketplace AI: saas_ai_marketplace_items.) Tj
+T* (- Instalaciones de marketplace: saas_ai_marketplace_installations.) Tj
+T* (- Plugins AI tenant-scoped: saas_ai_plugins.) Tj
+T* (- Tool registry central: saas_ai_tool_registry.) Tj
+T* (- Suscripciones de eventos ecosystem: saas_ai_ecosystem_event_subscriptions.) Tj
+T* (- Developer apps: saas_ai_developer_apps.) Tj
+T* (- Integraciones AI externas metadata-only: saas_ai_external_integrations.) Tj
+T* (- AI apps tenant-scoped: saas_ai_apps.) Tj
+T* (- Traces y metricas ecosystem: saas_ai_ecosystem_traces, saas_ai_ecosystem_metrics.) Tj
+T* (- Modelos verticales por industria: saas_ai_vertical_industry_models.) Tj
+T* (- Benchmarks anonimizados por industria: saas_ai_vertical_benchmarks.) Tj
+T* (- Comparaciones tenant vs industria: saas_ai_vertical_tenant_benchmarks.) Tj
+T* (- Insights verticales tenant-scoped: saas_ai_vertical_insights.) Tj
+ET
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 18 0 R >>
+endobj
+20 0 obj
+<< /Length 3499 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Playbooks AI verticales: saas_ai_vertical_playbooks.) Tj
+T* (- Knowledge network agregado: saas_ai_knowledge_network.) Tj
+T* (- Metric snapshots de red: saas_ai_network_metrics.) Tj
+T* (- Dominio backend app_saas/intelligence.) Tj
+T* (- Servicio ML opcional app_saas/ml_service.) Tj
+T* (- Endpoints tenant /saas/v1/intelligence/*.) Tj
+T* (- Endpoints tenant /saas/v1/ecosystem/*.) Tj
+T* (- Endpoints tenant /saas/v1/intelligence/network/*.) Tj
+T* (- Endpoint tenant GET /saas/v1/intelligence/overview para resumen ejecutivo, cards) Tj
+T* (  predictivas, agregados CRM, recomendaciones abiertas y observabilidad ModelOps.) Tj
+T* (- Endpoints Admin /saas/v1/admin/intelligence/*.) Tj
+T* (- Endpoints internos ML /health, /models, /train/synthetic, /predict, /drift/evaluate,) Tj
+T* (  /metrics.) Tj
+T* (- Endpoints internos ML /datasets/build y /train/autolabel.) Tj
+T* (- Vista Admin AI Predictivo.) Tj
+T* (- Feature flags premium/demo en billing y Admin.) Tj
+T* (- Predicciones baseline para lead scoring, churn, smart remarketing y anomalia operativa.) Tj
+T* (- Worker app_saas/workers/intelligence.py para derivar eventos canonicos desde tablas) Tj
+T* (  existentes.) Tj
+T* (- Recomputo automatico de features por tenant desde worker embebido/standalone/Admin.) Tj
+T* (- Generacion automatica de predicciones baseline con gating, cuotas y cooldown.) Tj
+T* (- Registro de feedback de predicciones desde API tenant.) Tj
+T* (- Recalculo de metricas de modelos desde API/Admin y worker.) Tj
+T* (- Admin AI Predictivo muestra ModelOps predictivo: muestras, feedback, accuracy y drift) Tj
+T* (  baseline.) Tj
+T* (- Admin AI Predictivo permite registrar modelos y muestra Model Registry & Rollout: estado,) Tj
+T* (  shadow/canary/production, porcentaje de trafico, feedback agregado, accuracy, drift y) Tj
+T* (  readiness.) Tj
+T* (- El runtime de predicciones bloquea modelos deshabilitados/pausados y selecciona modelos) Tj
+T* (  canary activos de forma deterministica por tenant/prediccion/sujeto/ventana y porcentaje de) Tj
+T* (  trafico.) Tj
+T* (- El output de prediccion usa baseline_rules por defecto; si SAAS_ML_ENABLED=true y hay) Tj
+T* (  artifact listo, puede llamar el ML service.) Tj
+T* (- La inferencia shadow corre en paralelo cuando SAAS_ML_SHADOW_INFERENCE_ENABLED=true, sin) Tj
+T* (  cambiar el resultado baseline de negocio.) Tj
+T* (- El output registra ml_inference con estado, modelo, version, score, label, latencia y error) Tj
+T* (  si aplica.) Tj
+T* (- Shadow/canary no aprobado se persiste como shadow y no genera recomendaciones automaticas.) Tj
+T* (- La persistencia de recomendaciones esta separada del permiso de prediccion: una prediccion) Tj
+T* (  demo puede generarse con intelligence_demo, pero escribir saas_intelligence_recommendations) Tj
+T* (  requiere predictive_recommendations habilitado y con cuota.) Tj
+T* (- El output de la prediccion incluye recommendation_gate para auditar si la recomendacion fue) Tj
+T* (  solicitada, habilitada, creada o bloqueada.) Tj
+T* (- UI tenant Inteligencia en saas-version/frontend/src/IntelligencePanel.jsx.) Tj
+T* (- UI tenant AI Ecosystem en saas-version/frontend/src/AiEcosystemPanel.jsx.) Tj
+T* (- UI tenant Inteligencia ahora incluye Industry Intelligence Center, Benchmark Dashboard,) Tj
+T* (  Industry Insights Panel, AI Playbook Marketplace, Industry AI Models y AI Knowledge Network.) Tj
+T* (- La vista tenant Inteligencia muestra summaries diario/semanal/operacional y tarjetas para) Tj
+ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 20 0 R >>
+endobj
+22 0 obj
+<< /Length 3876 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  lead scoring, churn, smart remarketing y anomalias operativas.) Tj
+T* (- El tenant puede ver grants/uso, feature snapshots, predicciones, recomendaciones, feedback y) Tj
+T* (  metricas de modelos.) Tj
+T* (- El tenant puede recalcular features, generar predicciones baseline con gating, registrar) Tj
+T* (  feedback y descartar recomendaciones usando APIs existentes /saas/v1/intelligence/*.) Tj
+T* (- Dashboard tenant muestra una franja predictiva con ultimas predicciones y recomendaciones) Tj
+T* (  abiertas.) Tj
+T* (- Inbox muestra badges predictivos y filtro Churn para conversaciones con riesgo alto.) Tj
+T* (- CRM/conversaciones exponen predictive_intelligence con lead score, conversion probability,) Tj
+T* (  engagement score, temperature, churn risk, retention priority, best channel/window/frequency) Tj
+T* (  y accion recomendada.) Tj
+T* (- CRM permite ejecutar predicciones conversation-level de lead scoring, churn y smart) Tj
+T* (  remarketing desde el panel lateral.) Tj
+T* (- Admin Operations expone /admin/operations/intelligence/process.) Tj
+T* (- AI Predictivo, Operacion y Salud pueden ejecutar Intelligence manualmente.) Tj
+T* (- intelligence/capture.py registra eventos inline seleccionados con transaccion anidada para) Tj
+T* (  no romper la escritura de negocio.) Tj
+T* (- El envio outbound desde CRM registra message.sent con replay key message:{id}.) Tj
+T* (- Billing registra billing.subscription.changed al activar checkout pago y al cambiar estado) Tj
+T* (  de suscripcion.) Tj
+T* (- Advisor recibe predicciones/recomendaciones recientes como contexto.) Tj
+T* (- Endpoint GET /saas/v1/advisor/briefing alimenta el floating Advisor con overview predictivo,) Tj
+T* (  insights proactivos, recomendaciones, acciones, actividad, metricas y memoria.) Tj
+T* (- El floating Advisor muestra briefing predictivo persistente sin auto-ejecutar acciones.) Tj
+T* (- Endpoint GET /saas/v1/agents/os expone cobertura core de agentes, capas de memoria,) Tj
+T* (  subscripciones, mensajes, tool runs, traces, routing de modelos, estado premium/demo y) Tj
+T* (  orquestador.) Tj
+T* (- Endpoints GET | POST /saas/v1/agents/os/messages, POST /saas/v1/agents/os/event-sync y GET |) Tj
+T* (  POST /saas/v1/agents/{agent_id}/tool-runs agregan comunicacion inter-agente, sync de senales) Tj
+T* (  predictivas y trazas de herramientas.) Tj
+T* (- Agent OS puede convertir predicciones/recomendaciones recientes en jobs del orquestador solo) Tj
+T* (  cuando el tenant tiene modo premium full; en demo devuelve candidatos sin encolar.) Tj
+T* (- Tool runs de Agent OS crean action drafts aprobables por humano y no ejecutan efectos de) Tj
+T* (  negocio directamente.) Tj
+T* (- UI tenant AI Agents agrega pestana Agent OS con cobertura, memoria, event-driven) Tj
+T* (  subscriptions, mensajes, tool runs y observabilidad.) Tj
+T* (- Endpoint GET /saas/v1/intelligence/operations/center expone AI Operations Center con policy,) Tj
+T* (  niveles de autonomia, snapshot, anomalias, acciones, reportes y playbooks.) Tj
+T* (- Endpoints PATCH /saas/v1/intelligence/operations/control, POST) Tj
+T* (  /saas/v1/intelligence/operations/analyze, GET /saas/v1/intelligence/operations/actions, y) Tj
+T* (  approve/execute/dismiss agregan AI Control Center y flujo supervisado de acciones autonomas.) Tj
+T* (- intelligence/operations.py detecta anomalias de webhooks, outbound, dead-letter, Meta) Tj
+T* (  subscription drift, campanas, triggers, inactividad, oportunidades comerciales y worker) Tj
+T* (  degradation.) Tj
+T* (- Autonomous Operations soporta niveles 0 a 4. En demo permite preview/analisis, pero fuerza) Tj
+T* (  auto_remediation_enabled=false y low_risk_auto_execute=false.) Tj
+T* (- La ejecucion actual de acciones autonomas registra resultado controlado/auditable y no muta) Tj
+T* (  directamente Meta, colas, campanas, CRM o billing.) Tj
+ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 22 0 R >>
+endobj
+24 0 obj
+<< /Length 3801 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Worker de Intelligence ejecuta analisis autonomo en transaccion anidada y reporta totales) Tj
+T* (  autonomous_anomalies y autonomous_actions.) Tj
+T* (- UI tenant Inteligencia agrega AI Operations Center, AI Control Center, acciones autonomas y) Tj
+T* (  reportes operacionales.) Tj
+T* (- Feature flags premium nuevas: autonomous_operations, ai_self_healing, ai_control_center.) Tj
+T* (- AI Platform Ecosystem expone Marketplace, Agent Store, Plugin Center, Tool Registry, Event) Tj
+T* (  Subscriptions, Developer Console, Integrations Center y AI Apps.) Tj
+T* (- Las features ecosystem \(ai_marketplace, ai_plugin_center, ai_developer_console,) Tj
+T* (  ai_tool_registry, ai_app_framework\) quedan apagadas por defecto y disponibles por full) Tj
+T* (  premium/ai_premium.) Tj
+T* (- Las features Enterprise AI Network \(enterprise_ai_network, vertical_ai_intelligence,) Tj
+T* (  industry_ai_models, benchmark_intelligence, cross_tenant_intelligence, vertical_ai_advisors,) Tj
+T* (  ai_playbook_library\) quedan apagadas por defecto y disponibles por full premium/ai_premium.) Tj
+T* (- Enterprise AI Network comparte solo metricas agregadas y anonimizadas; no comparte mensajes) Tj
+T* (  crudos, conversaciones completas, nombres de tenants ni contenido sensible.) Tj
+T* (- Los benchmarks requieren muestra minima de 3 tenants por industria/metrica antes de) Tj
+T* (  publicarse como agregado.) Tj
+T* (- Los playbooks verticales son recomendaciones/drafts; no activan triggers, flows ni campanas) Tj
+T* (  automaticamente.) Tj
+T* (- En demo se puede previsualizar estado/catalogos; instalar/crear/actualizar requiere full) Tj
+T* (  mode.) Tj
+T* (- Plugins, tools, integraciones externas y AI apps son metadata/control-plane; no se ejecuta) Tj
+T* (  codigo no confiable dentro del API/worker.) Tj
+T* (- Developer apps guardan API keys hasheadas y muestran la key cruda solo una vez.) Tj
+T* (- Kimi verificado como proveedor oficial existente en AI Gateway; no se duplico proveedor.) Tj
+T* (- requirements-ml.txt instala MLflow, BentoML, XGBoost, LightGBM, scikit-learn, pandas/numpy,) Tj
+T* (  joblib y Prometheus client solo para la imagen ML.) Tj
+T* (- Dockerfile.ml aisla el runtime ML para no cargar dependencias pesadas en API/worker por) Tj
+T* (  defecto.) Tj
+T* (- Compose agrega perfil opcional ml con mlflow, ml-service y qdrant; todas las flags ML quedan) Tj
+T* (  apagadas por defecto en API/worker.) Tj
+T* (- Entrenamiento inicial soporta datasets sinteticos/autolabel para lead scoring, churn) Tj
+T* (  prediction, smart remarketing y operational anomaly detection.) Tj
+T* (- Auto-labeling operativo a partir de datos reales del SaaS: conversiones CRM/pago,) Tj
+T* (  inactividad, engagement negativo, resultados de campanas/broadcasts y fallos operativos.) Tj
+T* (- Feature pipelines operativos para lead_scoring, churn_prediction, smart_remarketing y) Tj
+T* (  operational_anomaly, con feature_set_key, version y metadata de calidad.) Tj
+T* (- Build de datasets desde Postgres: une saas_ml_auto_labels con) Tj
+T* (  saas_intelligence_feature_values, genera CSV/manifiesto y registra) Tj
+T* (  saas_ml_training_datasets.) Tj
+T* (- Entrenamiento autolabel operativo: LightGBM, XGBoost o sklearn fallback desde datasets) Tj
+T* (  Postgres, logging MLflow/BentoML cuando esta disponible, evaluacion offline y registro) Tj
+T* (  opcional como candidato shadow.) Tj
+T* (- Worker de Intelligence puede preparar labels/features solo si) Tj
+T* (  SAAS_ML_AUTO_TRAIN_ENABLED=true; por defecto sigue apagado para no alterar runtime) Tj
+T* (  Meta/WhatsApp/Instagram.) Tj
+T* (- Admin AI Predictivo muestra readiness de datasets, estado de infraestructura ML,) Tj
+T* (  jobs/artifacts/inference/drift y boton de entrenamiento sintetico cuando ML esta habilitado.) Tj
+ET
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 24 0 R >>
+endobj
+26 0 obj
+<< /Length 3741 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+() Tj
+T* (Validaciones:) Tj
+T* () Tj
+T* (- Backend compileall aprobado para modulos tocados.) Tj
+T* (- npm --prefix saas-version/frontend run build aprobado para la UI tenant Inteligencia.) Tj
+T* (- npm --prefix saas-version/admin-frontend run build aprobado.) Tj
+T* (- Ultima validacion frontend de la capa producto predictiva: npm.cmd run build en) Tj
+T* (  saas-version/frontend aprobado con advertencia Vite existente de chunk grande.) Tj
+T* (- Ultima validacion backend de la capa producto predictiva: docker compose -f) Tj
+T* (  saas-version/docker-compose.saas.yml exec -T api python -m compileall -q app_saas aprobado) Tj
+T* (  dentro del contenedor API reconstruido.) Tj
+T* (- docker compose -f saas-version/docker-compose.saas.yml config --quiet aprobado.) Tj
+T* (- SQL sin BOM y UTF-8 estricto OK.) Tj
+T* (- git diff --check limitado al scope SaaS/docs aprobado.) Tj
+T* (- Docker/PostgreSQL limpio aplico migraciones hasta 054; API health, Swagger, OpenAPI, Admin) Tj
+T* (  health, API worker y worker standalone iniciaron correctamente.) Tj
+T* (- Ultimo rebuild SaaS actual: docker compose -f saas-version/docker-compose.saas.yml up -d) Tj
+T* (  --build aplico migraciones 001 a 054; API /saas/v1/health y Swagger /docs respondieron 200;) Tj
+T* (  API/admin/worker/PostgreSQL quedaron healthy/running.) Tj
+T* (- Validacion Agent OS: docker compose ... exec -T api python -m compileall -q app_saas) Tj
+T* (  aprobado, tablas saas_ai_agent_messages, saas_ai_agent_runtime_traces,) Tj
+T* (  saas_ai_agent_tool_runs y saas_ai_agent_event_subscriptions existen, frontend build) Tj
+T* (  aprobado.) Tj
+T* (- Validacion Autonomous Operations: ultimo rebuild SaaS aplico migracion 052; existen tablas) Tj
+T* (  saas_ai_operation_policies, saas_ai_operation_playbooks, saas_ai_operation_anomalies,) Tj
+T* (  saas_ai_operation_actions y saas_ai_operation_reports; OpenAPI contiene) Tj
+T* (  /intelligence/operations/*; API health y Swagger OK; smoke tenant demo/control aprobado.) Tj
+T* (- Validacion AI Platform Ecosystem: ultimo rebuild SaaS aplico migracion 053; existen tablas) Tj
+T* (  ecosystem; OpenAPI contiene /ecosystem/*; API compileall, frontend build, API health y) Tj
+T* (  Swagger OK; smoke tenant demo bloqueo mutaciones sin full; smoke premium marketplace) Tj
+T* (  install/plugin/tool/developer-app aprobado; browser smoke local cargo AI Ecosystem sin) Tj
+T* (  errores de consola.) Tj
+T* (- Validacion Enterprise AI Network: ultimo rebuild SaaS aplico migracion 054; existen tablas) Tj
+T* (  vertical network; OpenAPI contiene /intelligence/network/center, /refresh y /playbooks; API) Tj
+T* (  compileall, frontend/admin build, API health y Swagger OK; smoke tenant demo cargo) Tj
+T* (  center/preview; refresh full bloqueo sin permiso; refresh full con grant premium persistio 8) Tj
+T* (  insights y 7 benchmarks tenant; browser smoke local cargo cliente y admin sin errores de) Tj
+T* (  consola.) Tj
+T* (- Smoke Admin autenticado aprobado para listar modelos, evaluar readiness, hacer PATCH de) Tj
+T* (  modelo, registrar evento de rollout y registrar auditoria admin.) Tj
+T* (- Smoke tenant aprobado para registro, cliente CRM, envio outbound y evento inline) Tj
+T* (  message.sent.) Tj
+T* (- Smoke billing aprobado para cambio de estado de suscripcion y evento inline) Tj
+T* (  billing.subscription.changed.) Tj
+T* (- Smoke predictivo extendido aprobado en Docker/PostgreSQL limpio: registro de tenant,) Tj
+T* (  clientes CRM semilla, recomputo de features, grant deshabilitado de) Tj
+T* (  predictive_recommendations, prediccion demo lead_scoring sin recomendacion persistida,) Tj
+T* (  prediccion full smart_remarketing con recomendacion persistida, feedback, metricas de modelo) Tj
+ET
+endstream
+endobj
+27 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 26 0 R >>
+endobj
+28 0 obj
+<< /Length 3621 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  y descarte de recomendacion.) Tj
+T* (- Smoke canary aprobado en Docker/PostgreSQL limpio: login admin, registro de tenant, grant) Tj
+T* (  premium, registro de modelo, recomputo de features, canary 100%, fallback 0% y metadata) Tj
+T* (  baseline_rules.) Tj
+T* (- Smoke ML opcional aprobado en Docker/PostgreSQL limpio con migraciones 001 a 049: MLflow) Tj
+T* (  healthy, ML service healthy, Qdrant ready, entrenamiento sintetico LightGBM, prediccion,) Tj
+T* (  drift, training XGBoost desde Admin, registro shadow en model registry y MLops overview.) Tj
+T* (- Smoke ML training strategy aprobado en Docker/PostgreSQL limpio con migraciones 001 a 050:) Tj
+T* (  generacion de auto-labels, recomputo de feature pipelines, build de dataset, entrenamiento) Tj
+T* (  autolabel, registro de evaluacion, prediccion directa y drift.) Tj
+T* (- Smoke de inferencia shadow aprobado: prediccion baseline de churn queda como salida) Tj
+T* (  autorizada y el modelo entrenado retorna ml_inference.ok = true bajo) Tj
+T* (  baseline_rules+ml_shadow.) Tj
+T* (- Escaneo estricto de logs recientes de API, ML service y worker sin Traceback, UserWarning,) Tj
+T* (  excepciones no manejadas ni ERROR:.) Tj
+T* (- Browser smoke aprobado para Scentra Admin servido desde Docker sin errores de consola.) Tj
+T* (- Browser smoke visual del cliente tenant para la capa producto predictiva quedo pendiente: la) Tj
+T* (  politica del Browser bloqueo file:// y el dev server Vite local no quedo alcanzable en esta) Tj
+T* (  sesion de Windows. La validacion frontend de esta parte queda a nivel build.) Tj
+T* (- PDF de seguimiento en espanol regenerado: docs/Scentra_SaaS_Project_Status.pdf.) Tj
+T* () Tj
+T* (Pendiente para acceptance productiva total de Fase 11:) Tj
+T* () Tj
+T* (- Ampliar emision inline mas alla de CRM outbound y cambios de suscripcion cuando un dominio) Tj
+T* (  necesite fanout casi realtime.) Tj
+T* (- Revisar calidad/distribucion de auto-labels por tenant con datos reales antes de promover) Tj
+T* (  modelos productivos.) Tj
+T* (- Promover modelos desde shadow/canary/full con revision humana, no con artifacts sinteticos o) Tj
+T* (  auto-labels sin validar.) Tj
+T* (- Profundizar drift, precision, recall, latencia, costo por prediccion, alertas y rollback) Tj
+T* (  operativo.) Tj
+T* (- Decidir si Qdrant se conectara al RAG productivo; por ahora esta preparado en el perfil ML) Tj
+T* (  pero el Knowledge/RAG actual sigue usando Postgres sparse-vector + lexical.) Tj
+T* (- Kafka/NATS no fueron agregados al stack default; event streaming externo debe entrar solo) Tj
+T* (  cuando el volumen lo justifique.) Tj
+T* (- Mantener Autonomous Operations en modo supervisado hasta que cada playbook de self-healing) Tj
+T* (  tenga evidencia en staging, rollback ensayado y aprobacion explicita para efectos reales.) Tj
+T* (- Disenar sandbox/plugin runtime y gateway externo antes de habilitar plugins ejecutables o) Tj
+T* (  autenticacion publica con developer keys.) Tj
+T* (- Ajustar cohortes, definicion de KPIs y mensajes comerciales de benchmark con datos reales) Tj
+T* (  antes de vender comparativas sectoriales como referencia definitiva.) Tj
+T* (- Ajustar thresholds de anomalias y politicas de autonomia con trafico real antes de habilitar) Tj
+T* (  Level 3/4 ampliamente.) Tj
+T* (- Ampliar acceptance con trafico real de tenants/proveedores y volumenes mayores.) Tj
+T* (- Validar en staging los textos/claims visibles de inteligencia predictiva antes de venta) Tj
+T* (  enterprise para no presentar modelos bootstrap/autolabel como precision productiva) Tj
+T* (  certificada.) Tj
+T* () Tj
+ET
+endstream
+endobj
+29 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 28 0 R >>
+endobj
+30 0 obj
+<< /Length 3356 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(FASE 12 Y 13 CERRADAS, FASES RECOMENDADAS 14 A 15) Tj
+T* () Tj
+T* (Fase 12 Performance, Reliability & Scale:) Tj
+T* () Tj
+T* (- Implementada con migracion 055, SLO policies, backpressure policies, retention policies,) Tj
+T* (  cleanup runs, snapshots, drills e indices esperados para tablas de alto volumen.) Tj
+T* (- Backend app_saas/reliability/service.py calcula SLOs, backpressure, auditoria de indices) Tj
+T* (  PostgreSQL, retention dry-run, backup readiness y drills.) Tj
+T* (- Worker reliability corre desde API embedded y worker standalone; registra snapshots y) Tj
+T* (  dry-runs sin mutar colas/proveedores.) Tj
+T* (- Admin expone Performance con SLOs, colas, indices, retention, cleanup runs, drills,) Tj
+T* (  snapshots y acciones seguras.) Tj
+T* (- No ejecuta auto-throttling, no pausa campanas, no repara Meta automaticamente y no borra) Tj
+T* (  datos por defecto.) Tj
+T* (- Validacion local: build frontend/admin, py_compile backend, Compose config, BOM scan, Docker) Tj
+T* (  rebuild, migracion 055, API health, Swagger, OpenAPI, API compileall, smoke autenticado) Tj
+T* (  Admin reliability, retention dry-run de 6 politicas, log scan y PDF regenerado.) Tj
+T* (- Pendiente de acceptance productiva: pruebas de carga reales, tuning de thresholds, pruebas) Tj
+T* (  reales de backup/restore y politica legal/operativa de retencion.) Tj
+T* () Tj
+T* (Fase 13 Security, 2FA & Compliance:) Tj
+T* () Tj
+T* (- Implementada con migracion 056_saas_phase13_security_compliance.sql, tabla) Tj
+T* (  saas_mfa_challenges y tabla saas_privacy_requests.) Tj
+T* (- Tenant login y Admin login soportan challenge MFA por email OTP cuando el usuario lo activa) Tj
+T* (  o cuando el rol esta configurado como obligatorio.) Tj
+T* (- Los JWT emitidos despues de OTP llevan verificacion MFA y refresh bloquea sesiones que) Tj
+T* (  requieren MFA sin haberlo completado.) Tj
+T* (- Ajustes de seguridad tenant/admin permiten activar/desactivar 2FA email; en produccion) Tj
+T* (  requiere SMTP configurado.) Tj
+T* (- Emails de seguridad para reset/cambio de password y cambios 2FA quedan detras de) Tj
+T* (  SAAS_SECURITY_NOTIFY_ENABLED.) Tj
+T* (- Tenant app puede exportar datos de cuenta, exportar datos de una conversacion/cliente) Tj
+T* (  seleccionado y registrar solicitud de borrado sin hard-delete automatico.) Tj
+T* (- Admin app agrega Security con metricas de 2FA, admins sin 2FA, webhooks firmados, eventos de) Tj
+T* (  seguridad, solicitudes de privacidad, estado SMTP y export CSV de auditoria.) Tj
+T* (- Validacion local: compileall backend, build frontend/admin, Docker rebuild API/worker/admin,) Tj
+T* (  migraciones hasta 056, health, Swagger, smoke tenant MFA, smoke admin MFA, smoke compliance) Tj
+T* (  export, smoke Admin Security Compliance y logs API/worker sin errores actuales.) Tj
+T* (- TOTP/app authenticator no se implemento; el metodo aprobado en esta fase es email OTP para) Tj
+T* (  minimizar riesgo y reutilizar SMTP existente.) Tj
+T* () Tj
+T* (Fase 14 Localization & Product Ops:) Tj
+T* () Tj
+T* (- Implementada con catalogos locales sin dependencias: frontend/src/i18n.js y) Tj
+T* (  admin-frontend/src/i18n.js.) Tj
+T* (- Locale base es-CO; overrides opcionales VITE_APP_LOCALE y VITE_ADMIN_LOCALE.) Tj
+T* (- Normalizados textos criticos de navegacion tenant/Admin, titulos de paginas, tabs de) Tj
+ET
+endstream
+endobj
+31 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 30 0 R >>
+endobj
+32 0 obj
+<< /Length 3342 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  ajustes, conexion Meta/Facebook, plantillas Broadcast, Agentes IA, Ecosistema IA, benchmarks) Tj
+T* (  de Inteligencia y Admin Rendimiento.) Tj
+T* (- Scripts Product Ops:) Tj
+T* (- node saas-version/scripts/phase14-copy-audit.mjs) Tj
+T* (- node saas-version/scripts/phase14-release-check.mjs) Tj
+T* (- Package scripts tenant/Admin: phase14:copy-audit y phase14:release-check.) Tj
+T* (- Documentacion/arquitectura/ADR agregadas: docs/LOCALIZATION_PRODUCT_OPS.md,) Tj
+T* (  architecture/LOCALIZATION_PRODUCT_OPS.md,) Tj
+T* (  decisions/ADR-038-phase14-localization-product-ops.md.) Tj
+T* (- No cambia APIs, DB, auth, billing, workers, Meta ni runtime ML/IA.) Tj
+T* (- Pendiente evolutivo: mover copy largo de panels especificos a catalogos conforme se) Tj
+T* (  modifiquen esos modulos y agregar E2E real cuando se apruebe un framework de testing.) Tj
+T* () Tj
+T* (Fase 15 Agent Framework Research & Integration:) Tj
+T* () Tj
+T* (- Fase 15.1A analizo la repo local completa en external-repos/agency-agents/, usando el README) Tj
+T* (  externo inicial solo como contexto.) Tj
+T* (- La repo es una libreria MIT de agentes Markdown/personas/prompts, no un runtime SaaS listo) Tj
+T* (  para ejecutar.) Tj
+T* (- Se detectaron 184 agentes validos con frontmatter, 16 documentos estrategicos/playbooks sin) Tj
+T* (  frontmatter de agente, 14 categorias de agentes, docs NEXUS, ejemplos, integraciones y) Tj
+T* (  scripts de instalacion/conversion/lint.) Tj
+T* (- La carpeta local no fue detectada como subrepo Git independiente; falta confirmar source) Tj
+T* (  URL, commit/tag upstream y si hay cambios privados.) Tj
+T* (- Lo aprovechable para Scentra es taxonomia, estructura de persona, misiones, reglas criticas,) Tj
+T* (  workflows, handoffs NEXUS, entregables, metricas de exito, playbooks y rubricas de) Tj
+T* (  evaluacion.) Tj
+T* (- No se aprueba ejecutar scripts externos, instalar agentes globales ni correr plugin code) Tj
+T* (  dentro de API/worker.) Tj
+T* (- Fase 15.1B/15.1C se implementaron sin afectar runtime:) Tj
+T* (  saas-version/scripts/phase15-agent-template-intake.mjs genero inventario, CSV, drafts) Tj
+T* (  deshabilitados y reporte en docs/phase15_1/.) Tj
+T* (- Fase 15.2/15.3 se implementaron sin afectar runtime:) Tj
+T* (  saas-version/scripts/phase15-nexus-eval-harness.mjs genero 7 contratos de handoff, 7) Tj
+T* (  playbooks, 4 runbooks, 6 rubricas y evals para 29 drafts.) Tj
+T* (- Documentacion creada/actualizada: docs/PHASE15_1_AGENCY_AGENTS_RESEARCH.md,) Tj
+T* (  architecture/AGENT_TEMPLATE_INTAKE.md,) Tj
+T* (  decisions/ADR-039-phase15-1-agency-agents-research.md,) Tj
+T* (  decisions/ADR-040-phase15-1b-1c-offline-agent-template-intake.md,) Tj
+T* (  decisions/ADR-041-phase15-2-15-3-nexus-eval-harness.md.) Tj
+T* (- Para avanzar hace falta confirmar upstream Git URL/commit/tag, decidir atribucion, ejecutar) Tj
+T* (  secret scan formal, escoger categorias definitivas y aprobar importacion real a Admin/DB.) Tj
+T* (- Se mantienen las reglas actuales: una conversacion solo puede tener un dueno IA activo a la) Tj
+T* (  vez, memoria individual/colectiva sigue tenant-scoped, y herramientas quedan approval-first.) Tj
+T* () Tj
+T* (Fase 16 AI Real-Time Intelligence Layer:) Tj
+T* () Tj
+T* (- Implementada como control-plane premium realtime sobre la inteligencia existente.) Tj
+ET
+endstream
+endobj
+33 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 32 0 R >>
+endobj
+34 0 obj
+<< /Length 3528 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Migracion nueva: saas-version/migrations/059_saas_realtime_intelligence_phase16.sql.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/realtime.py.) Tj
+T* (- Tablas nuevas: saas_realtime_intelligence_sessions, saas_realtime_intelligence_cursors y) Tj
+T* (  saas_realtime_intelligence_metrics.) Tj
+T* (- Endpoints tenant: /saas/v1/intelligence/realtime/center, /events, /sessions, /cursor,) Tj
+T* (  /sessions/{id}/close y /stream.) Tj
+T* (- Endpoints Admin: /saas/v1/admin/intelligence/realtime y) Tj
+T* (  /saas/v1/admin/intelligence/realtime/metrics/refresh.) Tj
+T* (- Feature flags: realtime_intelligence_layer, realtime_event_stream, realtime_ai_alerts,) Tj
+T* (  realtime_intelligence_dashboard.) Tj
+T* (- UI tenant en IntelligencePanel.jsx: estado live, sesiones, cursor, metricas, alertas, feed) Tj
+T* (  de eventos sanitizados y mezcla de eventos.) Tj
+T* (- UI Admin en AdminApp.jsx: overview por tenant, sesiones activas, eventos recientes,) Tj
+T* (  predicciones, recomendaciones y modos por feature.) Tj
+T* (- Transporte actual: polling seguro cada 8 segundos en UI tenant y SSE acotado para clientes) Tj
+T* (  futuros.) Tj
+T* (- Seguridad: no agrega Kafka/NATS/Redis Streams/WebSockets, no instala dependencias, no envia) Tj
+T* (  mensajes, no cambia CRM/campanas/billing/Meta/workflows/agentes/modelos y no ejecuta) Tj
+T* (  remediacion.) Tj
+T* (- Validacion: compileall backend, build tenant, build Admin, Compose config, SQL BOM/UTF-8,) Tj
+T* (  Docker rebuild API/worker/Admin, migraciones hasta 059, bootstrap PostgreSQL limpio 001 a) Tj
+T* (  059, health API, Swagger, health Admin, OpenAPI realtime, smoke tenant con evento) Tj
+T* (  sanitizado/sesion/cursor/cierre, smoke Admin con refresh de metricas, log scan API/worker y) Tj
+T* (  browser smoke de tenant/Admin/Swagger.) Tj
+T* (- Pendiente productivo: pruebas de trafico/capacidad antes de prometer latencia realtime) Tj
+T* (  contractual y definir politica comercial por plan/tenant.) Tj
+T* () Tj
+T* (Fase 24 Voice & Multimodal Intelligence:) Tj
+T* () Tj
+T* (- Fase 24.1 implementada como fundacion de compatibilidad para voz, imagen, video y) Tj
+T* (  documentos.) Tj
+T* (- Backend: GatewayAttachment, GatewayRequest.attachments y generate_with_gateway\(...,) Tj
+T* (  attachments=...\).) Tj
+T* (- Gemini adapter puede enviar partes inline_data o file_data; OpenAI-compatible puede enviar) Tj
+T* (  imagenes como image_url cuando el modelo lo soporte.) Tj
+T* (- Los logs de saas_ai_runs solo registran metadata segura de adjuntos: conteo, tipos, MIME y) Tj
+T* (  origen; no guardan base64 ni bytes.) Tj
+T* (- Catalogo ampliado con gemini-2.5-flash-lite y moonshot-v1-8k-vision-preview; Kimi queda) Tj
+T* (  marcado como multimodal-capable para modelos compatibles.) Tj
+T* (- UI tenant Ajustes > APIs ahora muestra tiles "Anadir" y expande solo proveedores) Tj
+T* (  configurados o seleccionados, reduciendo la pagina larga.) Tj
+T* (- Fase 24.2 Voice Intelligence implementada para audios existentes del Inbox.) Tj
+T* (- Migracion nueva: saas-version/migrations/060_saas_voice_intelligence_phase24.sql.) Tj
+T* (- Tabla nueva: saas_voice_intelligence_analyses.) Tj
+T* (- Feature flags: voice_intelligence, voice_transcription, voice_sentiment_intent.) Tj
+T* (- Endpoint tenant: POST /saas/v1/media/messages/{message_id}/voice/analyze.) Tj
+T* (- Capacidades: transcripcion, resumen, sentimiento, score, intencion, urgencia, idioma,) Tj
+T* (  confianza, accion recomendada, action items y hints CRM.) Tj
+ET
+endstream
+endobj
+35 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 34 0 R >>
+endobj
+36 0 obj
+<< /Length 3641 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Fuentes de audio: saas_media_assets local y audio inbound de WhatsApp por los helpers) Tj
+T* (  existentes de Meta Graph.) Tj
+T* (- Provider actual para audio real: Google/Gemini via AI Gateway attachments.) Tj
+T* (- UI tenant Ajustes > IA permite seleccionar provider de analisis de audio y muestra) Tj
+T* (  modelo/credencial vinculada.) Tj
+T* (- UI Inbox muestra tarjetas Voice Intelligence en mensajes de audio con Analizar/Reanalizar,) Tj
+T* (  resumen, sentimiento, intencion y transcript expandible.) Tj
+T* (- Fase 24.3 Vision Intelligence implementada para imagenes, documentos y archivos existentes) Tj
+T* (  del Inbox.) Tj
+T* (- Migracion nueva: saas-version/migrations/061_saas_vision_intelligence_phase24.sql.) Tj
+T* (- Tabla nueva: saas_vision_intelligence_analyses.) Tj
+T* (- Feature flags: vision_intelligence, image_understanding, document_ocr.) Tj
+T* (- Endpoint tenant: POST /saas/v1/media/messages/{message_id}/vision/analyze.) Tj
+T* (- Capacidades: descripcion visual, texto extraido/OCR-style, resumen, tipo de documento,) Tj
+T* (  sentimiento, intencion, urgencia, idioma, confianza, entidades, temas, pistas de producto y) Tj
+T* (  accion recomendada.) Tj
+T* (- Fuentes de media: saas_media_assets local y media inbound de WhatsApp por los helpers) Tj
+T* (  existentes de Meta Graph.) Tj
+T* (- Provider actual para documentos/OCR: Google/Gemini via AI Gateway attachments; imagenes) Tj
+T* (  pueden solicitar Google, OpenRouter o Kimi cuando el modelo/credencial lo soporte.) Tj
+T* (- UI tenant Ajustes > IA permite seleccionar provider de Vision Intelligence y muestra) Tj
+T* (  modelo/credencial vinculada.) Tj
+T* (- UI Inbox muestra tarjetas Vision Intelligence en mensajes de imagen/documento/archivo con) Tj
+T* (  Analizar/Reanalizar, resumen, tipo documental, intencion, descripcion visual y texto) Tj
+T* (  extraido expandible.) Tj
+T* (- Fase 24.4 Web/Image Search Intelligence implementada para busqueda externa con fuentes y) Tj
+T* (  aprobacion humana.) Tj
+T* (- Migracion nueva: saas-version/migrations/062_saas_web_image_search_intelligence_phase24.sql.) Tj
+T* (- Tablas nuevas: saas_web_search_intelligence_runs y saas_web_search_intelligence_results.) Tj
+T* (- Feature flags: web_search_intelligence, image_search_intelligence, external_source_assist.) Tj
+T* (- Endpoints tenant: POST /saas/v1/media/search, GET /saas/v1/media/search/runs y POST) Tj
+T* (  /saas/v1/media/search/results/{result_id}/approval.) Tj
+T* (- Providers soportados: Tavily, Brave Search API y SerpAPI mediante credenciales tenant) Tj
+T* (  cifradas.) Tj
+T* (- Resultados guardan fuente, snippet, URL, imagen/thumbnail opcional, score/rank, estado de) Tj
+T* (  seguridad, estado de aprobacion y metadata.) Tj
+T* (- Resultados inseguros/internos/privados quedan bloqueados y no se pueden aprobar.) Tj
+T* (- UI tenant Ajustes > APIs agrega tiles compactos para providers de busqueda.) Tj
+T* (- UI tenant Ajustes > IA permite seleccionar provider de busqueda web/imagen y ver estado de) Tj
+T* (  credencial.) Tj
+T* (- UI Inbox CRM side panel muestra tarjetas de fuentes con preview visual cuando existe y) Tj
+T* (  acciones aprobar/rechazar.) Tj
+T* (- Fase 24.5 Agent Multimodal Tools implementada para agentes.) Tj
+T* (- Migracion nueva: saas-version/migrations/063_saas_agent_multimodal_tools_phase24.sql.) Tj
+T* (- Feature flags: agent_multimodal_tools, agent_voice_tools, agent_vision_tools,) Tj
+T* (  agent_external_search_tools.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/agents/multimodal_tools.py.) Tj
+T* (- Endpoints tenant: GET /saas/v1/agents/multimodal-tools/catalog, GET) Tj
+ET
+endstream
+endobj
+37 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 36 0 R >>
+endobj
+38 0 obj
+<< /Length 3691 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  /saas/v1/agents/{agent_id}/multimodal-tools/runs y POST) Tj
+T* (  /saas/v1/agents/{agent_id}/multimodal-tools/execute.) Tj
+T* (- Herramientas: media.voice_analyze, media.vision_analyze y media.web_image_search.) Tj
+T* (- Los agentes deben tener la herramienta declarada en tools_json y pasar gating premium/demo) Tj
+T* (  antes de ejecutar.) Tj
+T* (- Los tool runs se registran en saas_ai_agent_tool_runs; busqueda externa sigue usando) Tj
+T* (  aprobacion humana por resultado.) Tj
+T* (- El runtime de conversacion del agente puede leer contexto multimodal compacto; fuentes) Tj
+T* (  externas solo entran al prompt si estan aprobadas y no bloqueadas.) Tj
+T* (- UI tenant AI Agents > Agent OS muestra herramientas multimodales, formulario de ejecucion,) Tj
+T* (  runs recientes y aprobacion/rechazo de fuentes.) Tj
+T* (- Fase 24.6 Multimodal Memory & Training Events implementada para guardar resultados utiles en) Tj
+T* (  ML/RAG/memoria.) Tj
+T* (- Migracion nueva:) Tj
+T* (  saas-version/migrations/064_saas_multimodal_memory_training_events_phase24.sql.) Tj
+T* (- Tabla nueva: saas_multimodal_memory_events.) Tj
+T* (- Feature flags: multimodal_memory_events, multimodal_training_events,) Tj
+T* (  multimodal_rag_materialization, multimodal_agent_memory.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/agents/multimodal_memory.py.) Tj
+T* (- Endpoints tenant: GET /saas/v1/agents/multimodal-memory/events, POST) Tj
+T* (  /saas/v1/agents/multimodal-memory/sync y POST) Tj
+T* (  /saas/v1/agents/multimodal-memory/events/{event_id}/materialize.) Tj
+T* (- Captura senales sanitizadas desde analisis de voz, analisis de vision, fuentes web/imagen) Tj
+T* (  aprobadas y tool runs multimodales completados.) Tj
+T* (- Actualiza features conversacionales en saas_intelligence_feature_values: conteo multimodal,) Tj
+T* (  fuentes externas aprobadas, confianza, sentimiento, urgencia y volumen de texto.) Tj
+T* (- La marca eligible_for_training requiere multimodal_training_events, ml_predictions o) Tj
+T* (  ai_premium; memoria sin ese gate no autoriza entrenamiento.) Tj
+T* (- Los operadores pueden materializar eventos a Knowledge/RAG, memoria colectiva de agentes o) Tj
+T* (  ambos; contenido de clientes requiere aprobacion explicita.) Tj
+T* (- UI tenant AI Agents > Agent OS muestra Memoria y training multimodal, conteos, eventos,) Tj
+T* (  sincronizacion y botones de materializacion.) Tj
+T* (- Seguridad: no guarda bytes/base64, no muta CRM, no crea tareas/tickets, no lanza campanas,) Tj
+T* (  no ejecuta workflows, no asigna agentes, no crawlea resultados, no entrena modelos) Tj
+T* (  automaticamente y no envia mensajes.) Tj
+T* (- Validacion: py_compile/import backend, builds tenant/Admin, Compose config, SQL scans,) Tj
+T* (  Docker rebuild API/worker/Admin, migracion activa hasta 064, compileall backend en) Tj
+T* (  contenedor, API health, Swagger, OpenAPI multimodal memory endpoints, check DB de) Tj
+T* (  migracion/flags, smoke autenticado de sync/materializacion, browser smoke de Agent OS) Tj
+T* (  despues de serializar DDL runtime, log scan API/worker sin nuevos 500/deadlock/traceback y) Tj
+T* (  bootstrap PostgreSQL limpio 001 a 064.) Tj
+T* (- Fase 24.7 Inbox UX implementada para panel de analisis, referencias visuales aprobadas y) Tj
+T* (  aprobar/usar/enviar.) Tj
+T* (- No requiere migracion nueva; reutiliza tablas de Web/Image Search, memoria multimodal y) Tj
+T* (  CRM/outbound.) Tj
+T* (- Endpoint tenant: POST /saas/v1/media/search/results/{result_id}/reference.) Tj
+T* (- El endpoint prepara texto de referencia solo desde resultados aprobados y no bloqueados;) Tj
+T* (  revalida URL publica y conversacion opcional.) Tj
+ET
+endstream
+endobj
+39 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 38 0 R >>
+endobj
+40 0 obj
+<< /Length 3674 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- El envio real al cliente sigue usando POST) Tj
+T* (  /saas/v1/conversations/{conversation_id}/messages, conservando cuota, cola outbound, estados) Tj
+T* (  Meta y auditoria message.sent.) Tj
+T* (- UI Inbox CRM side panel muestra Panel de analisis Inbox con voz, vision, memoria multimodal,) Tj
+T* (  conteos de referencias aprobadas/pendientes, refresco y sincronizacion de memoria.) Tj
+T* (- Las referencias visuales aprobadas tienen acciones Usar y Enviar; las fuentes pendientes) Tj
+T* (  seguras tienen Aprobar y usar y Aprobar y enviar.) Tj
+T* (- Enviar requiere click humano y confirmacion del navegador.) Tj
+T* (- Seguridad: no hay envio automatico por IA/agentes/workers, no se usan fuentes bloqueadas, no) Tj
+T* (  se bypassa aprobacion, no se crawlean resultados, no se entrena modelo y no se muta) Tj
+T* (  CRM/campanas/workflows/Meta/billing.) Tj
+T* (- Validacion: py_compile backend, build tenant, Docker rebuild API/worker, API health, OpenAPI) Tj
+T* (  reference endpoint y browser smoke frontend sin errores.) Tj
+T* (- Fase 24.8 Admin & Premium Gating implementada para activar/controlar Phase 24 por tenant,) Tj
+T* (  plan, proveedor y costo.) Tj
+T* (- Migracion nueva: saas-version/migrations/065_saas_multimodal_admin_gating_phase24.sql.) Tj
+T* (- Tablas nuevas: saas_intelligence_plan_feature_limits y saas_ai_provider_policies.) Tj
+T* (- Endpoints Admin: GET /saas/v1/admin/intelligence/premium-gating, PATCH) Tj
+T* (  /saas/v1/admin/intelligence/plans/{plan_code}/features y PATCH) Tj
+T* (  /saas/v1/admin/intelligence/provider-policies.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/premium.py.) Tj
+T* (- Admin puede configurar modo off/demo/full y cuota mensual para features Phase 24 por tenant) Tj
+T* (  o por plan.) Tj
+T* (- Admin puede configurar proveedor AI/search/TTS por scope global/plan/tenant, modelo) Tj
+T* (  opcional, estado enabled/disabled, cuota de requests, limite de costo mensual y costos) Tj
+T* (  input/output/request.) Tj
+T* (- AI Gateway y Web/Image Search verifican provider policy antes de llamar proveedores) Tj
+T* (  externos.) Tj
+T* (- UI Admin AI Predictivo muestra resumen de costos, credenciales listas, politicas activas,) Tj
+T* (  tenant gating y plan gating.) Tj
+T* (- Seguridad: valores cero de cuota/costo no bloquean; se interpretan como sin limite) Tj
+T* (  configurado. Las politicas por defecto permiten compatibilidad hasta que Admin configure) Tj
+T* (  bloqueo/cupo/costo.) Tj
+T* (- Validacion: py_compile backend, build Admin, Compose config, SQL scans, Docker rebuild) Tj
+T* (  API/worker/Admin, migracion activa hasta 065, API health, Swagger, Admin health, OpenAPI) Tj
+T* (  Phase 24.8, smoke autenticado de premium-gating/provider-policy, compileall en contenedor,) Tj
+T* (  log scan sin nuevos errores y bootstrap PostgreSQL limpio 001 a 065.) Tj
+T* (- Fase 24.9 Observability implementada para costo por media, latencia, errores, calidad y) Tj
+T* (  fuentes usadas.) Tj
+T* (- Migracion nueva:) Tj
+T* (  saas-version/migrations/067_saas_multimodal_observability_rollout_phase24.sql.) Tj
+T* (- Tabla nueva: saas_multimodal_observability_snapshots.) Tj
+T* (- Feature flags default-off: multimodal_observability, multimodal_cost_observability y) Tj
+T* (  multimodal_quality_monitoring.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/multimodal_observability.py.) Tj
+T* (- Endpoints tenant: GET /saas/v1/intelligence/multimodal/observability/center y POST) Tj
+T* (  /saas/v1/intelligence/multimodal/observability/refresh.) Tj
+T* (- Observabilidad agrega datos desde AI Gateway runs, Voice Intelligence, Vision Intelligence,) Tj
+ET
+endstream
+endobj
+41 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 40 0 R >>
+endobj
+42 0 obj
+<< /Length 3428 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  Web/Image Search, Agent tool runs y memoria multimodal.) Tj
+T* (- Reporta requests, costo estimado, latencia promedio/P95, errores, calidad/confianza,) Tj
+T* (  proveedores y fuentes usadas/aprobadas/bloqueadas.) Tj
+T* (- El costo usa pricing configurado por Admin en provider policies; costo cero significa) Tj
+T* (  pricing no configurado, no uso gratis ni factura real.) Tj
+T* (- Fase 24.10 Safe Rollout implementada con flags apagados por defecto, demo mode y canary.) Tj
+T* (- Tablas nuevas: saas_multimodal_rollout_policies y saas_multimodal_rollout_events.) Tj
+T* (- Feature flags default-off: multimodal_safe_rollout y multimodal_canary.) Tj
+T* (- Endpoints tenant: GET /saas/v1/intelligence/multimodal/rollout/center y PATCH) Tj
+T* (  /saas/v1/intelligence/multimodal/rollout/policy.) Tj
+T* (- Modos soportados: off, demo, canary y full.) Tj
+T* (- El canary es deterministico por tenant/user/subject y puede degradar a demo cuando la policy) Tj
+T* (  lo permite.) Tj
+T* (- Runtime aplicado en Voice Intelligence, Vision Intelligence y Web/Image Search antes de) Tj
+T* (  ejecutar proveedores externos.) Tj
+T* (- Seguridad: no hay bloqueo implicito; se requiere feature access y policy explicita) Tj
+T* (  habilitada. No muta CRM, campanas, workflows, billing, Meta runtime ni ownership de agentes.) Tj
+T* (- UI tenant Inteligencia muestra paneles Phase 24.9 y Phase 24.10 con metricas, providers,) Tj
+T* (  fuentes, policies y eventos de rollout.) Tj
+T* (- UI Admin AI Predictivo incluye los nuevos flags para tenant/plan gating.) Tj
+T* (- Validacion: py_compile backend, build tenant, build Admin, Compose config, SQL scans,) Tj
+T* (  tracked diff whitespace y scan manual de whitespace en archivos tocados. Pendiente Docker) Tj
+T* (  runtime/API/Swagger/bootstrap hasta 067 por Docker no accesible en la ultima sesion.) Tj
+T* () Tj
+T* (Fase 18 AI Workflow Composer:) Tj
+T* () Tj
+T* (- Implementada como control-plane premium para disenar workflows AI sin efectos externos) Tj
+T* (  durante pruebas.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/workflow_composer/.) Tj
+T* (- Migracion nueva: saas-version/migrations/057_saas_ai_workflow_composer_phase18.sql.) Tj
+T* (- UI tenant nueva: saas-version/frontend/src/WorkflowComposerPanel.jsx.) Tj
+T* (- Endpoints bajo /saas/v1/workflow-composer.) Tj
+T* (- Feature flags: ai_workflow_composer para operaciones full y workflow_composer_templates para) Tj
+T* (  plantillas/demo.) Tj
+T* (- Capacidades: plantillas seguras, editor de grafo, nodos/edges, preflight, simulacion sin) Tj
+T* (  efectos, aprobaciones, versiones, rollback y activacion composer_only.) Tj
+T* (- Validacion: build frontend/Admin, compileall backend, Docker rebuild, API health, Swagger,) Tj
+T* (  worker, bootstrap temporal limpio 001 a 057, smoke API autenticado y smoke browser del panel) Tj
+T* (  Composer.) Tj
+T* (- Pendiente intencional: despliegue runtime a triggers/flows/campanas/agentes. Requiere futuro) Tj
+T* (  diseno de materializacion, ADR, aprobacion humana, preflight y smoke staging.) Tj
+T* () Tj
+T* (Fase 22 AI Trust, Compliance & Governance:) Tj
+T* () Tj
+T* (- Implementada como control-plane premium para gobierno AI, no como enforcement automatico.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/trust_center/.) Tj
+T* (- Migracion nueva:) Tj
+T* (  saas-version/migrations/058_saas_ai_trust_compliance_governance_phase22.sql.) Tj
+ET
+endstream
+endobj
+43 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 42 0 R >>
+endobj
+44 0 obj
+<< /Length 3429 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- UI tenant nueva: saas-version/frontend/src/TrustCenterPanel.jsx.) Tj
+T* (- Vista Admin nueva: Trust AI en saas-version/admin-frontend/src/AdminApp.jsx.) Tj
+T* (- Endpoints tenant bajo /saas/v1/trust-center.) Tj
+T* (- Endpoints Admin bajo /saas/v1/admin/trust-center.) Tj
+T* (- Feature flags: ai_trust_center, ai_governance_policies, ai_risk_assessments, ai_model_cards,) Tj
+T* (  ai_compliance_reports, ai_audit_exports.) Tj
+T* (- Capacidades: politicas, attestations, risk scan preview/persist, mitigacion de riesgos,) Tj
+T* (  model cards, incidentes, auditoria y reportes de compliance AI.) Tj
+T* (- Validacion: compileall backend, build frontend tenant, build Admin, Docker rebuild,) Tj
+T* (  migracion activa hasta 058, bootstrap PostgreSQL limpio aislado 001 a 058, API health,) Tj
+T* (  Swagger, Admin health, OpenAPI Trust, smoke tenant Trust y smoke Admin Trust.) Tj
+T* (- Pendiente productivo: revisar lenguaje legal/compliance, hacer muestreo de auditoria real y) Tj
+T* (  definir politica de planes/tenants para full mode.) Tj
+T* () Tj
+T* (FASES 19 Y 20 CERRADAS) Tj
+T* () Tj
+T* (Fase 19 Autonomous Revenue Engine:) Tj
+T* () Tj
+T* (- Migracion nueva: saas-version/migrations/066_saas_revenue_memory_network_phase19_20.sql.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/revenue.py.) Tj
+T* (- Endpoints tenant bajo /saas/v1/intelligence/revenue/*.) Tj
+T* (- Tablas: politicas, oportunidades, forecasts, experimentos y reportes de revenue AI.) Tj
+T* (- Detecta oportunidades desde senales reales CRM/conversacion/prediccion: lead hot, pago) Tj
+T* (  pendiente, etapa propuesta/cotizacion e inactividad de leads warm.) Tj
+T* (- UI tenant Inteligencia muestra metricas, politica configurable, oportunidades, forecasts,) Tj
+T* (  reportes y playbooks.) Tj
+T* (- La politica de revenue permite definir nivel de autonomia, moneda, meta, limite mensual de) Tj
+T* (  ejecuciones control-plane y action types permitidos para approve/execute.) Tj
+T* (- Seguridad: no envia mensajes, no cobra, no llama proveedores de pago, no muta CRM, no activa) Tj
+T* (  campanas/workflows/triggers y no modifica runtime Meta.) Tj
+T* (- Validacion: Docker activo aplico 066, OpenAPI contiene endpoints, smoke autenticado) Tj
+T* (  full-mode creo oportunidades/report y ejecuto approve/execute como metadata control-plane.) Tj
+T* (- Hardening posterior: py_compile backend, builds tenant/Admin, Compose config y SQL UTF-8/BOM) Tj
+T* (  scans pasaron; Docker Desktop no estuvo accesible para rerun activo de API/Swagger en esta) Tj
+T* (  sesion.) Tj
+T* () Tj
+T* (Fase 20 AI Enterprise Memory Network:) Tj
+T* () Tj
+T* (- Misma migracion 066_saas_revenue_memory_network_phase19_20.sql.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/memory_network.py.) Tj
+T* (- Endpoints tenant bajo /saas/v1/intelligence/memory-network/* para center, policy, sync,) Tj
+T* (  export, import, review y delete.) Tj
+T* (- Tablas: politicas, nodos, aristas, sync runs y access logs.) Tj
+T* (- Sincroniza candidatos desde memoria colectiva, Knowledge/RAG, eventos multimodales y) Tj
+T* (  vertical insights.) Tj
+T* (- La policy aplica privacidad, retencion, scopes permitidos y revision de contenido cliente) Tj
+T* (  durante sync/import/publish y actualizaciones de nodos existentes.) Tj
+T* (- Exporta JSON tenant-scoped con summaries/metadata/hashes; importa JSON sanitizado como nodos) Tj
+ET
+endstream
+endobj
+45 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 44 0 R >>
+endobj
+46 0 obj
+<< /Length 3084 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  candidate; delete borra nodos tenant-scoped con audit/access log.) Tj
+T* (- UI tenant Inteligencia muestra nodos, aristas, routing, sync runs, controles de politica,) Tj
+T* (  export/import y acciones de publicar/rechazar/archivar/borrar.) Tj
+T* (- Seguridad: tenant-scoped, sin raw media/base64, sin compartir contenido crudo entre tenants) Tj
+T* (  y sin publicar memoria candidata a prompts/RAG sin revision.) Tj
+T* (- Validacion: smoke autenticado full-mode ejecuto sync, creo nodos/aristas y publico un nodo) Tj
+T* (  de prueba; el tenant temporal fue eliminado. El ultimo endurecimiento paso py_compile) Tj
+T* (  backend, builds tenant/Admin, Compose config y scans SQL; smoke activo export/import/delete) Tj
+T* (  queda pendiente porque Docker no estuvo accesible.) Tj
+T* () Tj
+T* (FASE 17 CERRADA: FEDERATED LEARNING & GLOBAL INTELLIGENCE) Tj
+T* () Tj
+T* (Implementado:) Tj
+T* () Tj
+T* (- Migracion nueva: saas-version/migrations/068_saas_federated_learning_phase17.sql.) Tj
+T* (- Backend nuevo: saas-version/backend/app_saas/intelligence/federated.py.) Tj
+T* (- Endpoints tenant bajo /saas/v1/intelligence/federated/*.) Tj
+T* (- Tablas: politicas federadas, rondas, updates agregados tenant, agregados federados y signals) Tj
+T* (  globales.) Tj
+T* (- Feature flags default-off: federated_learning, federated_model_updates,) Tj
+T* (  privacy_safe_model_aggregation, global_intelligence, federated_benchmarking.) Tj
+T* (- UI tenant Inteligencia muestra opt-in, privacidad, thresholds, tareas permitidas, previews) Tj
+T* (  locales, rondas, envio de updates, agregacion y signals globales.) Tj
+T* (- Worker Intelligence participa automaticamente solo si el tenant tiene full access,) Tj
+T* (  opt_in_enabled=true y auto_participation_enabled=true.) Tj
+T* (- Los paquetes federados contienen solo estadisticas agregadas, resumenes de features, feature) Tj
+T* (  importance, calidad, hash y metadata de privacidad.) Tj
+T* (- Seguridad: no comparte mensajes crudos, conversaciones completas, media/base64, prompts,) Tj
+T* (  secretos, payloads de proveedor, nombres de tenants ni contenido privado de clientes entre) Tj
+T* (  tenants.) Tj
+T* (- Los agregados son signals candidate/benchmark; no promueven modelos automaticamente ni mutan) Tj
+T* (  CRM/campanas/workflows/billing/Meta/agentes.) Tj
+T* () Tj
+T* (Validacion:) Tj
+T* () Tj
+T* (- python -m py_compile aprobado para modulos backend tocados.) Tj
+T* (- Build tenant frontend aprobado con warning existente de bundle grande.) Tj
+T* (- Build Admin frontend aprobado.) Tj
+T* (- Docker Compose config aprobado.) Tj
+T* () Tj
+T* (Pendiente productivo:) Tj
+T* () Tj
+T* (- Ejecutar migracion/API/Swagger/worker Docker hasta 068.) Tj
+T* (- Ejecutar bootstrap PostgreSQL limpio 001 a 068.) Tj
+T* (- Probar con varios tenants opt-in de la misma industria/general para validar thresholds.) Tj
+T* (- Revisar privacidad/legal antes de claims comerciales de aprendizaje cross-tenant.) Tj
+T* (- Definir runbook ModelOps antes de usar signals federados para seleccionar modelos) Tj
+T* (  productivos.) Tj
+ET
+endstream
+endobj
+47 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 46 0 R >>
+endobj
+48 0 obj
+<< /Length 3144 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+() Tj
+T* (ROADMAP RECOMENDADO FASES 21 A 25) Tj
+T* () Tj
+T* (Las fases propuestas son viables, pero no conviene tratarlas todas como inmediatas. Tras) Tj
+T* (  cerrar Fase 17, la secuencia recomendada es:) Tj
+T* () Tj
+T* (1. Fase 21: Scentra AI Cloud Platform.) Tj
+T* (2. Fase 23: AI Marketplace Economy.) Tj
+T* (3. Fase 25: Enterprise Decision Intelligence.) Tj
+T* () Tj
+T* (Criterio arquitectonico:) Tj
+T* () Tj
+T* (- Fase 18 ya aporta el control-plane de composicion segura antes de abrir marketplace amplio o) Tj
+T* (  despliegue runtime.) Tj
+T* (- Fase 22 ya aporta el control-plane de trust/gobierno necesario antes de ampliar autonomia,) Tj
+T* (  marketplace, federated learning, APIs externas y decisiones enterprise.) Tj
+T* (- Fase 16 ya aporta la superficie realtime para convertir eventos, predicciones y gobierno en) Tj
+T* (  monitoreo live sin activar acciones automaticas.) Tj
+T* (- Fase 24 es muy coherente con WhatsApp/Instagram por audios, imagenes y adjuntos.) Tj
+T* (- Fase 17 ya aporta el control-plane federado aggregate-only; aun requiere acceptance) Tj
+T* (  multi-tenant, privacidad y ModelOps antes de uso productivo de signals.) Tj
+T* (- Fase 21, 23 y 25 son valiosas pero deben esperar mas madurez de datos, sandbox, gobierno,) Tj
+T* (  comercializacion y calidad ML.) Tj
+T* (- Evaluacion detallada: docs/ROADMAP_PHASES_16_25_EVALUATION.md.) Tj
+T* () Tj
+T* (RIESGOS RESTANTES) Tj
+T* () Tj
+T* (- Produccion requiere SMTP, Turnstile, secretos fuertes, CORS/domains y credenciales reales.) Tj
+T* (- Billing queda cerrado a nivel codigo; requiere pruebas reales/sandbox de proveedores y) Tj
+T* (  validacion legal de factura PDF antes de produccion.) Tj
+T* (- Live Meta/AI acceptance debe probarse con trafico real o sandbox.) Tj
+T* (- La asignacion a agente inactivo bloquea fallback por seguridad; operadores deben liberar o) Tj
+T* (  reasignar desde Inbox.) Tj
+T* (- Verticalizacion queda cerrada a nivel codigo; requiere acceptance de packs por industria en) Tj
+T* (  staging antes de cambios masivos a tenants productivos.) Tj
+T* (- Phase 11 ya tiene ML real opcional y apagado por defecto, pero los modelos entrenados) Tj
+T* (  actualmente son sinteticos/autolabel para bootstrap tecnico. No deben venderse como) Tj
+T* (  precision productiva hasta revisar labels reales/auto-labels, validar drift/calidad/costos y) Tj
+T* (  aprobar rollout por tenant/plan.) Tj
+T* (- Fase 15.1A/15.1B/15.1C/15.2/15.3 ya generaron inventario, clasificacion, drafts, handoffs,) Tj
+T* (  playbooks y evals offline, pero falta verificar commit/tag upstream, hacer secret scan) Tj
+T* (  formal y revisar cada agente antes de importarlo a DB/Admin.) Tj
+T* (- Fase 18 queda operativa como control-plane; composer_only no debe venderse como despliegue) Tj
+T* (  runtime automatico hasta implementar una materializacion segura hacia) Tj
+T* (  triggers/flows/campanas/agentes.) Tj
+T* (- Fase 22 queda operativa como control-plane; sus reportes son evidencia operacional y no) Tj
+T* (  certificacion legal.) Tj
+T* (- Fase 16 queda operativa como control-plane realtime; no debe venderse como bus de eventos) Tj
+ET
+endstream
+endobj
+49 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 48 0 R >>
+endobj
+50 0 obj
+<< /Length 4129 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  enterprise ni auto-remediacion hasta que existan pruebas de capacidad, broker aprobado si) Tj
+T* (  aplica y ADR de acciones runtime.) Tj
+T* (- Fase 24.2 queda operativa para audios, pero acceptance productiva requiere credenciales) Tj
+T* (  reales Google/Gemini, audios reales WhatsApp/locales, revision de costos/cuotas y politicas) Tj
+T* (  de privacidad/retencion de transcript.) Tj
+T* (- Fase 24.3 queda operativa para imagenes/documentos existentes, pero acceptance productiva) Tj
+T* (  requiere credenciales reales Google/OpenRouter/Kimi, media real WhatsApp/local, revision de) Tj
+T* (  costos/cuotas y politicas de privacidad/retencion de texto extraido.) Tj
+T* (- Fase 24.4 queda operativa para busqueda web/imagen con fuentes y aprobacion, pero acceptance) Tj
+T* (  productiva requiere credenciales reales Tavily/Brave/SerpAPI, revision de cuotas/costos,) Tj
+T* (  calidad de fuentes y politica de copyright/licencias antes de usar referencias con clientes.) Tj
+T* (- Fase 24.5 queda operativa para herramientas multimodales agent-scoped, pero acceptance) Tj
+T* (  productiva requiere media real, credenciales reales, aprobacion de fuentes, revision de) Tj
+T* (  costos/cuotas y entrenamiento de operadores.) Tj
+T* (- Fase 24.6 queda operativa para memoria/training events multimodales, pero acceptance) Tj
+T* (  productiva requiere muestras reales, politica de retencion, revision de privacidad, revision) Tj
+T* (  de copyright para fuentes externas y entrenamiento de operadores antes de materializar) Tj
+T* (  contenido sensible.) Tj
+T* (- Fase 24.7 queda operativa para UX Inbox de analisis/referencias aprobadas, pero acceptance) Tj
+T* (  productiva requiere muestras reales de referencias visuales, politica de copyright/fuentes,) Tj
+T* (  entrenamiento de operadores y smoke Meta outbound con canal real.) Tj
+T* (- Fase 24.8 queda operativa para Admin/Premium Gating, pero acceptance productiva requiere) Tj
+T* (  pricing real por proveedor/modelo, politica comercial de cuotas, smoke con credenciales) Tj
+T* (  reales y alineacion legal/billing antes de usar costos como dato comercial.) Tj
+T* (- Fase 24.9 queda operativa para observabilidad multimodal, pero acceptance productiva) Tj
+T* (  requiere pricing real por proveedor/modelo y trafico real antes de usar) Tj
+T* (  costo/calidad/error-rate como dato comercial.) Tj
+T* (- Fase 24.10 queda operativa para safe rollout default-off/demo/canary, pero acceptance) Tj
+T* (  productiva requiere ensayar policies off/demo/canary/full con muestras reales antes de) Tj
+T* (  habilitarlo ampliamente.) Tj
+T* (- Fase 24.9/24.10 aun necesita migracion/API/Swagger/bootstrap Docker hasta 067 cuando Docker) Tj
+T* (  este disponible en la maquina.) Tj
+T* (- Fase 19 queda operativa como control-plane de revenue; acceptance productiva requiere datos) Tj
+T* (  reales de pedidos/pagos/valor comercial por tenant antes de usar forecasts u oportunidad) Tj
+T* (  estimada como metrica comercial.) Tj
+T* (- Fase 20 queda operativa como grafo de memoria tenant-scoped con policy, export/import/delete) Tj
+T* (  auditados; acceptance productiva requiere muestras reales y validacion de que solo nodos) Tj
+T* (  publicados entren a prompts/RAG.) Tj
+T* (- Fase 17 queda operativa a nivel codigo, pero no debe venderse como federated learning) Tj
+T* (  productivo avanzado hasta probar cohortes reales, privacidad, calidad de labels y promocion) Tj
+T* (  ModelOps.) Tj
+T* (- Las fases restantes 21, 23 y 25 son recomendacion de roadmap, no compromiso implementado;) Tj
+T* (  cada una requiere ADR, feature flags, acceptance y riesgos propios antes de tocar runtime.) Tj
+T* (- Fase 12 queda operativa como control-plane; sus SLOs/backpressure son thresholds iniciales y) Tj
+T* (  deben calibrarse con trafico real antes de comprometer SLAs comerciales.) Tj
+T* (- Fase 13 queda operativa con email OTP; TOTP/app authenticator y rotacion automatizada de) Tj
+T* (  secretos quedan fuera del alcance actual hasta diseno/aprobacion especifica.) Tj
+T* (- Las solicitudes de borrado de privacidad son revisables y no hacen hard-delete automatico;) Tj
+ET
+endstream
+endobj
+51 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 50 0 R >>
+endobj
+52 0 obj
+<< /Length 3585 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  se requiere procedimiento legal/operativo antes de ejecutar eliminaciones reales.) Tj
+T* (- Retention destructive esta deshabilitado/dry-run por defecto; antes de borrar historicos se) Tj
+T* (  requiere backup verificado, ensayo en staging y aprobacion de politica legal/operativa.) Tj
+T* (- Backup readiness no reemplaza backup/restore real de infraestructura.) Tj
+T* () Tj
+T* (SIGUIENTES PRIORIDADES RECOMENDADAS) Tj
+T* () Tj
+T* (1. Ejecutar acceptance de packs verticales en staging con tenants reales o datos semilla.) Tj
+T* (2. Ejecutar acceptance sandbox/live de billing con Stripe, MercadoPago y Wompi.) Tj
+T* (3. Mantener Fase 14: ejecutar auditoria de copy/release gate antes de cada entrega) Tj
+T* (  frontend/admin y expandir catalogos al tocar nuevos modulos.) Tj
+T* (4. Ejecutar acceptance de Fase 12: carga real, ajuste de thresholds, backup/restore real y) Tj
+T* (  politica de retencion.) Tj
+T* (5. Ejecutar smoke de Fase 8 en staging con conversaciones reales, asignacion) Tj
+T* (  manual/automatica, memoria colectiva y presupuesto hard-stop.) Tj
+T* (6. Confirmar source URL/commit/tag de agency-agents, decidir atribucion y aprobar si los) Tj
+T* (  drafts offline pasan a Admin/DB.) Tj
+T* (7. Definir politica comercial de features predictivas full por plan/tenant antes de venta) Tj
+T* (  enterprise.) Tj
+T* (8. Ejecutar acceptance de Fase 11 ML con datos reales anonimizados o datasets staging) Tj
+T* (  tenant-safe antes de activar SAAS_ML_ENABLED en produccion.) Tj
+T* (9. Ejecutar acceptance de Fase 24.2 Voice Intelligence con credenciales reales) Tj
+T* (  Google/Gemini, audios reales WhatsApp/locales y revision de privacidad/costos antes de) Tj
+T* (  habilitarlo comercialmente.) Tj
+T* (10. Ejecutar acceptance de Fase 24.3 Vision Intelligence con credenciales reales) Tj
+T* (  Google/OpenRouter/Kimi, imagenes/documentos reales y revision de privacidad/costos antes de) Tj
+T* (  habilitarlo comercialmente.) Tj
+T* (11. Ejecutar acceptance de Fase 24.4 Web/Image Search Intelligence con credenciales reales) Tj
+T* (  Tavily/Brave/SerpAPI, busquedas reales, revision de fuentes, cuotas/costos y politica de) Tj
+T* (  copyright antes de habilitarlo comercialmente.) Tj
+T* (12. Ejecutar acceptance de Fase 24.5 Agent Multimodal Tools con agentes asignados, media) Tj
+T* (  real, busqueda real, fuentes aprobadas y verificacion de que solo contexto aprobado entra al) Tj
+T* (  prompt.) Tj
+T* (13. Ejecutar acceptance de Fase 24.6 Multimodal Memory con eventos reales, materializacion) Tj
+T* (  revisada a RAG/memoria colectiva, politicas de retencion y verificacion de que) Tj
+T* (  training-ready solo se activa con feature premium.) Tj
+T* (14. Ejecutar acceptance de Fase 24.7 Inbox UX con fuentes visuales aprobadas, revision de) Tj
+T* (  copyright/fuentes, operadores entrenados y envio real por Meta outbound desde el CRM) Tj
+T* (  existente.) Tj
+T* (15. Configurar acceptance de Fase 24.8 con precios reales por proveedor/modelo, cuotas por) Tj
+T* (  plan, bloqueo de prueba por tenant y reporte de costos mensual comparado contra consola del) Tj
+T* (  proveedor.) Tj
+T* (16. Ejecutar acceptance de Fase 24.9/24.10 con migracion Docker hasta 067,) Tj
+T* (  health/API/Swagger, clean bootstrap PostgreSQL, precios reales, trafico multimodal real y) Tj
+T* (  policies off/demo/canary/full.) Tj
+T* (17. Ejecutar acceptance de Fase 19 con datos reales o staging de pedidos/pagos, validacion) Tj
+T* (  comercial de forecasts y definicion de que acciones pueden materializarse en CRM/campanas en) Tj
+T* (  una fase futura.) Tj
+ET
+endstream
+endobj
+53 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 52 0 R >>
+endobj
+54 0 obj
+<< /Length 475 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(18. Ejecutar acceptance de Fase 20 con muestras reales de memoria colectiva/RAG/multimodal,) Tj
+T* (  flujo export/import/delete y validacion de prompt routing solo con nodos publicados.) Tj
+T* (19. Ejecutar acceptance de Fase 17 con migracion Docker hasta 068, bootstrap limpio 001 a) Tj
+T* (  068, varios tenants opt-in, validacion privacidad/legal y runbook ModelOps.) Tj
+T* (20. Continuar roadmap con Fase 21, luego Fase 23 y Fase 25.) Tj
+ET
+endstream
+endobj
+55 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 54 0 R >>
+endobj
+xref
+0 56
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000316 00000 n 
+0000000386 00000 n 
+0000004288 00000 n 
+0000004414 00000 n 
+0000008744 00000 n 
+0000008870 00000 n 
+0000012450 00000 n 
+0000012576 00000 n 
+0000016553 00000 n 
+0000016681 00000 n 
+0000019679 00000 n 
+0000019807 00000 n 
+0000022333 00000 n 
+0000022461 00000 n 
+0000025086 00000 n 
+0000025214 00000 n 
+0000028472 00000 n 
+0000028600 00000 n 
+0000032152 00000 n 
+0000032280 00000 n 
+0000036209 00000 n 
+0000036337 00000 n 
+0000040191 00000 n 
+0000040319 00000 n 
+0000044113 00000 n 
+0000044241 00000 n 
+0000047915 00000 n 
+0000048043 00000 n 
+0000051452 00000 n 
+0000051580 00000 n 
+0000054975 00000 n 
+0000055103 00000 n 
+0000058684 00000 n 
+0000058812 00000 n 
+0000062506 00000 n 
+0000062634 00000 n 
+0000066378 00000 n 
+0000066506 00000 n 
+0000070233 00000 n 
+0000070361 00000 n 
+0000073842 00000 n 
+0000073970 00000 n 
+0000077452 00000 n 
+0000077580 00000 n 
+0000080717 00000 n 
+0000080845 00000 n 
+0000084042 00000 n 
+0000084170 00000 n 
+0000088352 00000 n 
+0000088480 00000 n 
+0000092118 00000 n 
+0000092246 00000 n 
+0000092773 00000 n 
+trailer
+<< /Size 56 /Root 1 0 R >>
+startxref
+92901
+%%EOF

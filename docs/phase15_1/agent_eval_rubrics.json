@@ -1,0 +1,123 @@
+{
+  "phase": "15.3",
+  "generated_on": "2026-05-27",
+  "status": "offline_rubrics",
+  "runtime_import": false,
+  "database_writes": false,
+  "rubrics": [
+    {
+      "rubric_key": "scentra.template_safety_preflight.v1",
+      "source_agents": [
+        "Reality Checker",
+        "Evidence Collector"
+      ],
+      "objective": "Reject unsafe or fantasy template imports before Admin review.",
+      "required_checks": [
+        "template remains disabled",
+        "activation_allowed is false",
+        "human approval is required",
+        "outbound actions are suggest-only",
+        "tenant-scoped memory policy exists",
+        "source license and hash are present",
+        "risk assessment exists"
+      ],
+      "blocking_failures": [
+        "active_template",
+        "missing_source",
+        "direct_tool_execution",
+        "no_human_approval"
+      ]
+    },
+    {
+      "rubric_key": "scentra.evidence_quality_gate.v1",
+      "source_agents": [
+        "Evidence Collector"
+      ],
+      "objective": "Require evidence and explicit findings for any template/workflow certification.",
+      "required_checks": [
+        "evidence list is non-empty",
+        "claims are tied to observed artifacts",
+        "issues are categorized by severity",
+        "approval includes next action"
+      ],
+      "blocking_failures": [
+        "claim_without_evidence",
+        "zero_issue_fantasy_approval"
+      ]
+    },
+    {
+      "rubric_key": "scentra.qa_feedback_loop.v1",
+      "source_agents": [
+        "Evidence Collector",
+        "Agents Orchestrator"
+      ],
+      "objective": "Enforce PASS/FAIL/retry/escalation loops.",
+      "required_checks": [
+        "PASS requires verified criteria",
+        "FAIL includes exact fix instructions",
+        "retry count is limited to 3",
+        "attempt 3 failure escalates"
+      ],
+      "blocking_failures": [
+        "pass_without_evidence",
+        "retry_loop_without_limit"
+      ]
+    },
+    {
+      "rubric_key": "scentra.api_security_evaluation.v1",
+      "source_agents": [
+        "API Tester",
+        "Security Engineer"
+      ],
+      "objective": "Check API-facing proposals for auth, tenant isolation and failure handling.",
+      "required_checks": [
+        "auth required for protected operations",
+        "tenant filters are explicit",
+        "rate limits and abuse controls considered",
+        "error paths do not expose secrets"
+      ],
+      "blocking_failures": [
+        "missing_auth",
+        "missing_tenant_scope",
+        "secret_exposure"
+      ]
+    },
+    {
+      "rubric_key": "scentra.performance_reliability_evaluation.v1",
+      "source_agents": [
+        "Performance Benchmarker",
+        "SRE"
+      ],
+      "objective": "Check whether workflows introduce reliability, latency or queue risk.",
+      "required_checks": [
+        "runtime side effects are declared",
+        "worker retry/idempotency considered",
+        "observability fields exist",
+        "rollback path exists"
+      ],
+      "blocking_failures": [
+        "unbounded_worker_action",
+        "no_rollback",
+        "no_observability"
+      ]
+    },
+    {
+      "rubric_key": "scentra.vertical_compliance_review.v1",
+      "source_agents": [
+        "Legal Compliance Checker",
+        "Automation Governance Architect"
+      ],
+      "objective": "Review healthcare, legal, finance, paid-media and outbound templates before tenant exposure.",
+      "required_checks": [
+        "compliance domain is tagged",
+        "disclaimers and escalation rules exist",
+        "no professional advice is presented as definitive",
+        "customer-facing actions require approval"
+      ],
+      "blocking_failures": [
+        "regulated_advice_without_review",
+        "auto_outbound_message"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1266 @@
+{
+  "phase": "15.3",
+  "generated_on": "2026-05-27",
+  "status": "offline_eval_results",
+  "runtime_import": false,
+  "database_writes": false,
+  "evaluated_drafts": 29,
+  "results": [
+    {
+      "item_key": "external.agency_agents.marketing_marketing_content_creator.v1",
+      "name": "Content Creator",
+      "source_path": "marketing/marketing-content-creator.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 72,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level restricted requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: finance."
+        },
+        {
+          "code": "unsafe_terms_review_required",
+          "severity": "medium",
+          "detail": "Review unsafe terms: webfetch, websearch."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.marketing_marketing_instagram_curator.v1",
+      "name": "Instagram Curator",
+      "source_path": "marketing/marketing-instagram-curator.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 86,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.paid_media_paid_media_paid_social_strategist.v1",
+      "name": "Paid Social Strategist",
+      "source_path": "paid-media/paid-media-paid-social-strategist.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 72,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level restricted requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media, outbound."
+        },
+        {
+          "code": "unsafe_terms_review_required",
+          "severity": "medium",
+          "detail": "Review unsafe terms: bash, webfetch, websearch."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.paid_media_paid_media_ppc_strategist.v1",
+      "name": "PPC Campaign Strategist",
+      "source_path": "paid-media/paid-media-ppc-strategist.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 72,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level restricted requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media."
+        },
+        {
+          "code": "unsafe_terms_review_required",
+          "severity": "medium",
+          "detail": "Review unsafe terms: bash, webfetch, websearch."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.paid_media_paid_media_tracking_specialist.v1",
+      "name": "Tracking & Measurement Specialist",
+      "source_path": "paid-media/paid-media-tracking-specialist.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 72,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level restricted requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media."
+        },
+        {
+          "code": "unsafe_terms_review_required",
+          "severity": "medium",
+          "detail": "Review unsafe terms: bash, webfetch, websearch."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.sales_sales_discovery_coach.v1",
+      "name": "Discovery Coach",
+      "source_path": "sales/sales-discovery-coach.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.sales_sales_outbound_strategist.v1",
+      "name": "Outbound Strategist",
+      "source_path": "sales/sales-outbound-strategist.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.sales_sales_pipeline_analyst.v1",
+      "name": "Pipeline Analyst",
+      "source_path": "sales/sales-pipeline-analyst.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_customer_service.v1",
+      "name": "Customer Service",
+      "source_path": "specialized/customer-service.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: healthcare, legal, finance, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_healthcare_customer_service.v1",
+      "name": "Healthcare Customer Service",
+      "source_path": "specialized/healthcare-customer-service.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: healthcare, legal, finance, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_hospitality_guest_services.v1",
+      "name": "Hospitality Guest Services",
+      "source_path": "specialized/hospitality-guest-services.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_legal_client_intake.v1",
+      "name": "Legal Client Intake",
+      "source_path": "specialized/legal-client-intake.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: legal, finance, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_real_estate_buyer_seller.v1",
+      "name": "Real Estate Buyer & Seller",
+      "source_path": "specialized/real-estate-buyer-seller.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: legal, finance, paid_media, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_retail_customer_returns.v1",
+      "name": "Retail Customer Returns",
+      "source_path": "specialized/retail-customer-returns.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_sales_outreach.v1",
+      "name": "Sales Outreach",
+      "source_path": "specialized/sales-outreach.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: finance, paid_media, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.support_support_support_responder.v1",
+      "name": "Support Responder",
+      "source_path": "support/support-support-responder.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.engineering_engineering_database_optimizer.v1",
+      "name": "Database Optimizer",
+      "source_path": "engineering/engineering-database-optimizer.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 93,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "risk_acceptable_for_review",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.engineering_engineering_incident_response_commander.v1",
+      "name": "Incident Response Commander",
+      "source_path": "engineering/engineering-incident-response-commander.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: finance, security, outbound."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.engineering_engineering_security_engineer.v1",
+      "name": "Security Engineer",
+      "source_path": "engineering/engineering-security-engineer.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media, security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.engineering_engineering_sre.v1",
+      "name": "SRE (Site Reliability Engineer)",
+      "source_path": "engineering/engineering-sre.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: finance, security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.engineering_engineering_technical_writer.v1",
+      "name": "Technical Writer",
+      "source_path": "engineering/engineering-technical-writer.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media, security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_agentic_identity_trust.v1",
+      "name": "Agentic Identity & Trust Architect",
+      "source_path": "specialized/agentic-identity-trust.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: healthcare, security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_agents_orchestrator.v1",
+      "name": "Agents Orchestrator",
+      "source_path": "specialized/agents-orchestrator.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: paid_media."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_automation_governance_architect.v1",
+      "name": "Automation Governance Architect",
+      "source_path": "specialized/automation-governance-architect.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 86,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.specialized_specialized_workflow_architect.v1",
+      "name": "Workflow Architect",
+      "source_path": "specialized/specialized-workflow-architect.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.testing_testing_api_tester.v1",
+      "name": "API Tester",
+      "source_path": "testing/testing-api-tester.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 79,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        },
+        {
+          "code": "compliance_review_required",
+          "severity": "medium",
+          "detail": "Compliance domains: security."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.testing_testing_evidence_collector.v1",
+      "name": "Evidence Collector",
+      "source_path": "testing/testing-evidence-collector.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 86,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        },
+        {
+          "code": "human_review_required",
+          "severity": "medium",
+          "detail": "Risk level high requires human review."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.testing_testing_performance_benchmarker.v1",
+      "name": "Performance Benchmarker",
+      "source_path": "testing/testing-performance-benchmarker.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 93,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "risk_acceptable_for_review",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    },
+    {
+      "item_key": "external.agency_agents.testing_testing_reality_checker.v1",
+      "name": "Reality Checker",
+      "source_path": "testing/testing-reality-checker.md",
+      "structural_status": "passed",
+      "certification_status": "admin_review_ready",
+      "activation_status": "blocked_human_review_required",
+      "score": 93,
+      "passes": [
+        "disabled_status",
+        "activation_blocked",
+        "premium_gated",
+        "human_approval_required",
+        "outbound_suggest_only",
+        "tenant_scoped_memory",
+        "source_metadata_present",
+        "risk_acceptable_for_review",
+        "no_compliance_domain_detected",
+        "no_unsafe_terms_detected"
+      ],
+      "findings": [
+        {
+          "code": "source_version_unverified",
+          "severity": "medium",
+          "detail": "Upstream commit/tag is not verified yet."
+        }
+      ],
+      "rubrics_applied": [
+        "scentra.template_safety_preflight.v1",
+        "scentra.evidence_quality_gate.v1",
+        "scentra.qa_feedback_loop.v1",
+        "scentra.api_security_evaluation.v1",
+        "scentra.performance_reliability_evaluation.v1",
+        "scentra.vertical_compliance_review.v1"
+      ]
+    }
+  ]
+}

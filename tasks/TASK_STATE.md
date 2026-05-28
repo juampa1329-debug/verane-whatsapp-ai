@@ -1,0 +1,1783 @@
+# TASK_STATE
+
+Scope: SaaS only. Active root: `saas-version/`.
+
+## Current Task
+
+Implement effective AI model/provider redundancy for SaaS conversation AI, assigned/custom agents, Agent OS runtime paths and Advisor so transient provider/model outages do not stall customer conversations.
+
+## Status
+
+- Completed AI Gateway resilience hardening:
+  - `saas-version/backend/app_saas/ai_gateway/service.py` now retries retryable model candidates inside the same provider before moving to the next provider in the configured chain.
+  - Retryable conditions include `408`, `409`, `425`, `429`, `500`, `502`, `503`, `504`, provider unavailable/timeouts, empty output and high-demand/temporary markers.
+  - Candidate models are derived from the tenant-selected credential model, optional `settings.metadata_json.model_fallbacks_json`, provider default model and provider static models, capped by `model_fallback_attempt_limit` default `4`.
+  - Each skipped/failed/success attempt remains recorded in `saas_ai_runs`; success metadata can include candidate models, attempt indexes and `model_fallback_used`.
+  - Provider policy enforcement remains per candidate model through `assert_provider_enabled`; disabled providers/models, missing credentials and quota/cost blocks are not bypassed.
+  - `saas-version/backend/app_saas/ai_agent/service.py` now maps all-retryable gateway exhaustion to `ai_generation_error`, keeping `saas_ai_pending_replies` eligible for the existing retry flow instead of permanently skipping the conversation.
+  - Assigned/custom agents inherit this through conversation AI runtime; Agent OS/orchestrator assignment semantics remain single-owner and unchanged.
+  - `saas-version/backend/app_saas/advisor/service.py` now stores model fallback metadata and gateway retryability/attempts in Advisor events/messages.
+- Validation passed:
+  - `python -m py_compile` for touched AI Gateway, AI Agent and Advisor modules.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - UTF-8 read check passed for touched files.
+  - Trailing-whitespace scan passed for touched files.
+- Not changed:
+  - No dependencies, migrations, frontend contracts, Meta runtime, billing limits, tenant isolation, prompt context, outbound queueing or agent ownership semantics were changed.
+- Remaining acceptance:
+  - Rebuild/redeploy API and worker.
+  - Test a forced provider `503`/`429` or invalid high-demand model in staging and confirm the success run uses a fallback model/provider.
+  - Configure at least one fallback credential/provider per tenant for provider-level redundancy.
+  - Monitor `saas_ai_runs` because one customer message can now produce multiple failed attempts plus one success.
+
+- Completed humanized conversation AI reply hardening:
+  - `saas-version/backend/app_saas/ai_agent/service.py` now keeps context through CRM, memory summary, facts, Knowledge/RAG, collective memory, approved multimodal context and a bounded recent transcript.
+  - Default conversation output is capped to 700 tokens when human reply style is enabled.
+  - Recent raw transcript defaults to 16 messages with bounded text per message; older continuity remains in conversation memory/facts instead of being resent in full on every request.
+  - Replies are naturally split into delayed outbound fragments with a default 220-character chunk cap when human splitting is enabled.
+  - Existing best-effort Meta typing indicator remains enabled by default and is sent before generation when the inbound provider message id and WhatsApp Cloud integration are available.
+  - Existing assigned-agent ownership, budget hard-stop, CRM update permissions, token quota checks, outbound quota checks, queue status flow and worker dispatch path were preserved.
+  - Tenant Settings > IA now exposes controls for brief style, natural splitting, output-token cap, chunk size/delay, recent-message count, per-message history size and typing indicator.
+- Validation passed:
+  - `python -m py_compile` for touched AI agent backend modules.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+- Validation note:
+  - Direct host import smoke could not run because host Python lacks FastAPI; syntax compilation passed.
+- Remaining acceptance:
+  - Rebuild/redeploy API and frontend.
+  - Save Settings > IA once for existing tenants if their DB row still has old custom rhythm values.
+  - Smoke with a real WhatsApp inbound message to confirm Meta shows typing indicator on the customer device.
+  - Monitor outbound message quota because each fragment counts as a separate outbound message.
+
+- Completed Groq/AI Gateway operational hardening:
+  - Added explicit `User-Agent` and `Accept` headers to provider HTTP POST/GET calls in `saas-version/backend/app_saas/ai_gateway/providers/http.py`.
+  - Added the same provider-safe headers to model lookup requests in `saas-version/backend/app_saas/api_credentials/router.py`.
+  - Added the same provider-safe headers to the legacy direct provider helper in `saas-version/backend/app_saas/ai_agent/service.py`.
+  - Updated Groq static model fallbacks in backend registry/API credentials and tenant Settings UI to remove `llama-3.1-70b-versatile` and include current Groq options.
+  - No provider secret exposure, dependency install, billing gate change, tenant isolation change, Meta runtime change or route contract change.
+- Validation passed:
+  - `python -m py_compile` for touched backend modules.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+- Remaining acceptance:
+  - Rebuild/redeploy API so production uses the new headers.
+  - Retest Groq from production AI Gateway.
+  - If Groq still returns 1010, escalate as provider/Cloudflare/IP/project block and use OpenRouter/Google/Mistral/Kimi fallback.
+
+- Completed Phase 17 Federated Learning & Global Intelligence at repository/code level:
+  - Added migration `068_saas_federated_learning_phase17.sql`.
+  - Added tenant-scoped policy table, federated round table, tenant update table, aggregate table and global signal table.
+  - Added default-off premium flags: `federated_learning`, `federated_model_updates`, `privacy_safe_model_aggregation`, `global_intelligence`, and `federated_benchmarking`.
+  - Added backend service `app_saas/intelligence/federated.py`.
+  - Added tenant endpoints:
+    - `GET /saas/v1/intelligence/federated/center`
+    - `PATCH /saas/v1/intelligence/federated/policy`
+    - `POST /saas/v1/intelligence/federated/rounds/prepare`
+    - `POST /saas/v1/intelligence/federated/rounds/{round_id}/submit-update`
+    - `POST /saas/v1/intelligence/federated/rounds/{round_id}/aggregate`
+  - Added feature catalog/default-plan/Admin default feature keys.
+  - Intelligence worker now attempts federated participation in a nested transaction and skips tenants without full feature access, opt-in and auto-participation.
+  - Tenant `IntelligencePanel.jsx` now exposes Federated Learning opt-in policy, privacy mode, sample thresholds, allowed tasks, local previews, round preparation, update submission, aggregation and global signals.
+  - Added/regenerated Spanish PDF artifacts:
+    - `docs/Scentra_SaaS_Project_Status.pdf`
+    - `docs/Scentra_Fase15_1_Fase11_ML_Roadmap_16_25.pdf`
+    - `docs/Scentra_Roadmap_Fases_Restantes.pdf`
+    - `docs/Scentra_Manual_Fases_Nuevas.pdf`
+- Safety model:
+  - Feature flags default to false.
+  - Full mutations require owner/admin/supervisor role and full federated/AI premium feature access.
+  - Worker auto-participation requires tenant opt-in and explicit auto-participation.
+  - Local update packages and aggregate rows store counts/rates/feature summaries/feature importance/quality/hash/privacy metadata only.
+  - No raw messages, full conversations, media/base64, prompts, decrypted secrets, provider payloads, tenant names or private customer content are shared across tenants.
+  - Aggregates create candidate/global signals only; no automatic production model promotion, CRM/campaign/workflow/billing/Meta/provider/agent runtime side effects.
+- Validation passed in this session:
+  - Backend `python -m py_compile` for touched Intelligence/Billing/worker modules.
+  - Tenant frontend `npm --prefix saas-version/frontend run build` passed with the existing large-bundle warning.
+  - Admin frontend `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+- Remaining production acceptance:
+  - Rerun active Docker migration/API/Swagger/worker smoke through migration `068`.
+  - Rerun clean PostgreSQL bootstrap `001` through `068`.
+  - Rehearse with multiple tenant samples in the same industry to verify threshold behavior.
+  - Review privacy/legal wording before commercial cross-tenant learning claims.
+  - Define ModelOps promotion runbook before using federated aggregates to select production models.
+
+- Re-audited and hardened Phase 20 Enterprise Memory Network at repository/code level:
+  - Confirmed existing Phase 20 surfaces from code: migration `066`, memory policy/node/edge/sync/access-log tables, backend service, tenant endpoints, worker integration, feature gates and tenant `IntelligencePanel.jsx`.
+  - Added tenant API endpoints:
+    - `GET /saas/v1/intelligence/memory-network/export`
+    - `POST /saas/v1/intelligence/memory-network/import`
+    - `DELETE /saas/v1/intelligence/memory-network/nodes/{node_id}`
+  - Backend policy enforcement now applies allowed scopes, privacy mode, retention days and customer-content review during sync/import/publish and policy updates.
+  - Policy updates archive active nodes outside allowed scopes, demote published customer-content nodes when review is required and refresh active node expiration.
+  - Import accepts bounded JSON nodes, sanitizes summaries/source metadata and stores imported rows as `candidate`.
+  - Export returns tenant-scoped policy, nodes, edges and safety metadata only.
+  - Delete removes only the tenant-owned memory node, relies on DB FK cascade for graph edges and records access/event audit.
+  - Tenant `IntelligencePanel.jsx` now exposes Memory Network policy controls, JSON export/import, reject and delete actions.
+  - Safety decision preserved: Phase 20 still does not inject candidate/private memory into prompts/RAG, store raw media/base64, share raw content across tenants, mutate CRM/campaign/workflows, send customer messages or change Meta runtime.
+- Validation passed in this session:
+  - `python -m py_compile` for Phase 20 backend/router/schema/worker/catalog/limits modules.
+  - Tenant frontend `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - Admin frontend `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL BOM/strict UTF-8 scan passed for migrations.
+- Validation blocked by local environment:
+  - Docker runtime was not reachable from this Codex session (`dockerDesktopLinuxEngine` pipe missing), so active migration runner, API health, Swagger and authenticated Memory Network smoke could not be rerun for this exact workspace state.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `architecture/ENTERPRISE_MEMORY_NETWORK.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/CRITICAL_WARNINGS.md`
+  - `ai-memory/SAFE_MODIFICATION_GUIDE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-054-phase20-enterprise-memory-network.md`
+- Remaining production acceptance:
+  - Rerun active Docker migration/API/Swagger/authenticated memory export/import/delete smoke when Docker Desktop is reachable.
+  - Verify real tenant prompt/RAG routing consumes only reviewed/published memory nodes before enabling runtime use.
+  - Stage export/import/delete on real tenant samples and confirm privacy/legal retention policy with the business owner.
+
+- Re-audited and hardened Phase 19 Autonomous Revenue Engine at repository/code level:
+  - Confirmed existing Phase 19 surfaces from code: migration `066`, revenue policy/opportunity/forecast/experiment/report tables, backend service, tenant endpoints, worker integration, feature gates, Admin feature defaults and tenant UI.
+  - Added backend enforcement for `saas_ai_revenue_policies.allowed_action_types_json` so approve/execute operations can be restricted to configured playbook action types.
+  - Added backend enforcement for `saas_ai_revenue_policies.max_monthly_revenue_actions` so additional control-plane executions are blocked after the configured monthly cap.
+  - Added tenant `IntelligencePanel.jsx` controls for Revenue AI policy: autonomy level, currency, revenue goal cents, monthly action cap and allowed playbook action types.
+  - Kept opportunity execution as metadata-only control-plane status. No customer messages, CRM mutation, campaign/workflow activation, payment-provider calls, billing charges, agent execution or Meta runtime changes were added.
+- Validation passed in this session:
+  - `python -m py_compile` for Phase 19 backend/router/schema/worker/catalog/limits modules.
+  - Tenant frontend `npm --prefix saas-version/frontend run build` passed with existing Vite large-bundle warning.
+  - Admin frontend `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL BOM/strict UTF-8 scan passed for migrations.
+- Validation blocked by local environment:
+  - Docker runtime was not reachable from this Codex session (`dockerDesktopLinuxEngine` pipe missing), so active migration runner, API health, Swagger and authenticated revenue smoke could not be rerun for this exact workspace state.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/AUTONOMOUS_REVENUE_ENGINE.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/CRITICAL_WARNINGS.md`
+  - `ai-memory/FILE_MAP.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-053-phase19-autonomous-revenue-engine.md`
+- Remaining production acceptance:
+  - Rerun active Docker migration/API/Swagger/authenticated revenue smoke when Docker Desktop is reachable.
+  - Connect real tenant ecommerce/order/payment data before treating opportunity value or forecasts as commercial revenue numbers.
+  - Keep any future real revenue execution path behind a new ADR, human approvals, rollback and real-channel staging.
+
+- Completed Phase 24.9 Observability and Phase 24.10 Safe Rollout at repository/code level:
+  - Added migration `067_saas_multimodal_observability_rollout_phase24.sql`.
+  - Added tenant-scoped observability snapshots table `saas_multimodal_observability_snapshots`.
+  - Added tenant-scoped rollout policy and event tables `saas_multimodal_rollout_policies` and `saas_multimodal_rollout_events`.
+  - Added default-off feature flags: `multimodal_observability`, `multimodal_cost_observability`, `multimodal_quality_monitoring`, `multimodal_safe_rollout`, and `multimodal_canary`.
+  - Added backend service `app_saas/intelligence/multimodal_observability.py`.
+  - Added tenant endpoints:
+    - `GET /saas/v1/intelligence/multimodal/observability/center`
+    - `POST /saas/v1/intelligence/multimodal/observability/refresh`
+    - `GET /saas/v1/intelligence/multimodal/rollout/center`
+    - `PATCH /saas/v1/intelligence/multimodal/rollout/policy`
+  - Observability aggregates request count, estimated provider cost, average/P95 latency, error rate, quality/confidence and sources used across AI runs, voice analyses, vision analyses, web/image search, agent tool runs and multimodal memory events.
+  - Cost estimates reuse Admin provider-policy pricing metadata from Phase 24.8; zero pricing remains an unconfigured estimate, not a billing amount.
+  - Safe rollout is compatibility-safe: runtime behavior is unchanged unless the tenant has explicit rollout access and an enabled rollout policy.
+  - Rollout modes support `off`, `demo`, `canary` and `full`; canary selection is deterministic per tenant/user/subject and can fall back to demo when configured.
+  - Voice, vision and web/image search media routes now call the safe-rollout helper before external provider execution.
+  - Tenant `IntelligencePanel.jsx` now shows Phase 24.9 observability cards/provider rows/source list and Phase 24.10 rollout policy controls/events.
+  - Admin `AI Predictivo` Phase 24 gating now includes the new observability and rollout feature keys by tenant/plan.
+- Safety model:
+  - All new feature flags default to `false`.
+  - Rollout enforcement requires both feature access and an enabled explicit policy; no implicit policy blocks existing tenants.
+  - `off` policies block only the targeted multimodal execution path; they do not mutate CRM, campaigns, billing, Meta runtime or agent ownership.
+  - `demo` and canary fallback reduce limits/access instead of bypassing existing Intelligence premium gates.
+  - Observability snapshots store metrics/metadata only, not raw media, base64, decrypted provider secrets or full customer conversation content.
+  - Rollout events record decision metadata for audit and do not execute side effects.
+- Validation passed in this session:
+  - Backend `py_compile` for touched Intelligence, Media, catalog, billing and service modules.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Admin frontend `npm run build` passed.
+  - Docker Compose config passed.
+  - SQL BOM scan returned none and strict UTF-8 decode passed for migrations.
+  - SaaS-scope tracked `git diff --check` passed; manual trailing-whitespace scan across touched files passed because this workspace currently reports broad SaaS/doc paths as untracked.
+- Validation blocked by local environment:
+  - Docker runtime was not reachable from this Codex session (`dockerDesktopLinuxEngine` pipe missing), so active migration runner, API health, Swagger and clean PostgreSQL bootstrap for migration `067` could not be executed here.
+  - Local Python import smoke could not run because FastAPI is not installed in the host Python environment; syntax compilation passed.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `architecture/VOICE_MULTIMODAL_INTELLIGENCE.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/CRITICAL_WARNINGS.md`
+  - `ai-memory/FILE_MAP.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-055-phase24-9-10-multimodal-observability-rollout.md`
+- Remaining production acceptance:
+  - Run Docker active-stack migration through `067`, API health, Swagger `/docs`, worker startup and clean PostgreSQL bootstrap when Docker is available.
+  - Configure real provider pricing metadata before treating cost estimates as operational or commercial reporting.
+  - Smoke canary/demo/off policies with real tenant credentials and real voice/vision/search samples.
+  - Review privacy/copyright wording and source-quality process before using external media references commercially.
+- Phase 24 is now complete through 24.10 at repository/code level.
+- Next recommended phases:
+  - Phase 17 Federated Learning & Global Intelligence.
+  - Phase 21 Scentra AI Cloud Platform.
+  - Phase 23 AI Marketplace Economy.
+  - Phase 25 Enterprise Decision Intelligence.
+
+- Completed Phase 19 Autonomous Revenue Engine and Phase 20 AI Enterprise Memory Network at repository/Docker level:
+  - Added migration `066_saas_revenue_memory_network_phase19_20.sql`.
+  - Added revenue tables: `saas_ai_revenue_policies`, `saas_ai_revenue_opportunities`, `saas_ai_revenue_forecasts`, `saas_ai_revenue_experiments`, `saas_ai_revenue_reports`.
+  - Added memory graph tables: `saas_enterprise_memory_policies`, `saas_enterprise_memory_nodes`, `saas_enterprise_memory_edges`, `saas_enterprise_memory_sync_runs`, `saas_enterprise_memory_access_logs`.
+  - Added backend services `app_saas/intelligence/revenue.py` and `app_saas/intelligence/memory_network.py`.
+  - Added tenant endpoints under `/saas/v1/intelligence/revenue/*` and `/saas/v1/intelligence/memory-network/*`.
+  - Added Phase 19/20 feature keys to billing defaults, Intelligence catalog and Admin feature defaults.
+  - Intelligence worker now runs revenue analysis and memory sync in nested transactions and skips tenants without full premium access.
+  - Tenant `IntelligencePanel.jsx` now exposes Revenue AI opportunities/playbooks/forecasts and Enterprise Memory Network nodes/edges/sync runs.
+- Safety model:
+  - Revenue Engine is supervised control-plane only: no automatic sends, payment-provider calls, CRM mutation, campaign/workflow activation, agent execution or Meta runtime change.
+  - Unknown customer revenue is not invented; estimated value remains `0` without real tenant commerce/order data.
+  - Memory Network stores summaries/metadata/hashes, not raw media/base64, and keeps nodes tenant-scoped and reviewable.
+  - Candidate/private memory must not enter prompts/RAG/cross-tenant intelligence without published status and explicit routing review.
+- Validation passed:
+  - Backend `py_compile` locally and inside rebuilt API container.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Admin frontend `npm run build` passed.
+  - Docker Compose config passed.
+  - SQL BOM and strict UTF-8 migration scans passed.
+  - SaaS-scope `git diff --check` passed.
+  - Active Docker rebuild for API/worker/Admin passed.
+  - Active migration runner applied `066`.
+  - API `/saas/v1/health` and Swagger `/docs` returned 200.
+  - OpenAPI includes revenue and memory-network endpoints.
+  - Active DB confirms all 10 Phase 19/20 tables.
+  - Authenticated tenant smoke passed with temporary tenant: full grants, revenue analysis, opportunity approve/execute, memory sync, node publish; temporary tenant was deleted afterwards.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `066`; temporary API `/docs` returned 200 and worker started.
+  - Browser smoke loaded Admin frontend with no console errors.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/INFORME_FASE15_1_FASE11_ML_ROADMAP_ES.md`
+  - `docs/Scentra_Fase15_1_Fase11_ML_Roadmap_16_25.pdf`
+  - `architecture/AUTONOMOUS_REVENUE_ENGINE.md`
+  - `architecture/ENTERPRISE_MEMORY_NETWORK.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/CRITICAL_WARNINGS.md`
+  - `ai-memory/FILE_MAP.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-053-phase19-autonomous-revenue-engine.md`
+  - `decisions/ADR-054-phase20-enterprise-memory-network.md`
+- Remaining production acceptance:
+  - Revenue value/forecast accuracy requires real tenant commerce/order/payment data before commercial claims.
+  - Memory graph runtime prompt/RAG use should consume only reviewed/published tenant nodes after routing acceptance.
+  - Real tenant staging should verify operator workflow, export/import/delete lifecycle, retention policy and Admin plan/tenant enablement.
+- Next recommended phases:
+  - Phase 17 Federated Learning & Global Intelligence.
+  - Phase 21 Scentra AI Cloud Platform.
+  - Phase 23 AI Marketplace Economy.
+  - Phase 25 Enterprise Decision Intelligence.
+
+- Completed Phase 24.8 Admin & Premium Gating at repository/code level:
+  - Added migration `065_saas_multimodal_admin_gating_phase24.sql`.
+  - Added `saas_intelligence_plan_feature_limits` for plan-level feature mode/quota overrides.
+  - Added `saas_ai_provider_policies` for global/plan/tenant provider policy, model scope, enabled state, request quota and cost metadata.
+  - Added backend premium helper `app_saas/intelligence/premium.py`.
+  - Added Admin endpoints:
+    - `GET /saas/v1/admin/intelligence/premium-gating`
+    - `PATCH /saas/v1/admin/intelligence/plans/{plan_code}/features`
+    - `PATCH /saas/v1/admin/intelligence/provider-policies`
+  - Intelligence feature state now applies plan-level limits below tenant grants and above inherited plan/default/demo flags.
+  - AI Gateway provider routing now skips providers blocked by Admin policy, quota or cost limit before external calls.
+  - Web/Image Search provider routing now skips/blocks search providers by Admin policy, quota or cost limit before provider calls.
+  - Admin `AI Predictivo` now shows Phase 24 tenant gating, plan quotas, provider policies, credential readiness and estimated AI/search monthly costs.
+- Safety model:
+  - Provider policies default to compatibility allow; existing tenants are not blocked unless Admin configures explicit policy, request quota or cost limit.
+  - Cost estimates depend on Admin-entered pricing; zero cost means pricing not configured, not free usage.
+  - No dependencies, provider SDKs, Meta runtime changes, CRM/campaign/workflow changes, automatic billing charges, model training, outbound sends or agent auto-send behavior were added.
+- Validation passed so far:
+  - Backend `py_compile` for touched Admin/Intelligence/AI Gateway/Media modules.
+  - Admin frontend `npm run build`.
+  - Docker Compose config.
+  - SQL BOM and strict UTF-8 migration scans.
+  - Active Docker rebuild for API/worker/Admin.
+  - Active migration runner applied/skipped through `065`.
+  - API `/saas/v1/health`, Swagger `/docs`, Admin `/health`.
+  - OpenAPI includes Phase 24.8 Admin endpoints.
+  - DB confirms `saas_intelligence_plan_feature_limits`, `saas_ai_provider_policies`, and migration `065`.
+  - Container backend compileall for Intelligence/Admin/AI Gateway/Media.
+  - Authenticated Admin smoke for premium-gating overview and provider-policy PATCH passed.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `065`.
+  - Browser smoke loaded Admin login page from the rebuilt Admin frontend.
+  - Recent API/worker log scan after the fix found no traceback/error/deadlock/500 patterns.
+  - SaaS-scope `git diff --check` passed.
+  - Spanish tracking PDF regenerated at `docs/Scentra_SaaS_Project_Status.pdf`.
+- Bug fixed during validation:
+  - `provider_credential_summary` had an invalid PostgreSQL `ORDER BY t.updated_at` outside the `GROUP BY`; changed to order by `MAX(c.updated_at)`.
+
+- Completed Phase 24.7 Inbox UX:
+  - Added `POST /saas/v1/media/search/results/{result_id}/reference`.
+  - The reference endpoint validates tenant auth/role, Intelligence search access, approved/non-blocked result state, public URLs and optional conversation ownership.
+  - The endpoint prepares a safe bounded text reference with title, snippet, source URL, optional visual URL and license metadata; it does not send messages.
+  - Inbox uses the existing CRM send endpoint for actual delivery so quota, outbound queue, Meta dispatch, status events and `message.sent` capture remain unchanged.
+  - `App.jsx` now loads conversation-scoped multimodal memory events alongside messages/tasks/status/timeline/dedupe/search.
+  - Inbox CRM side panel now includes `Panel de analisis Inbox` with voice/vision summaries, multimodal memory highlights, counts and memory sync/refresh.
+  - Approved visual references are shown in a dedicated strip with `Usar` and `Enviar` actions.
+  - Web/Image Search result cards now support `Usar`, `Enviar`, `Aprobar y usar`, and `Aprobar y enviar`.
+  - Sending requires a human click plus browser confirmation; pending safe results are approved first through the existing approval endpoint.
+  - No migration was added; Phase 24.7 reuses existing search, memory and CRM outbound tables.
+- Safety model:
+  - No automatic reference sending by AI/agents/workers.
+  - Blocked/unsafe sources cannot be used.
+  - Prepared references cannot bypass `/media/search/results/{result_id}/approval`.
+  - Customer delivery cannot bypass `/conversations/{conversation_id}/messages` quota/outbound/status behavior.
+  - No raw media/base64 persistence, model training, CRM mutation, campaign/workflow launch, Meta runtime changes, billing changes or agent assignment changes were added.
+- Validation passed:
+  - Local backend `py_compile` for touched media/CRM routers.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Active Docker rebuild for API/worker applied the new code.
+  - API `/saas/v1/health` returned OK.
+  - OpenAPI includes `/saas/v1/media/search/results/{result_id}/reference` and `/saas/v1/agents/multimodal-memory/events`.
+  - Browser smoke loaded the tenant frontend with no console errors.
+  - API/worker containers are running healthy after rebuild, and recent log scan found no traceback/error/deadlock/500 patterns.
+  - Spanish tracking PDF regenerated at `docs/Scentra_SaaS_Project_Status.pdf`.
+
+- Completed Phase 24.6 Multimodal Memory & Training Events:
+  - Added migration `064_saas_multimodal_memory_training_events_phase24.sql`.
+  - Added tenant-scoped table `saas_multimodal_memory_events`.
+  - Added default premium feature flags `multimodal_memory_events`, `multimodal_training_events`, `multimodal_rag_materialization`, and `multimodal_agent_memory`.
+  - Added backend service `saas-version/backend/app_saas/agents/multimodal_memory.py`.
+  - Added tenant endpoints:
+    - `GET /saas/v1/agents/multimodal-memory/events`
+    - `POST /saas/v1/agents/multimodal-memory/sync`
+    - `POST /saas/v1/agents/multimodal-memory/events/{event_id}/materialize`
+  - Memory sync captures sanitized outputs from:
+    - `saas_voice_intelligence_analyses`
+    - `saas_vision_intelligence_analyses`
+    - approved, non-blocked `saas_web_search_intelligence_results`
+    - completed multimodal `saas_ai_agent_tool_runs`
+  - Sync deduplicates by replay key, emits Intelligence events and refreshes conversation feature values for multimodal count, approved external sources, confidence, sentiment, urgency and text volume.
+  - Training-ready flags require `multimodal_training_events`, `ml_predictions`, or `ai_premium`; memory access alone does not authorize training readiness.
+  - Materialization can write to Knowledge/RAG, collective agent memory, or both.
+  - Customer-content materialization requires explicit `allow_customer_content=true`.
+  - Assigned-agent prompt context now prefers curated `saas_multimodal_memory_events`; external sources still require approved and non-blocked status.
+  - Media and agent tool domains sync memory best-effort after successful actions without breaking the original action if capture fails.
+  - Tenant `AiAgentsPanel.jsx` Agent OS tab exposes memory/training counts, sync/refresh, event rows and RAG/collective-memory materialization actions.
+  - Fixed remaining empty-UUID cast patterns in `saas-version/backend/app_saas/agents/service.py` touched by collective-memory materialization by using `CAST(NULLIF(..., '') AS uuid)`.
+  - Serialized runtime agent table checks in `agents/service.py` with a process lock and PostgreSQL advisory lock to prevent concurrent Agent OS requests from deadlocking on idempotent DDL.
+  - Added ADR `decisions/ADR-050-phase24-6-multimodal-memory-training-events.md`.
+- Safety model:
+  - No raw audio/image/document bytes or base64 payloads are stored in memory/training events.
+  - Phase 24.6 does not send customer messages, mutate CRM, create tasks/tickets, launch campaigns, execute workflows, assign agents, crawl result pages, change Meta/billing runtime or train models automatically.
+  - External source content enters agent context only from approved, non-blocked source rows.
+  - Voice/vision customer content requires explicit operator approval before Knowledge/RAG or collective-memory materialization.
+- Validation passed:
+  - Backend compile/import, tenant/Admin frontend builds, Docker Compose config, SQL UTF-8/BOM scans, active Docker rebuild and migration through `064`, container backend compileall, API health, Swagger, OpenAPI endpoint checks, DB table/feature-flag checks, authenticated sync/materialization smoke, clean isolated PostgreSQL bootstrap `001` through `064`, Browser Agent OS UI smoke after API rebuild, recent API/worker log scan without new 500/deadlock/traceback patterns, and tracking PDF regeneration.
+
+- Completed Phase 24.5 Agent Multimodal Tools:
+  - Added migration `063_saas_agent_multimodal_tools_phase24.sql`.
+  - Added default premium feature flags `agent_multimodal_tools`, `agent_voice_tools`, `agent_vision_tools`, and `agent_external_search_tools`.
+  - Added filtered index `idx_saas_ai_agent_tool_runs_multimodal` on existing Agent OS `saas_ai_agent_tool_runs`.
+  - Added backend service `saas-version/backend/app_saas/agents/multimodal_tools.py`.
+  - Added tenant endpoints:
+    - `GET /saas/v1/agents/multimodal-tools/catalog`
+    - `GET /saas/v1/agents/{agent_id}/multimodal-tools/runs`
+    - `POST /saas/v1/agents/{agent_id}/multimodal-tools/execute`
+  - Agent tools supported: `media.voice_analyze`, `media.vision_analyze`, and `media.web_image_search`.
+  - Execution requires tenant auth, role gate, selected agent ownership, tool presence in `tools_json`, and premium/demo Intelligence gating.
+  - Voice/vision tools require a real Inbox `message_id` and reuse existing Phase 24.2/24.3 media analysis endpoints.
+  - Web/image search tool requires a query and reuses Phase 24.4 search/approval tables and provider credential checks.
+  - Tool runs are stored as completed/failed Agent OS traces in `saas_ai_agent_tool_runs`.
+  - Assigned-agent prompt context now includes compact completed voice/vision outputs and only approved, non-blocked external search sources.
+  - `AiAgentsPanel.jsx` Agent OS tab now shows multimodal tool catalog/status, execution form, recent runs and source approve/reject actions.
+  - Added ADR `decisions/ADR-049-phase24-5-agent-multimodal-tools.md`.
+- Safety model:
+  - Agent multimodal tools are contextual/read-only and do not send customer messages, mutate CRM, create tasks/tickets, launch campaigns, execute workflows, assign agents, change Meta/billing runtime or train models.
+  - External search results remain pending until human review; blocked/unsafe results cannot be approved.
+  - Conversation prompts use external sources only after individual source approval.
+  - No raw media bytes, base64 payloads or decrypted secrets are persisted in agent tool traces.
+- Validation passed:
+  - Local backend `py_compile` for touched modules.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Docker Compose config passed.
+  - SQL BOM and strict UTF-8 scans passed.
+  - Active Docker rebuild for API/worker applied the new code and migration `063`.
+  - Container backend `compileall` passed.
+  - API `/saas/v1/health`, Swagger `/docs`, OpenAPI agent multimodal endpoint checks and DB migration/feature-flag checks passed.
+  - Authenticated tenant smoke created a custom agent, executed `media.web_image_search`, received controlled missing-credential failure, and confirmed a failed tool run persisted.
+  - Validation smoke confirmed `media.voice_analyze` without `message_id` fails with controlled validation.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `063` and confirmed migration/table state.
+  - Browser smoke loaded tenant `Agentes IA > Agent OS`, confirmed the multimodal tools section, search tool, execute action and no-side-effect copy, with no console errors.
+  - Spanish tracking PDF regenerated: `docs/Scentra_SaaS_Project_Status.pdf`.
+- Remaining risk:
+  - Production acceptance still needs real tenant audio/image/document messages, real Google/OpenRouter/Kimi/search credentials, approved external sources, quota/cost review and operator training.
+  - Automatic AI/agent sending of approved references and multimodal training remain future subphases.
+
+- Completed Phase 24.4 Web/Image Search Intelligence:
+  - Added migration `062_saas_web_image_search_intelligence_phase24.sql`.
+  - Added tenant-scoped tables `saas_web_search_intelligence_runs` and `saas_web_search_intelligence_results`.
+  - Added feature flags `web_search_intelligence`, `image_search_intelligence`, and `external_source_assist` to plan defaults and Intelligence catalog.
+  - Added tenant endpoints:
+    - `POST /saas/v1/media/search`
+    - `GET /saas/v1/media/search/runs`
+    - `POST /saas/v1/media/search/results/{result_id}/approval`
+  - Search supports `web`, `image`, and `mixed` modes with bounded result counts and smaller demo limits.
+  - Provider credentials are read from encrypted tenant API credentials for Tavily, Brave Search API, or SerpAPI.
+  - Optional `conversation_id`/`message_id` context is tenant-validated before running a search.
+  - Result URLs are screened for public HTTP(S); localhost/private/internal/link-local/reserved targets are blocked.
+  - Results persist title, URL, snippet, source domain, provider rank/score, optional image/thumbnail, license/source metadata, safety status and approval status.
+  - Blocked results are not approvable; human review can approve/reject safe results.
+  - Search and review actions emit inline Intelligence events `external_search.executed` and `external_search.result_reviewed`.
+  - Tenant Settings > APIs now includes compact search provider tiles for Tavily, Brave Search API and SerpAPI.
+  - Tenant Settings > IA now includes the Web/Image Search provider selector and credential state.
+  - Inbox CRM side panel includes a Web/Image Search Intelligence card with query/type/provider controls, recent result cards and approve/reject actions.
+  - Added ADR `decisions/ADR-048-phase24-4-web-image-search-intelligence.md`.
+- Safety model:
+  - Search is explicit and human-in-the-loop. No result is sent to customers automatically.
+  - The backend does not fetch/crawl arbitrary result URLs after provider search.
+  - No CRM mutation, ticket/task creation, campaign launch, workflow execution, agent tool execution, agent assignment, billing change, Meta runtime change or model training was added.
+  - Search provider credentials remain encrypted at rest and are decrypted only at the provider-call boundary.
+- Validation passed:
+  - Local backend `py_compile` for touched modules.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Admin frontend `npm run build` passed.
+  - Docker Compose config passed.
+  - SQL BOM and strict UTF-8 scans passed.
+  - Active Docker rebuild for API/worker/Admin applied the new code and migration `062`.
+  - Active migration runner skipped/applied through `062` cleanly.
+  - API `/saas/v1/health`, Swagger `/docs`, Admin `/health`, OpenAPI search endpoint checks, DB table/feature-flag checks, container backend compileall and worker startup passed.
+  - Authenticated tenant smoke confirmed `/media/search/runs` and safe `409` behavior when no search provider credential exists.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `062` and confirmed the new search tables.
+  - Browser smoke passed for Swagger search endpoint visibility.
+- Remaining risk:
+  - Production acceptance still needs real tenant Tavily/Brave/SerpAPI credentials, real search samples, quota/cost review and source-quality/copyright policy.
+  - External web/image results can be stale, inaccurate, unsafe or copyrighted; human review remains mandatory before customer-facing use.
+  - Human-operated approved-reference send was later added in Phase 24.7 through CRM outbound; automatic AI/agent sending still needs separate approval/design.
+
+- Completed Phase 24.3 Vision Intelligence:
+  - Added migration `061_saas_vision_intelligence_phase24.sql`.
+  - Added tenant-scoped table `saas_vision_intelligence_analyses` with cached image/document analysis by message.
+  - Added feature flags `vision_intelligence`, `image_understanding`, and `document_ocr` to plan defaults, Admin defaults and Intelligence catalog.
+  - Added `POST /saas/v1/media/messages/{message_id}/vision/analyze`.
+  - The endpoint validates tenant/user role, premium/demo access, message ownership, supported MIME/type, media existence, byte limits, token quota and provider availability.
+  - Image/document bytes can come from local `saas_media_assets` or inbound WhatsApp media through the existing Meta integration helpers.
+  - Image provider routing allows Google/Gemini, OpenRouter or Kimi when configured/compatible, with Google fallback; document/OCR routing remains Google/Gemini in this phase.
+  - Cached analysis is merged into `saas_messages.payload_json.vision_intelligence` so Inbox cards can show the result without reprocessing.
+  - Tenant Settings > IA now lets the user select the Vision Intelligence provider and displays linked model/credential state.
+  - Inbox image/document/file bubbles now show a Vision Intelligence card with analyze/reanalyze action, summary, visual description, extracted text, document type, intent, urgency, confidence, topics and recommended action.
+  - Added ADR `decisions/ADR-047-phase24-3-vision-intelligence.md`.
+- Safety model:
+  - No automatic CRM mutation, ticket creation, campaign trigger, outbound message send, worker job, Meta runtime change, agent tool execution, web search, image retrieval/send or multimodal training was added.
+  - Demo mode is supported but size-limited; full mode requires premium enablement or an accepted umbrella AI premium gate.
+  - Raw image/document bytes and base64 payloads are not persisted in analysis rows or AI run metadata.
+- Validation passed:
+  - Local backend `py_compile` for touched modules.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Admin frontend `npm run build` passed.
+  - Docker Compose config passed.
+  - SQL BOM and strict UTF-8 scans passed.
+  - Active Docker rebuild for API/worker/Admin applied the new code and migration `061`.
+  - Active migration runner skipped/applied through `061` cleanly.
+  - API `/saas/v1/health`, Swagger `/docs`, Admin `/health`, OpenAPI vision endpoint check, DB table/feature-flag check, container backend compileall and recent API/worker/Admin log scan passed.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `061` and confirmed `saas_vision_intelligence_analyses`.
+  - Browser smoke passed for Swagger vision endpoint visibility and Admin shell with no console errors.
+- Remaining risk:
+  - Production acceptance still needs a real tenant with encrypted Google/Gemini/OpenRouter/Kimi credentials, real WhatsApp/local image/document samples and provider quota/cost review.
+  - Do not advertise Kimi/OpenRouter document/OCR analysis until adapter-level document payloads and model support are validated.
+  - Vision output can contain extracted customer/document text; human review is still required before sales/CRM actions or customer replies.
+
+- Previous task completed Phase 24.2 Voice Intelligence:
+  - Added migration `060_saas_voice_intelligence_phase24.sql`.
+  - Added tenant-scoped table `saas_voice_intelligence_analyses` with cached audio analysis by message.
+  - Added feature flags `voice_intelligence`, `voice_transcription`, and `voice_sentiment_intent` to plan defaults and Intelligence catalog.
+  - Added `POST /saas/v1/media/messages/{message_id}/voice/analyze`.
+  - The endpoint validates tenant/user role, premium/demo access, message ownership, audio MIME/type, media existence, byte limits, token quota and provider availability.
+  - Audio bytes can come from local `saas_media_assets` or inbound WhatsApp media through the existing Meta integration helpers.
+  - The runtime sends base64 audio only to the selected real multimodal provider path and stores only transcript/summary/classification output plus safe metadata.
+  - Google/Gemini is the supported provider path for real audio analysis in this subphase; other providers remain for future adapter-specific support.
+  - Cached analysis is merged into `saas_messages.payload_json.voice_intelligence` so Inbox cards can show the result without reprocessing.
+  - Tenant Settings > IA now lets the user select the Voice Intelligence provider and displays the linked model/credential state.
+  - Inbox audio bubbles now show a Voice Intelligence card with analyze/reanalyze action, summary, sentiment, intent, urgency, confidence, recommended action and transcript details.
+  - Added ADR `decisions/ADR-046-phase24-2-voice-intelligence.md`.
+- Safety model:
+  - No automatic CRM mutation, ticket creation, campaign trigger, outbound message send, worker job, Meta runtime change, agent tool execution, web search, web image retrieval, customer media send or multimodal training was added.
+  - Demo mode is supported but size-limited; full mode requires premium enablement or an accepted umbrella AI premium gate.
+  - Raw audio bytes and base64 payloads are not persisted in analysis rows or AI run metadata.
+- Validation passed:
+  - Local backend `py_compile` for touched modules.
+  - Tenant frontend `npm run build` passed with the existing Vite large-bundle warning.
+  - Docker Compose config passed.
+  - API/worker were rebuilt in the active SaaS stack.
+  - Active migration runner applied/skipped through `060`.
+  - Container backend `compileall` for touched backend domains passed.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI includes `/saas/v1/media/messages/{message_id}/voice/analyze`.
+  - PostgreSQL confirms `saas_voice_intelligence_analyses` exists and plan flags include `voice_intelligence`.
+- Remaining risk:
+  - Production acceptance still needs a real tenant with encrypted Google/Gemini credential, real WhatsApp/local audio samples and provider quota/cost review.
+  - Non-Google audio providers should not be advertised as supported until adapter-level audio payloads are validated.
+  - Voice output is advisory; human review is still required before sales/CRM actions or customer replies.
+
+- Previous task completed Phase 24.1 foundation:
+  - Added `GatewayAttachment` and optional `GatewayRequest.attachments`.
+  - Added optional `attachments` parameter to `generate_with_gateway`.
+  - Gemini adapter supports future text + `inline_data`/`file_data` multimodal parts.
+  - OpenAI-compatible adapter preserves text-only calls and can send image attachments as `image_url` content for compatible selected models.
+  - `saas_ai_runs.metadata_json` stores safe attachment counts/kinds/MIME/source metadata only, not base64 or media bytes.
+  - Provider catalogs now include `gemini-2.5-flash-lite` and `moonshot-v1-8k-vision-preview`; Kimi is marked multimodal-capable in the catalog.
+  - Tenant Settings > APIs now renders compact "Anadir" tiles and expands only selected/previously configured AI, TTS and channel/commerce providers.
+  - Added `architecture/VOICE_MULTIMODAL_INTELLIGENCE.md`.
+  - Added ADR `decisions/ADR-045-phase24-1-multimodal-gateway.md`.
+- Safety model:
+  - No DB migration, dependency, runtime media fetch, audio transcription, OCR, web/image search, agent media tools, customer media send, worker change, Meta runtime change, billing change or ML training change was added.
+  - Future 24.x phases must add feature gates, approval UX, provider validation and source/copyright controls before using web images or sending media references.
+- Validation passed:
+  - `python -m py_compile saas-version/backend/app_saas/ai_gateway/models.py saas-version/backend/app_saas/ai_gateway/service.py saas-version/backend/app_saas/ai_gateway/providers/gemini_adapter.py saas-version/backend/app_saas/ai_gateway/providers/openai_compatible.py saas-version/backend/app_saas/ai_gateway/registry.py saas-version/backend/app_saas/api_credentials/router.py`.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+- Remaining risk:
+  - Phase 24.1 is not full voice/multimodal runtime; later media work still belongs to Phase 24 scoped subphases.
+  - OpenAI-compatible image payloads require selected provider/model support and must be smoke-tested with real tenant credentials before production use.
+
+- Completed Phase 16 implementation:
+  - Added migration `saas-version/migrations/059_saas_realtime_intelligence_phase16.sql`.
+  - Added backend service `saas-version/backend/app_saas/intelligence/realtime.py`.
+  - Added schemas `RealtimeSessionIn` and `RealtimeCursorPatchIn`.
+  - Added tenant endpoints `/saas/v1/intelligence/realtime/center`, `/events`, `/sessions`, `/cursor`, `/sessions/{session_id}/close`, and `/stream`.
+  - Added Admin endpoints `/saas/v1/admin/intelligence/realtime` and `/saas/v1/admin/intelligence/realtime/metrics/refresh`.
+  - Added feature flags `realtime_intelligence_layer`, `realtime_event_stream`, `realtime_ai_alerts`, and `realtime_intelligence_dashboard` to backend defaults, Admin defaults and Intelligence catalog.
+  - Updated tenant `saas-version/frontend/src/IntelligencePanel.jsx` with realtime metrics, sessions/cursors, alerts, live feed and event mix.
+  - Updated Admin `saas-version/admin-frontend/src/AdminApp.jsx` with realtime overview and metric snapshot refresh.
+  - Added `architecture/REALTIME_INTELLIGENCE_LAYER.md`.
+  - Added ADR `decisions/ADR-044-phase16-realtime-intelligence-layer.md`.
+- Implemented realtime capabilities:
+  - Tenant live snapshot over existing Intelligence events, predictions, recommendations, ModelOps, Autonomous Ops and Trust AI signals.
+  - Sensitive event payload redaction before tenant display.
+  - User live sessions and per-user cursors.
+  - Advisory alert derivation from existing operation/trust/prediction records.
+  - Admin per-tenant realtime overview and metric snapshot persistence.
+  - Bounded SSE endpoint for future clients; current tenant UI uses polling.
+- Safety model:
+  - Demo mode can preview realtime data.
+  - Full mode remains controlled by plan flags, tenant overrides or Intelligence grants.
+  - Phase 16 does not add Kafka, NATS, Redis Streams, WebSockets or new dependencies.
+  - Realtime alerts are advisory only and do not mutate Meta, CRM, campaigns, billing, workflows, agents, Trust AI, queues or model rollout state.
+  - Admin metric refresh writes only `saas_realtime_intelligence_metrics`.
+- Validation passed:
+  - `python -m compileall -q saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/admin saas-version/backend/app_saas/billing`.
+  - `npm --prefix saas-version\frontend run build` passed with the existing tenant Vite large-bundle warning.
+  - `npm --prefix saas-version\admin-frontend run build` passed.
+  - SQL BOM and strict UTF-8 migration scans passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build api worker admin-frontend`.
+  - Active migration runner applied/skipped through `059`.
+  - Clean isolated PostgreSQL bootstrap applied migrations `001` through `059`.
+  - Realtime tables exist in clean and active PostgreSQL checks.
+  - API `/saas/v1/health`, Swagger `/docs` and Admin `/health` returned OK.
+  - OpenAPI contains all tenant/Admin realtime endpoints.
+  - Tenant realtime smoke passed: event creation, payload redaction, center/feed, session registration, cursor persistence and session close.
+  - Admin realtime smoke passed: overview and metric snapshot refresh.
+  - API/worker recent log scans found no traceback/error pattern.
+  - Browser smoke passed for tenant `AI Inteligencia`, Admin shell and Swagger.
+  - `git diff --check -- saas-version docs architecture ai-memory tasks decisions AGENTS.md` passed.
+  - Spanish tracking PDFs were regenerated.
+- Remaining risk:
+  - Production realtime latency/throughput still needs staging traffic/capacity tests.
+  - Broker-based streaming remains a future scale decision and needs a separate ADR.
+  - Commercial policy must decide which plans/tenants receive full realtime mode.
+
+## Previous Task: Phase 22 AI Trust, Compliance & Governance
+
+- Completed Phase 22 as a premium-gated AI governance control-plane with migration `058`, backend `trust_center`, tenant/Admin endpoints, tenant `TrustCenterPanel.jsx`, Admin `Trust AI` overview and Spanish Phase 11 model-training tutorial.
+- Capabilities include governance policies, attestations, risk assessments, model cards, incidents, audits and compliance report snapshots.
+- Safety model remains control-plane only: no runtime enforcement, no legal certification, no automatic repairs, no model promotion and no CRM/campaign/Meta/billing mutations.
+- Validation passed: backend compileall, tenant/Admin builds, Docker rebuild through migration `058`, clean isolated bootstrap `001`-`058`, API health, Swagger, Admin health, OpenAPI Trust, tenant Trust smoke, Admin Trust smoke and browser smoke.
+- Remaining risk: legal/security review and plan/tenant enablement policy are needed before commercial compliance claims.
+
+## Previous Task: Phase 18 AI Workflow Composer
+
+- Completed Phase 18 implementation:
+  - Added migration `saas-version/migrations/057_saas_ai_workflow_composer_phase18.sql`.
+  - Added backend domain `saas-version/backend/app_saas/workflow_composer/` with schemas, router, service and local AGENTS rules.
+  - Mounted `/saas/v1/workflow-composer` in `app_saas/main.py`.
+  - Added premium feature flags `ai_workflow_composer` and `workflow_composer_templates` to backend defaults, Admin defaults and Intelligence catalog.
+  - Added tenant UI `saas-version/frontend/src/WorkflowComposerPanel.jsx`.
+  - Registered the `Composer` tenant navigation view and i18n labels.
+  - Added Composer CSS plus sidebar overflow handling so the new nav item is reachable on shorter screens.
+  - Added architecture doc `architecture/AI_WORKFLOW_COMPOSER.md`.
+  - Added ADR `decisions/ADR-042-phase18-ai-workflow-composer.md`.
+- Implemented Composer capabilities:
+  - Safe seeded templates.
+  - Draft workflow creation from blank graph or template.
+  - Graph node/edge editor.
+  - Preflight readiness/risk scoring.
+  - Side-effect-free simulation.
+  - Approval request/review.
+  - Version snapshots and rollback.
+  - `composer_only` materialization and activation.
+- Safety model:
+  - Demo mode can show overview/templates.
+  - Write/control endpoints require full `ai_workflow_composer`.
+  - Simulation does not execute side effects.
+  - Activation does not deploy triggers, flows, campaigns, Meta messages, CRM writes or agent handoffs.
+  - Runtime deployment from Composer needs a future explicit materialization design/ADR.
+- Validation passed:
+  - `python -m compileall saas-version/backend/app_saas/workflow_composer saas-version/backend/app_saas/main.py`.
+  - `npm run build` in `saas-version/frontend`.
+  - `npm run build` in `saas-version/admin-frontend`.
+  - Docker rebuild for API/worker/Admin applied migration `057`; API and Admin healthy; worker started.
+  - API health OK on `http://127.0.0.1:8010/saas/v1/health`.
+  - Swagger `/docs` returned 200.
+  - Clean temporary PostgreSQL migration bootstrap applied migrations `001` through `057`.
+  - Authenticated Composer smoke passed: instantiate template, preflight ready, simulation completed, approval approved, activation active with `composer_only`.
+  - Browser smoke loaded Workflow Composer UI, verified demo render, reachable nav, templates count and disabled write controls in demo mode.
+- Cleanup:
+  - Temporary smoke workflow and smoke feature grants were deleted from the local DB after validation.
+- Remaining risk:
+  - Production needs plan/tenant policy for full `ai_workflow_composer`.
+  - Composer runtime materialization into triggers/flows/campaigns is intentionally not implemented yet.
+  - Phase 15 external repo artifacts still need source/secret/attribution review before being exposed as tenant templates.
+
+## Previous Task: Phase 15.2/15.3
+
+- Completed Phase 15.2/15.3 implementation:
+  - Added `saas-version/scripts/phase15-nexus-eval-harness.mjs`.
+  - Script uses Node built-ins only and does not execute any external repo script.
+  - Generated `docs/phase15_1/nexus_handoff_contracts.json` with 7 NEXUS handoff contracts.
+  - Generated `docs/phase15_1/nexus_playbooks.json` with 7 phase playbooks and 4 scenario runbooks.
+  - Generated `docs/phase15_1/agent_eval_rubrics.json` with 6 Scentra eval rubrics.
+  - Generated `docs/phase15_1/agent_eval_results.json` with 29 disabled draft template evals.
+  - Generated `docs/phase15_1/phase15_2_15_3_report.md` as compact report.
+  - Added ADR `decisions/ADR-041-phase15-2-15-3-nexus-eval-harness.md`.
+  - Updated docs/status/memory for Phase 15.2/15.3 and revised the next roadmap sequence to 18, 22, 16, 24, 19, 20, 17, 21, 23, 25.
+- Safety model for this implementation:
+  - No SaaS API, DB migration, backend service, frontend component, worker, Docker config, auth, billing, Meta runtime or ML runtime was changed.
+  - No Postgres insert into `saas_ai_marketplace_items`.
+  - No tenant-visible marketplace exposure.
+  - No active agent creation.
+  - No active workflow/playbook execution.
+  - Generated drafts remain `disabled_review_required`, premium-gated and approval-first metadata only.
+  - Eval results remain advisory and activation stays `blocked_human_review_required`.
+- Validation passed:
+  - `node --check saas-version/scripts/phase15-nexus-eval-harness.mjs` passed.
+  - `node saas-version/scripts/phase15-nexus-eval-harness.mjs` passed and generated 7 handoff contracts, 7 playbooks, 4 runbooks, 6 rubrics and 29 eval results.
+  - JSON/report spot check passed: all 29 drafts remain inactive and activation-blocked.
+  - Phase 15.1B/15.1C validation remains valid:
+  - `node --check saas-version/scripts/phase15-agent-template-intake.mjs` passed.
+  - `node saas-version/scripts/phase15-agent-template-intake.mjs` passed and generated 184 inventory rows, 16 strategy docs and 29 disabled drafts.
+  - JSON parse/assertion check passed: 184 inventory items, 29 drafts, 0 active drafts.
+  - Combined Phase 15 JSON assertion passed: 184 inventory rows, 29 disabled drafts, 7 handoffs, 7 playbooks, 4 runbooks, 6 rubrics, 29 eval results, all activation blocked.
+  - UTF-8/no-BOM scan passed for touched scripts/docs/artifacts.
+  - Touched-file trailing whitespace scan passed.
+  - Stale roadmap wording scan passed.
+  - Spanish PDFs regenerated:
+    - `docs/Scentra_Fase15_1_Fase11_ML_Roadmap_16_25.pdf` (14,851 bytes).
+    - `docs/Scentra_SaaS_Project_Status.pdf` (37,409 bytes).
+
+- Previous Phase 15.1A context:
+- In progress/completed documentation for this task:
+  - Analyzed the full local repo at `external-repos/agency-agents/` in read-only mode.
+  - Detected 184 valid agent Markdown templates, 16 strategy/playbook/docs files without agent frontmatter, 14 agent categories, MIT `LICENSE`, `SECURITY.md`, examples, integrations and install/convert/lint scripts.
+  - Confirmed the local folder is not a standalone nested Git repository; exact upstream commit/tag remains unverified.
+  - Reviewed scripts as text only. No external script was executed.
+  - Mapped high-value material to Scentra: template schema, disabled marketplace drafts, NEXUS playbooks/handoffs, QA/eval rubrics, vertical packs, governance/identity/trust patterns and Workflow Composer inputs.
+  - Updated Phase 15.1 plan in `docs/PHASE15_1_AGENCY_AGENTS_RESEARCH.md`.
+  - Updated safe intake architecture in `architecture/AGENT_TEMPLATE_INTAKE.md`.
+  - Updated ADR `decisions/ADR-039-phase15-1-agency-agents-research.md`.
+  - Updated phases 16-25 sequencing in `docs/ROADMAP_PHASES_16_25_EVALUATION.md`.
+  - Updated Spanish report source `docs/INFORME_FASE15_1_FASE11_ML_ROADMAP_ES.md` and regenerated `docs/Scentra_Fase15_1_Fase11_ML_Roadmap_16_25.pdf`.
+  - Updated project status sources `docs/SAAS_PROJECT_STATUS.md` and `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`; regenerated `docs/Scentra_SaaS_Project_Status.pdf`.
+- Safety model:
+  - No SaaS runtime code, migrations, dependencies, Docker config, auth, billing, workers, Meta runtime or ML runtime were changed.
+  - No external repo scripts were run.
+  - No external agent templates were imported into Scentra.
+  - External `tools` declarations are not trusted and must be remapped to Scentra approval-first tool scopes before any future import.
+  - Phase 15.1 remains research/intake until the user explicitly approves implementation.
+- Validation for this documentation task:
+  - `git diff --check -- docs architecture ai-memory tasks decisions` passed.
+  - Touched-document trailing whitespace scan passed.
+  - PDF artifacts exist: `docs/Scentra_Fase15_1_Fase11_ML_Roadmap_16_25.pdf` (14,794 bytes) and `docs/Scentra_SaaS_Project_Status.pdf` (38,494 bytes).
+  - Stale README-only wording scan passed except for a historical/superseded note in `ai-memory/CURRENT_STATE.md`.
+- Recommended next roadmap order:
+  - Phase 18 AI Workflow Composer.
+  - Phase 22 AI Trust, Compliance & Governance Enterprise.
+  - Phase 16 AI Real-Time Intelligence Layer.
+  - Phase 24 Voice & Multimodal Intelligence.
+  - Phase 19 Autonomous Revenue Engine.
+  - Phase 20 AI Enterprise Memory Network.
+  - Phase 17 Federated Learning & Global Intelligence.
+  - Phase 21 Scentra AI Cloud Platform.
+  - Phase 23 AI Marketplace Economy.
+  - Phase 25 Enterprise Decision Intelligence.
+- Remaining risk:
+  - Need upstream Git URL, commit/tag or release, and confirmation whether local files were modified before commercial template import.
+  - Healthcare, legal, finance and outbound/sales agents need compliance rewrite and approval policies before tenant-facing use.
+  - A future Admin review/certification/import workflow is required before any marketplace DB import or tenant-facing use.
+
+- In progress/completed implementation for Phase 14:
+  - Added tenant local text catalog `saas-version/frontend/src/i18n.js`.
+  - Added Admin local text catalog `saas-version/admin-frontend/src/i18n.js`.
+  - Default locale is `es-CO`; optional Vite envs are `VITE_APP_LOCALE` and `VITE_ADMIN_LOCALE`.
+  - Normalized critical mixed-language UI strings in tenant/Admin navigation, page titles, settings tabs, Meta/Facebook connection copy, Broadcast template labels, AI Agents, AI Ecosystem, Intelligence benchmark/advisor labels and Admin Performance labels.
+  - Added dependency-free Product Ops scripts:
+    - `saas-version/scripts/phase14-copy-audit.mjs`
+    - `saas-version/scripts/phase14-release-check.mjs`
+  - Added package scripts `phase14:copy-audit` and `phase14:release-check` to tenant/admin frontends.
+  - Added docs/architecture/ADR for Phase 14:
+    - `docs/LOCALIZATION_PRODUCT_OPS.md`
+    - `architecture/LOCALIZATION_PRODUCT_OPS.md`
+    - `decisions/ADR-038-phase14-localization-product-ops.md`
+- Safety model:
+  - No backend/API/DB/auth/billing/Meta/worker/ML runtime behavior changed.
+  - No dependencies were added.
+  - Provider names, API enum values, DB values and payload field names remain untranslated.
+- Validation passed:
+  - `node saas-version/scripts/phase14-copy-audit.mjs`.
+  - `node saas-version/scripts/phase14-release-check.mjs`.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build api worker admin-frontend`.
+  - `docker compose -f saas-version/docker-compose.saas.yml exec -T api python -m app_saas.tools.migrate /app/migrations`.
+  - API health passed on `http://127.0.0.1:8010/saas/v1/health` and Swagger `/docs` returned 200.
+  - Admin frontend health passed on `http://127.0.0.1:8011/health`.
+  - API container `python -m compileall -q app_saas` passed.
+  - SQL BOM and strict UTF-8 scans passed.
+  - `git diff --check -- saas-version docs architecture ai-memory tasks decisions AGENTS.md` passed.
+  - API/worker/Admin log scan showed no current traceback/error patterns.
+  - Browser smoke loaded tenant Vite shell at `http://127.0.0.1:5174/` and Admin Docker shell at `http://127.0.0.1:8011/` with no console errors; temporary tenant Vite server was stopped after the smoke.
+  - Spanish tracking PDF regenerated at `docs/Scentra_SaaS_Project_Status.pdf`.
+- Remaining risks:
+  - Full long-tail panel copy should continue moving into catalogs when those modules are touched.
+  - A dedicated E2E test framework is still not present; Phase 14 adds release gates and browser/build smokes, not full automated user journeys.
+  - Existing tenant Vite large-bundle warning remains unchanged.
+- Completed Phase 13 by adding Security, 2FA & Compliance:
+  - `056_saas_phase13_security_compliance.sql` for email OTP MFA challenges and tenant privacy request workflow state.
+  - `app_saas/shared/mfa.py` for hashed OTP challenge generation/verification, expiry/attempt limits and security notification support.
+  - Tenant auth now supports `/auth/login` MFA challenge responses and `/auth/login/verify-otp` token issuance with MFA verification.
+  - Admin auth now supports `/admin/auth/login` MFA challenge responses and `/admin/auth/login/verify-otp` platform token issuance with MFA verification.
+  - Tenant/Admin security settings now support email OTP only; TOTP/authenticator apps remain out of scope.
+  - Tenant compliance API under `/compliance/*` exports current-user/customer data and records non-destructive privacy delete requests.
+  - Admin Security Center exposes MFA status, SMTP status, user/admin 2FA metrics, webhook signature coverage, security events, privacy requests and audit CSV export.
+  - Tenant frontend handles MFA challenge login and compliance exports/delete requests from Settings.
+  - Admin frontend handles MFA challenge login and adds the `Security` view.
+- Safety model:
+  - OTPs are stored hashed and expire after configured minutes/attempts.
+  - Production MFA requires SMTP; local dev OTP output is for local smoke only.
+  - Privacy delete requests do not hard-delete CRM, messages, audit, RAG or agent memory data automatically.
+  - Existing Meta/WhatsApp/Instagram/webhook runtime was not changed.
+- Validation passed for final closeout:
+  - `python -m compileall app_saas` in `saas-version/backend`.
+  - `npm run build` in `saas-version/frontend`.
+  - `npm run build` in `saas-version/admin-frontend`.
+  - `docker compose -f saas-version/docker-compose.saas.yml up --build -d api worker admin-frontend`.
+  - `docker compose -f saas-version/docker-compose.saas.yml exec -T api python -m app_saas.tools.migrate /app/migrations`.
+  - Migration `056` applied/skipped cleanly and `saas_mfa_challenges`/`saas_privacy_requests` exist.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI contains the Phase 13 MFA, Admin Security and Compliance endpoints.
+  - DB check confirmed `saas_mfa_challenges` and `saas_privacy_requests`.
+  - Tenant MFA smoke passed: enable 2FA, login challenge, OTP verify, token returned.
+  - Admin MFA smoke passed: bootstrap admin, enable 2FA, login challenge, OTP verify, platform token returned.
+  - Tenant compliance export smoke passed.
+  - Admin Security Compliance smoke passed after fixing webhook active count to use `is_active`.
+  - Temporary smoke users/tenants were cleaned.
+  - API/worker logs showed no current traceback/error pattern.
+  - Browser smoke loaded Admin at `http://127.0.0.1:8011` and tenant Vite at `http://127.0.0.1:5174` with no console error logs.
+  - Spanish PDF artifact exists and was regenerated at `docs/Scentra_SaaS_Project_Status.pdf`.
+- Documentation/memory synchronized:
+  - `docs/API_REFERENCE.md`, `docs/BACKEND.md`, `docs/DATABASE.md`, `docs/ENVIRONMENT.md`, `docs/FRONTEND.md`, `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`, `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`, `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`, `architecture/AUTH_FLOW.md`, `architecture/DB_FLOW.md`, `architecture/SYSTEM_DIAGRAMS.md`, `architecture/SECURITY_COMPLIANCE.md`
+  - `ai-memory/CURRENT_STATE.md`, `ai-memory/FILE_MAP.md`, `ai-memory/BUSINESS_LOGIC.md`, `ai-memory/SAFE_MODIFICATION_GUIDE.md`, `ai-memory/CRITICAL_WARNINGS.md`
+  - `decisions/ADR-037-phase13-security-compliance.md`
+- Risks:
+  - Production must provide SMTP, Turnstile, strong secrets and production CORS/domain settings before public rollout.
+  - TOTP/authenticator-app MFA is not implemented.
+  - Privacy delete requests require legal/retention fulfillment process before real deletion.
+  - Broader automated tenant-isolation regression tests remain recommended before high-scale public tenant growth.
+- Completed Phase 12 by adding Performance, Reliability & Scale control-plane:
+  - `055_saas_performance_reliability_phase12.sql` for SLO policies, backpressure policies, retention policies, cleanup runs, snapshots, drills and expected performance indexes.
+  - `app_saas/reliability/service.py` for SLO status, backpressure status, PostgreSQL index audit, backup readiness, retention dry-run/destructive allowlisted cleanup support, snapshots, drills and overview.
+  - `app_saas/workers/reliability.py`, embedded worker integration in `main.py`, standalone worker integration in `workers/runner.py`.
+  - Admin API endpoints `/admin/reliability/*` plus `/admin/operations/reliability/process`.
+  - Admin `Performance` view with SLO metrics, backpressure, index audit, retention policies, cleanup runs, drills, snapshots and safe actions.
+- Safety model:
+  - Retention policies are disabled and dry-run by default.
+  - Destructive cleanup requires explicit `dry_run=false`, platform-admin/superadmin role, and backend allowlisted SQL.
+  - Backup readiness is a metadata/readiness drill only.
+  - No automatic provider throttling, campaign pausing, queue mutation, Meta repair or real backup/restore was added.
+- Validation passed for final closeout:
+  - Backend `py_compile` for touched reliability/admin/worker/main modules.
+  - `npm.cmd --prefix saas-version/admin-frontend run build`.
+  - `npm.cmd --prefix saas-version/frontend run build` with existing Vite chunk-size warning.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`.
+  - SQL BOM scan returned `NO_SQL_BOM`.
+  - `git diff --check -- saas-version docs architecture ai-memory tasks decisions AGENTS.md`.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build`.
+  - Migration `055_saas_performance_reliability_phase12.sql` applied.
+  - Reliability tables and key indexes exist in PostgreSQL.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI contains Admin reliability endpoints.
+  - API container `python -m compileall -q app_saas` passed.
+  - Authenticated superadmin smoke passed reliability overview, snapshot, load-smoke drill, backup-readiness drill, retention dry-run and reliability processor.
+  - Retention dry-run traversed 6 allowlisted policies with 0 matched records in the local dataset.
+  - Recent API/worker logs showed no `Traceback`, `Unhandled`, `Exception` or `ERROR:` pattern.
+  - Admin browser smoke loaded login page with no console errors; authenticated UI navigation was covered by API smoke because the in-app browser blocked token injection and clipboard typing.
+  - `docs/Scentra_SaaS_Project_Status.pdf` regenerated in Spanish.
+- Documentation/memory synchronized so far:
+  - `docs/API_REFERENCE.md`, `docs/BACKEND.md`, `docs/DATABASE.md`, `docs/FRONTEND.md`, `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`, `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `architecture/API_FLOW.md`, `architecture/DB_FLOW.md`, `architecture/WORKER_FLOW.md`, `architecture/SYSTEM_DIAGRAMS.md`, `architecture/PERFORMANCE_RELIABILITY_SCALE.md`
+  - `ai-memory/CURRENT_STATE.md`, `ai-memory/FILE_MAP.md`, `ai-memory/BUSINESS_LOGIC.md`, `ai-memory/SAFE_MODIFICATION_GUIDE.md`, `ai-memory/CRITICAL_WARNINGS.md`
+  - `decisions/ADR-036-phase12-performance-reliability-scale.md`
+- Risks:
+  - SLO/backpressure thresholds are initial defaults and need real staging/production traffic tuning.
+  - Dedicated load tests and real backup/restore drills remain operational acceptance items.
+  - Destructive retention should remain off until backup, legal and retention policy acceptance is complete.
+- Closed Phase 11 by adding Enterprise AI Network & Vertical Intelligence:
+  - `054_saas_enterprise_ai_network_phase11.sql` for vertical industry model metadata, anonymized industry benchmarks, tenant benchmark comparisons, tenant vertical insights, AI playbooks, aggregate-only knowledge-network nodes, network metrics and Enterprise AI Network premium flags.
+  - `app_saas/intelligence/network.py` with privacy-safe benchmark refresh, tenant benchmark comparisons, playbook seeding, industry model metadata, vertical advisor cards and aggregate knowledge-network outputs.
+  - Tenant APIs under `/saas/v1/intelligence/network/*`: center, refresh and playbooks.
+  - Tenant `Inteligencia` UI now includes Industry Intelligence Center, Benchmark Dashboard, Industry Insights Panel, AI Playbook Marketplace, Industry AI Models and AI Knowledge Network.
+  - Intelligence worker attempts Enterprise AI Network refresh in a nested transaction and skips tenants without full feature access instead of failing the tenant pipeline.
+  - Billing/default Intelligence catalogs and Admin plan defaults include `enterprise_ai_network`, `vertical_ai_intelligence`, `industry_ai_models`, `benchmark_intelligence`, `cross_tenant_intelligence`, `vertical_ai_advisors`, and `ai_playbook_library`, disabled by default.
+  - Phase 10 vertical packs now include additional enterprise industry codes for retail, ecommerce, support, automotive and financial services.
+- Safety model:
+  - Cross-tenant intelligence uses only aggregate/anonymized metrics.
+  - Raw messages, conversations, tenant names, private content and sensitive data are not exposed through Enterprise AI Network.
+  - Industry benchmark aggregates require minimum sample count 3 before being usable.
+  - Vertical playbooks are recommendation templates only and do not activate triggers, flows, campaigns or provider changes.
+  - Persisted refresh requires full premium access through `enterprise_ai_network`, `cross_tenant_intelligence`, or umbrella `ai_premium`; demo mode can preview.
+- Validation passed for this update:
+  - Backend `py_compile` for touched Intelligence, worker, billing and vertical modules.
+  - `npm.cmd --prefix saas-version/frontend run build`.
+  - `npm.cmd --prefix saas-version/admin-frontend run build`.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`.
+  - SQL BOM and strict UTF-8 scans.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build`.
+  - Migration `054` applied and Enterprise AI Network tables exist in PostgreSQL.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI contains `/saas/v1/intelligence/network/center`, `/refresh`, and `/playbooks`.
+  - API `compileall` passed inside the rebuilt container.
+  - Authenticated tenant smoke confirmed demo center/preview, blocked full refresh without full access, and premium-enabled full refresh persisted benchmark comparisons and insights.
+  - Recent API/worker log scan found no `Traceback`, `UserWarning`, unhandled exception or `ERROR:` pattern.
+  - Local browser smoke loaded tenant app and admin app with no console errors.
+  - Final closeout rerun after memory/PDF sync passed: no stale `052` tracking references, PDF size check, touched-doc trailing-whitespace scan, Docker Compose rebuild, API compileall inside container, API health, Swagger, OpenAPI network path check and migration/table check.
+- Documentation/memory synchronized for this update:
+  - `architecture/ENTERPRISE_AI_NETWORK.md`
+  - `architecture/INTELLIGENCE_ENGINE.md`
+  - `architecture/DB_FLOW.md`
+  - `decisions/ADR-035-phase11-enterprise-ai-network.md`
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/API_REFERENCE.md`, `docs/BACKEND.md`, `docs/DATABASE.md`, `docs/FRONTEND.md`, `docs/KNOWN_ISSUES.md`
+  - `ai-memory/CURRENT_STATE.md`, `ai-memory/FILE_MAP.md`, `ai-memory/BUSINESS_LOGIC.md`, `ai-memory/SAFE_MODIFICATION_GUIDE.md`
+- Risks:
+  - Benchmark cohorts need real production/staging traffic before commercial claims.
+  - Playbooks remain recommendations only; executable automation requires future explicit design, preflight, audit and rollback.
+  - Model/benchmark quality must be accepted with real tenant-safe data before broad enterprise rollout.
+- Continued Phase 11 by adding the AI Platform Ecosystem control-plane:
+  - `053_saas_ai_platform_ecosystem_phase11.sql` for marketplace/installations, plugins, tool registry, event subscriptions, developer apps, external integration metadata, tenant AI apps, ecosystem traces/metrics and premium flags.
+  - `app_saas/ecosystem/` with schemas, catalog, service, router and local AGENTS rules.
+  - Tenant APIs under `/saas/v1/ecosystem/*` for overview, marketplace, installations, plugins, tools, event subscriptions, SDK manifest, developer apps, external integrations, AI apps and metrics.
+  - Billing/default Intelligence feature catalogs now include `ai_marketplace`, `ai_plugin_center`, `ai_developer_console`, `ai_tool_registry`, and `ai_app_framework`, disabled by default.
+  - Tenant frontend now includes `AI Ecosystem` navigation and `AiEcosystemPanel.jsx`.
+- Safety model:
+  - Demo mode can list/preview ecosystem state.
+  - Install/create/update operations require full feature mode or umbrella `ai_premium`.
+  - Plugins, AI apps, external integrations and tools are metadata/control-plane records; no untrusted plugin code runs in API/worker.
+  - Developer app raw keys are returned once and stored as hashes.
+  - Marketplace agent-template installs can optionally create agents through existing agent service; no activation bypass was added.
+- Validation passed for this update:
+  - `python -m py_compile` for ecosystem, main, billing limits and Intelligence catalog.
+  - `npm.cmd --prefix saas-version/frontend run build`.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`.
+  - SQL BOM and strict UTF-8 scans.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build`.
+  - Migration `053` applied and ecosystem tables exist in PostgreSQL.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI contains `/saas/v1/ecosystem/overview` and `/saas/v1/ecosystem/marketplace`.
+  - API `compileall` passed inside the rebuilt container.
+  - Recent API/worker log scan found no `Traceback`, `UserWarning`, unhandled exception or `ERROR:` pattern.
+  - Authenticated tenant smoke confirmed demo marketplace preview and blocked install without full feature mode.
+  - Premium-enabled tenant smoke installed a marketplace item and created plugin/tool/developer-app records.
+  - Local browser smoke loaded `AI Ecosystem` with no console errors.
+  - Closeout rerun after documentation sync passed: frontend build, Compose config, API compileall inside container, API health, Swagger, OpenAPI ecosystem paths, migration/table checks, SQL BOM/UTF-8 scans, Docker log scan, touched-file trailing-whitespace scan, and PDF existence/size check.
+- Documentation/memory synchronized for this update:
+  - `architecture/AI_PLATFORM_ECOSYSTEM.md`
+  - `architecture/INTELLIGENCE_ENGINE.md`
+  - `architecture/DB_FLOW.md`
+  - `decisions/ADR-034-phase11-ai-platform-ecosystem.md`
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/API_REFERENCE.md`, `docs/BACKEND.md`, `docs/DATABASE.md`, `docs/FRONTEND.md`, `docs/KNOWN_ISSUES.md`
+  - `ai-memory/CURRENT_STATE.md`, `ai-memory/FILE_MAP.md`, `ai-memory/BUSINESS_LOGIC.md`
+- Risks:
+  - Real executable third-party plugin runtime is not implemented and should not be enabled without sandbox/gateway design, security review, approval, and staging tests.
+  - Developer app keys are management-plane records only; do not expose them as public API auth until a dedicated auth gateway exists.
+- Continued Phase 11 by adding tenant-scoped Autonomous Operational Intelligence:
+  - `052_saas_autonomous_operational_intelligence_phase11.sql` for operation policies, playbooks, anomalies, supervised actions, reports, and AI operations premium flags.
+  - `app_saas/intelligence/operations.py` for operational snapshots, anomaly detection, playbook seeding, autonomy policy, supervised actions, reports, access checks and controlled execution records.
+  - Tenant APIs: `GET /saas/v1/intelligence/operations/center`, `PATCH /saas/v1/intelligence/operations/control`, `POST /saas/v1/intelligence/operations/analyze`, `GET /saas/v1/intelligence/operations/actions`, and action approve/execute/dismiss.
+  - Billing default feature flags now include `autonomous_operations`, `ai_self_healing`, and `ai_control_center`, disabled by default.
+  - Intelligence worker now invokes Autonomous Operations analysis in a nested transaction and reports `autonomous_anomalies` plus `autonomous_actions`.
+  - Tenant `Inteligencia` UI now includes AI Operations Center, AI Control Center, autonomous actions and operational reports.
+- Safety model:
+  - Demo mode can preview/analyze but forces auto-remediation and low-risk auto-execute off.
+  - Current execution records controlled/auditable results and does not directly mutate Meta, queues, campaigns, CRM or billing.
+  - Level 4 can only mark low-risk/report-only records executed when full mode and tenant policy allow it.
+- Validation passed for this update:
+  - `npm.cmd run build` in `saas-version/frontend`.
+  - API `py_compile` for touched backend modules inside the rebuilt container.
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build`.
+  - Migration `052` applied and operation tables exist in PostgreSQL.
+  - API `/saas/v1/health` returned OK and Swagger `/docs` returned 200.
+  - OpenAPI contains the new operations endpoints.
+  - Authenticated tenant demo/control smoke passed.
+  - SQL migration BOM and strict UTF-8 scans passed.
+  - Recent API/worker log scan found no `Traceback`, `UserWarning`, unhandled exception or `ERROR:` pattern.
+- Documentation/memory synchronized for this update:
+  - `architecture/AUTONOMOUS_OPERATIONAL_INTELLIGENCE.md`
+  - `decisions/ADR-033-phase11-autonomous-operational-intelligence.md`
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/API_REFERENCE.md`, `docs/BACKEND.md`, `docs/DATABASE.md`, `docs/FRONTEND.md`, `docs/ENVIRONMENT.md`, `docs/KNOWN_ISSUES.md`
+  - `architecture/DB_FLOW.md`, `architecture/INTELLIGENCE_ENGINE.md`
+  - `ai-memory/CURRENT_STATE.md`, `ai-memory/FILE_MAP.md`, `ai-memory/BUSINESS_LOGIC.md`
+- Risks:
+  - Real self-healing side effects require playbook-specific staging evidence, rollback rehearsal and explicit approval before broad enablement.
+  - Anomaly thresholds and autonomy policy should be tuned with real tenant traffic before enabling Level 3/4 widely.
+- Continued Phase 11 by integrating predictive intelligence into visible tenant workflows:
+  - `GET /saas/v1/intelligence/overview` for compact predictive dashboards, executive summaries, premium state, latest predictions/recommendations and ModelOps observability.
+  - `GET /saas/v1/advisor/briefing` for the floating Advisor to load predictive overview, insights, recommendations, actions, metrics, activity and memory in one call.
+  - Advisor seed insights now include recent lead scoring, churn, smart remarketing and predictive recommendation signals.
+  - CRM/inbox conversations now expose `predictive_intelligence` and latest conversation-level predictions when available.
+  - Inbox adds predictive badges and a `Churn` smart filter.
+  - CRM side panel adds predictive lead/conversion/engagement/churn indicators and buttons to run conversation-level lead scoring, churn and smart remarketing predictions.
+  - Dashboard adds a predictive strip from latest tenant predictions and open recommendations.
+  - Tenant `Inteligencia` adds executive summaries and predictive cards from the new overview endpoint.
+- Validation passed for this update:
+  - `docker compose -f saas-version/docker-compose.saas.yml exec -T api python -m compileall -q app_saas`
+  - `npm.cmd run build` in `saas-version/frontend`
+  - `docker compose -f saas-version/docker-compose.saas.yml up -d --build`
+  - Clean Docker/PostgreSQL rebuild applied migrations `001` through `050`
+  - API `/saas/v1/health` returned 200
+  - Swagger `/docs` returned 200
+  - `docker compose ps` shows API/admin/worker/Postgres healthy or running
+  - Recent API/worker logs show migrations complete, worker ticks and no current traceback after rebuild
+- Validation caveat:
+  - Browser smoke for tenant frontend was attempted. Browser file URL access is policy-blocked, and a local Vite dev server did not remain reachable in this Windows session. Frontend verification is Vite build-level for this update.
+- Documentation/memory synchronized for this update:
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-031-phase11-predictive-advisor-product-layer.md`
+- Risks:
+  - Product-facing predictions still use baseline fallback unless ML is explicitly enabled and a registry artifact is ready.
+  - Do not market bootstrap/autolabel model outputs as proven production accuracy until real tenant-safe evaluation, drift, cost and rollout acceptance are complete.
+- Continued Phase 11 with full ML training strategy/data intelligence after explicit authorization for MLflow, BentoML, ML dependencies, serving, pipelines, registry and observability.
+- Added migration `050_saas_ml_training_strategy_phase11.sql` for:
+  - `saas_intelligence_event_contracts`
+  - `saas_intelligence_event_replay_cursors`
+  - feature metadata columns on `saas_intelligence_feature_values`
+  - `saas_ml_auto_labels`
+  - `saas_ml_feature_sets`
+  - `saas_ml_feature_pipeline_runs`
+  - `saas_ml_training_datasets`
+  - `saas_ml_model_evaluations`
+- Implemented event contracts, auto-labeling, training feature pipelines, dataset build requests and autolabel training requests in `app_saas/intelligence/service.py`.
+- Implemented Postgres auto-label dataset builder in `app_saas/ml_service/datasets.py` and autolabel training in `app_saas/ml_service/pipeline.py`.
+- Added internal ML endpoints `POST /datasets/build` and `POST /train/autolabel`.
+- Added Admin endpoints:
+  - `POST /saas/v1/admin/intelligence/auto-labels/generate`
+  - `POST /saas/v1/admin/intelligence/feature-pipelines/recompute`
+  - `POST /saas/v1/admin/intelligence/ml-datasets/build`
+  - `POST /saas/v1/admin/intelligence/ml-training/autolabel`
+- Admin `AI Predictivo` now exposes Data Intelligence controls for labels, feature pipelines, dataset materialization and autolabel model training.
+- Intelligence worker can prepare labels/features only when `SAAS_ML_AUTO_TRAIN_ENABLED=true`; default remains disabled to preserve current Meta/WhatsApp/Instagram runtime behavior.
+- Validation passed for this update:
+  - backend compileall for Intelligence, ML service, Admin router and Intelligence worker
+  - admin frontend build
+  - Compose config
+  - SQL BOM/strict UTF-8 checks
+  - clean Docker/PostgreSQL stack `codexsaasmltrain` with migrations through `050`
+  - API health, Swagger `/docs`, Admin health, API worker, standalone worker, ML service health, MLflow and Qdrant
+  - seeded tenant data smoke for auto-label generation, feature pipeline recompute, dataset build, autolabel training, readiness, direct prediction and drift
+  - recent Docker log scan without `Traceback`, `UserWarning`, unhandled exception or `ERROR:`
+- Updated docs/memory/PDF:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/DEPENDENCIES.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/DB_FLOW.md`
+  - `architecture/INTELLIGENCE_ENGINE.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `decisions/ADR-030-phase11-ml-training-strategy.md`
+- Risks:
+  - Auto-labels are heuristic training labels; review evidence/distribution on real tenant-safe data before production promotion.
+  - Keep trained autolabel models in shadow/canary until quality, drift, cost and tenant isolation are accepted.
+  - Do not expose ML service publicly without a dedicated auth/proxy design.
+- Phase 11 Scentra Intelligence Engine is code-complete at foundation/governance level and locally validated with clean Docker/PostgreSQL, API, worker, admin UI and predictive smokes.
+- Note: older chronological entries below that say "no ML dependencies" describe pre-authorization Phase 11 steps and are superseded by the current optional ML infrastructure.
+- Continued Phase 11 after explicit user authorization for ML dependencies and infrastructure.
+- Added optional ML profile and kept default API/worker ML-disabled:
+  - `saas-version/backend/requirements-ml.txt`
+  - `saas-version/backend/Dockerfile.ml`
+  - Compose profile `ml` with `mlflow`, `ml-service`, and `qdrant`
+  - ML settings in `app_saas/config.py`
+- Added migration `049_saas_ml_infrastructure_phase11.sql` for training jobs, model artifacts, inference runs and drift snapshots.
+- Added `app_saas/ml_service` with health, model list, synthetic training, prediction, drift evaluation and Prometheus metrics endpoints.
+- Added Admin Intelligence endpoints for MLops overview, training dataset readiness, and synthetic ML training/registry registration.
+- Admin `AI Predictivo` now displays ML infrastructure state, dataset readiness, jobs, artifacts, inference/drift logs and synthetic training controls.
+- Prediction runtime can call ML service when `SAAS_ML_ENABLED=true`; shadow inference is captured under `output_json.ml_inference` and baseline output remains authoritative.
+- Validation passed for this update:
+  - Compose config quiet check
+  - backend `compileall` for intelligence/admin/ml_service/config modules
+  - admin frontend build
+  - Docker build for `ml-service`
+  - clean Docker/PostgreSQL stack `codexsaasml` with migrations through `049`
+  - API health, Swagger `/docs`, Admin health, worker startup
+  - ML service `/health`, MLflow HTTP 200, Qdrant `/readyz`
+  - direct ML synthetic training/prediction/drift smoke
+  - Admin synthetic training + shadow registry smoke
+  - tenant shadow inference smoke with `baseline_rules+ml_shadow`
+  - strict recent Docker log scan without `Traceback`, `UserWarning`, unhandled exception or `ERROR:`
+- Temporary validation stack `codexsaasml` and its test volumes were removed after validation.
+- Final documentation/safety checks passed: Compose config, backend compileall for touched Phase 11 modules, admin frontend build, SQL BOM/UTF-8 scans, docs trailing-whitespace scan, SaaS-scope `git diff --check`, PDF existence/size check, and no remaining `codexsaasml` containers.
+- Remaining Phase 11 risk is production acceptance, not missing infrastructure: real labels, tenant-safe evals, cost/drift alerts, staged rollout and provider/tenant traffic are still required before broad enablement.
+- Continued Phase 11 with dependency-light model registry registration and deterministic runtime canary selection.
+- Added Admin endpoint `POST /saas/v1/admin/intelligence/models` to register candidate/external/pending models without adding ML dependencies or serving runtimes.
+- Admin `AI Predictivo` now includes a model registration form for model key, task, framework, version, artifact URI, rollout mode, traffic percent and promotion status.
+- Prediction runtime now selects active production/canary registry rows by task and uses a deterministic hash bucket over tenant/prediction/subject/window to choose canary traffic.
+- Canary traffic `100%` selects the candidate model key/version; canary traffic `0%` falls back to the production baseline model.
+- Prediction output and `ai.prediction.generated` events now explicitly expose `scoring_engine = baseline_rules` so registered external artifacts are not mistaken for executed ML inference.
+- Validation passed for this update:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/admin/router.py`
+  - `npm --prefix saas-version/admin-frontend run build`
+  - `docker compose -p codexsaasphase11canary -f saas-version/docker-compose.saas.yml up -d --build api worker admin-frontend`
+  - Clean Docker/PostgreSQL stack `codexsaasphase11canary` applied migrations through `048`, started API, worker and admin frontend, and served Swagger `/docs`, OpenAPI and admin `/health` with HTTP 200.
+  - Authenticated smoke passed for admin login, tenant registration, premium grant, model registration, feature recompute, canary `100%` prediction, canary `0%` fallback, and explicit `baseline_rules` scoring-engine metadata.
+  - Browser smoke against `http://127.0.0.1:8087/` loaded Scentra Admin with no console errors.
+  - Docker API/worker logs after rebuild had no `Traceback` or `UserWarning`.
+  - SaaS migrations have no UTF-8 BOM.
+- Existing non-migration BOMs were detected in a few older SaaS `.py`, `.jsx`, and docs files outside this Phase 11 change; they were not modified because this task stayed scoped to Intelligence/ModelOps.
+- No ML dependencies, event brokers, MLflow, BentoML, model servers or trained model artifacts were added.
+- Temporary validation stack `codexsaasphase11canary` was removed with its test PostgreSQL volume after validation.
+- Phase 11 is more operational, but not true trained-ML complete until approved dependencies, labeled data, model serving, registry integration and production traffic acceptance are added.
+- Continued Phase 11 with an extended predictive tenant smoke and a premium-gating fix for persisted recommendations.
+- Continued Phase 11 with an extended predictive tenant smoke and a premium-gating fix for persisted recommendations.
+- Fixed `saas-version/backend/app_saas/intelligence/service.py` so `persist_recommendations=true` no longer creates `saas_intelligence_recommendations` unless `predictive_recommendations` access/quota is enabled.
+- Prediction output now includes `recommendation_gate` metadata showing whether recommendation persistence was requested, enabled, created, or blocked.
+- Demo prediction previews still work through `intelligence_demo`; persisted predictive recommendations are gated separately by `predictive_recommendations`.
+- Extended Docker/PostgreSQL smoke passed on temporary stack `codexsaasphase11predictive`:
+  - Clean migrations through `048`, API health, Swagger `/docs`, OpenAPI, admin `/health`, API worker and standalone worker started.
+  - Tenant registration, seeded CRM customers, feature recompute, disabled recommendation grant, demo `lead_scoring` prediction, full `smart_remarketing` prediction, recommendation creation, feedback, model metrics and recommendation dismiss all passed.
+  - Disabled `predictive_recommendations` produced zero persisted recommendations and returned `recommendation_gate.reason = intelligence_feature_not_enabled`.
+- Validation passed for this update:
+  - `python -m compileall saas-version/backend/app_saas/intelligence`
+  - API `/saas/v1/health`, Swagger `/docs`, OpenAPI `/openapi.json`, admin `/health`.
+- Temporary validation stack `codexsaasphase11predictive` was removed with its test volume after validation.
+- No ML dependencies, event brokers, MLflow, BentoML, model servers or trained model artifacts were added.
+- Continued Phase 11 with safe inline Intelligence event capture for high-value producers without schema/API/dependency changes.
+- Added `saas-version/backend/app_saas/intelligence/capture.py`.
+- CRM outbound message creation now emits inline `message.sent` events with `message:{id}` replay keys.
+- Billing paid checkout activation and subscription state changes now emit inline `billing.subscription.changed` events with worker-compatible replay keys.
+- Validation passed for this update:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/crm/router.py saas-version/backend/app_saas/billing/service.py`
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`
+  - SQL BOM scan returned `BOM_FILES=NONE`.
+  - Strict UTF-8 SQL scan returned `UTF8_ERRORS=NONE`.
+  - SaaS-scope `git diff --check` passed.
+  - Clean Docker/PostgreSQL stack `codexsaasphase11inline` applied migrations through `048`.
+  - API `/saas/v1/health`, Swagger `/docs`, OpenAPI `/openapi.json`, admin `/health`, API worker, and standalone worker started.
+  - Tenant smoke passed: register, customer create, outbound CRM send, and persisted `message.sent` inline event.
+  - Billing smoke passed: subscription state change and persisted `billing.subscription.changed` inline event.
+  - Regenerated Spanish tracking PDF: `docs/Scentra_SaaS_Project_Status.pdf`.
+  - Temporary validation stack `codexsaasphase11inline` was removed with its test volume.
+- Extended predictive tenant smoke is no longer pending; it passed in temporary Docker stack `codexsaasphase11predictive`.
+- Continued Phase 11 with tenant-facing predictive UX without changing backend contracts, migrations or dependencies.
+- Added client navigation item `Inteligencia` and `saas-version/frontend/src/IntelligencePanel.jsx`.
+- Tenant app now calls existing `/saas/v1/intelligence/*` endpoints to show feature grants/usage, feature-store snapshots, predictions, recommendations, prediction feedback and model metrics.
+- Tenant app can recompute feature snapshots, generate gated baseline predictions, submit prediction feedback and dismiss recommendations.
+- Validation passed for this update:
+  - `npm --prefix saas-version/frontend run build`
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`
+  - Touched-file trailing whitespace scan returned `TRAILING_WS=NONE`.
+  - Regenerated Spanish tracking PDF: `docs/Scentra_SaaS_Project_Status.pdf`.
+- Validation note:
+  - Docker clean-stack became available later in this session; inline-capture and extended predictive UX/API smokes both passed.
+- Continued Phase 11 with model registry rollout governance without installing ML dependencies or adding Kafka/NATS/MLflow/BentoML.
+- Added `048_saas_intelligence_model_rollouts_phase11.sql` for model registry rollout controls and auditable rollout events.
+- Runtime `ensure_intelligence_tables` now defensively adds model rollout columns and creates `saas_intelligence_model_rollout_events`.
+- Admin APIs now support `GET /admin/intelligence/models`, `GET /admin/intelligence/models/{model_key}/assessment`, and `PATCH /admin/intelligence/models/{model_key}`.
+- Admin `AI Predictivo` now loads/renders model registry status, rollout mode, traffic percent, aggregate feedback, accuracy, drift, and production-readiness assessment.
+- Prediction generation now reads model registry status/rollout mode; disabled/paused models are blocked and shadow/canary models create shadow predictions without auto-creating recommendations.
+- Validation passed for this update:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/admin/router.py`
+  - `npm --prefix saas-version/admin-frontend run build`
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`
+  - SQL BOM scan returned `BOM_FILES=NONE`.
+  - Strict UTF-8 SQL scan returned `UTF8_ERRORS=NONE`.
+  - Touched-file trailing whitespace scan returned `TRAILING_WS=NONE`.
+  - Clean Docker/PostgreSQL stack `codexsaasphase11rollout` applied migrations through `048`.
+  - API `/saas/v1/health`, Swagger `/docs`, OpenAPI `/openapi.json`, admin `/health`, API worker, and standalone worker started.
+  - Authenticated Admin smoke passed for model registry list, model assessment, model PATCH, rollout event audit, and admin audit event.
+  - Regenerated Spanish tracking PDF: `docs/Scentra_SaaS_Project_Status.pdf`.
+  - Temporary validation stack was removed with its test volume.
+- Continued Phase 11 with ModelOps feedback/metrics foundation without installing ML dependencies or adding Kafka/NATS/MLflow/BentoML.
+- Added `047_saas_intelligence_modelops_phase11.sql` for `saas_intelligence_prediction_feedback` and `saas_intelligence_model_metrics`.
+- Tenant APIs now support `GET /intelligence/feedback`, `POST /intelligence/predictions/{prediction_id}/feedback`, and `GET /intelligence/model-metrics`.
+- Admin APIs now support `GET /admin/intelligence/model-metrics` and `POST /admin/intelligence/model-metrics/recompute`.
+- Admin `AI Predictivo` now shows model key, prediction type, sample count, feedback count, accuracy and drift baseline, with a manual recompute action.
+- Intelligence worker now recalculates model metrics after tenant pipeline runs.
+- Validation passed for this update:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/workers/intelligence.py saas-version/backend/app_saas/admin/router.py`
+  - `npm --prefix saas-version/admin-frontend run build`
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`
+  - SQL BOM scan returned `BOM_FILES=NONE`.
+  - Strict UTF-8 SQL scan returned `UTF8_ERRORS=NONE`.
+  - SaaS-scope `git diff --check` passed.
+  - `docker info` confirmed Docker Desktop daemon is unavailable, so clean bootstrap could not run.
+  - Regenerated Spanish tracking PDF: `docs/Scentra_SaaS_Project_Status.pdf`.
+- Added `046_saas_intelligence_engine_phase11.sql` for events, feature values, predictions, recommendations, AI premium grants, model registry and intelligence usage.
+- Added `app_saas/intelligence` with tenant APIs for catalog/state/events/features/predictions/recommendations.
+- Added `app_saas/workers/intelligence.py` for derived events, feature recompute and gated baseline prediction generation.
+- Embedded worker, standalone worker and Admin Operations now include Intelligence processing.
+- Admin `AI Predictivo`, `Operacion` and `Salud` can manually trigger Intelligence processing.
+- Fixed Intelligence feature snapshot query for remarketing enrollments: uses `state = 'active'`.
+- Admin backend now exposes `/admin/intelligence/*` for AI & Predictive Features Management with platform role gates and audit events.
+- Admin frontend now includes `AI Predictivo` to inspect predictive usage and set disabled/demo/full modes by tenant and feature.
+- Billing/admin feature catalogs now include premium predictive AI flags and demo mode.
+- Advisor context now includes recent Intelligence Engine predictions and open recommendations without auto-executing actions.
+- Kimi was verified as already official in the existing AI Gateway registry and migration `023`; no duplicate provider code was added.
+- New architecture and decision docs added:
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `architecture/INTELLIGENCE_ENGINE.md`
+  - `decisions/ADR-021-scentra-intelligence-engine-phase11.md`
+  - `decisions/ADR-022-phase11-derived-intelligence-worker.md`
+- Validation passed:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/workers/intelligence.py saas-version/backend/app_saas/workers/runner.py saas-version/backend/app_saas/main.py saas-version/backend/app_saas/admin/router.py`
+  - `npm --prefix saas-version/admin-frontend run build`
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet`
+  - SQL BOM scan returned `BOM_FILES=NONE`.
+  - Strict UTF-8 SQL scan returned `UTF8_ERRORS=NONE`.
+  - SaaS-scope `git diff --check` passed.
+  - Regenerated Spanish tracking PDF: `docs/Scentra_SaaS_Project_Status.pdf`.
+- Pending validation:
+  - Tenant API smoke with real/seed tenant data once Docker or a staging API is available.
+- Phase 10 Verticalizacion is code-complete at repo level and locally validated.
+- Added `045_saas_verticalization_phase10.sql` for tenant industry state, vertical pack snapshots, and vertical pack application audit.
+- Added `app_saas/verticals` with catalog, schemas, router, service, and domain AGENTS rules.
+- Vertical packs now apply CRM pipelines, custom fields, labels, message templates, saved segments, trigger drafts, remarketing flow drafts, quiet-hours defaults, and optional recommended agents.
+- Tenant registration, tenant creation, and admin tenant patch now accept/apply `industry_code`.
+- Client registration and Settings > Industria expose vertical pack selection, current state, KPI counts, recommended agents, application history, and apply controls.
+- Admin tenant detail exposes industry selection and pack applied status.
+- Phase 10 validation passed locally: backend `compileall`, client build, admin build, Compose config, SQL BOM scan, strict UTF-8 SQL scan, and SaaS-scope diff whitespace check.
+- Clean Docker/PostgreSQL rerun through migration `045` is pending because Docker Desktop daemon was unavailable in this session.
+- Updated Spanish tracking report and regenerated `docs/Scentra_SaaS_Project_Status.pdf` with Phase 10 progress.
+- Phase 9 Billing y Monetizacion is code-complete at repo level and locally validated.
+- Added `044_saas_billing_phase9_operational.sql` for lifecycle notice timestamps, invoice PDF tracking, checkout provider event recency, and lifecycle indexes.
+- Billing webhooks now verify Stripe, MercadoPago, and Wompi signatures before mutating billing state.
+- Stripe checkout/invoice/subscription events, MercadoPago payment events, and Wompi approved/failed events update checkout, subscription, payment, invoice, and provider-event state.
+- Billing lifecycle now runs from admin sync, embedded worker, and standalone worker with interval throttling and an advisory lock.
+- Lifecycle sync now handles trial/subscription expiry, past_due grace, suspension, open invoice creation, uncollectible invoice aging, and one-time notices.
+- `main.py` blocks unsafe tenant writes for non-operational tenants while keeping billing/auth/admin/health reachable.
+- Tenant and admin billing UIs now list invoices and download generated PDF invoices through authenticated endpoints.
+- Added Compose envs for billing lifecycle interval and past-due grace days.
+- Updated Spanish tracking report and regenerated `docs/Scentra_SaaS_Project_Status.pdf` with Phase 9 progress.
+- Phase 9 validation passed locally: backend `py_compile`, client build, admin build, Compose config, SQL BOM scan, and `git diff --check`.
+- Clean Docker/PostgreSQL rerun through migration `044` is pending because Docker Desktop daemon was unavailable in this session.
+- Phase 8 AI Agents Enterprise is code-complete at repo level and locally validated.
+- Added/verified Phase 8 operational schema through `043_saas_ai_agents_phase8_operational.sql` for custom-agent prompts, stored preflight state, evals, and conversation AI ownership.
+- Agent activation now requires passing preflight; failed checks return `agent_preflight_not_ready`.
+- Conversation AI enforces hard-stop budget before provider execution.
+- Factory and custom agents now share fillable system prompt templates, variables JSON, and rendered prompts.
+- Custom Agent creation is available in the tenant AI Agents UI.
+- Inbox supports active-agent loading, assigned-agent filter, assigned-agent badges, and manual assignment/release of the responsible AI agent.
+- Auto-router/orchestrator assignment persists `assigned_ai_agent_id`; general AI does not answer once a conversation is assigned to an agent.
+- Assigned inactive/unavailable agents intentionally skip fallback until a human releases/reassigns the conversation.
+- Collective memory is read from `saas_ai_agent_collective_memory` and injected into assigned-agent conversation prompts.
+- Agent archive/delete preserves memory by default so the memory vault can restore/export/import/delete later.
+- Added Spanish project-tracking source update `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md` and regenerated `docs/Scentra_SaaS_Project_Status.pdf` in Spanish with phase progress.
+- Added Phase 15 proposal for future external specialized-agent repository analysis.
+- Phase 8 validation passed locally: backend `py_compile`, client build, admin build, Compose config, `NO_SQL_BOM`, and `ALL_SQL_UTF8_STRICT`.
+- Clean Docker/PostgreSQL rerun through migration `043` is pending because Docker Desktop daemon was unavailable in this session.
+- Phase 7 Campanas, Triggers y Remarketing is code-complete at repo level and locally validated.
+- Added/verified Phase 7 operational schema through `042_saas_campaigns_phase7_operational.sql` for global quiet hours and A/B event telemetry.
+- Campaigns backend exposes global quiet-hours settings, A/B reports, trigger simulator, trigger/flow/campaign preflight, trigger versions, and rollback restore.
+- Trigger runtime now supports CRM stage, payment status, customer type, and intent conditions in addition to existing words/comments/templates/tags/schedules.
+- Trigger/remarketing workers enforce global and local quiet hours, A/B variants/events, cooldown, `block_ai`, and scheduled-trigger requeue during quiet hours.
+- Broadcast enqueue and outbound dispatch revalidate approved Meta templates before sending queued/retried template messages.
+- Client Campaigns/Trigger Builder UI exposes global quiet hours, preflight, simulator, A/B configuration/reporting, versions/rollback, and CRM-stage/status simulation.
+- Phase 7 validation passed locally: backend `py_compile`, client build, admin build, Compose config, `NO_SQL_BOM`, and `ALL_SQL_UTF8_STRICT`.
+- Clean Docker/PostgreSQL rerun through migration `042` is pending because Docker Desktop daemon was unavailable in this session.
+- Phase 6 Knowledge Base y RAG is code-complete and smoke-tested on a clean Docker/PostgreSQL stack.
+- Added sparse-vector chunk metadata, tenant-scoped RAG evaluations, CSV parsing, safe URL ingestion, search citations/scores, and client UI controls for RAG quality.
+- Clean Docker/PostgreSQL project `codexsaasphase6` applied migrations `001` through `041`; API, worker, admin health, Swagger/OpenAPI, and Knowledge smoke passed.
+- Phase 5 CRM Comercial is code-complete at repo level; migration `040` was validated by the Phase 6 clean stack.
+- Added CRM custom-field definitions, configurable pipeline/stages, unified timeline, dedupe candidates, controlled merge/audit, and AI custom-field read/update gating.
+- Frontend CRM/Inbox can edit custom fields, use dynamic pipeline stages, view timeline, merge duplicate candidates, create custom fields, apply industry pipeline presets, and add stages.
+- Phase 4 Robust Inbox is code-complete at repo level and build/browser-smoke tested.
+- Backend conversations endpoint now supports optional server-side channel and queue filters without breaking existing callers.
+- Client Inbox now uses robust polling with no overlapping refreshes, visibility-aware backoff, sync status/error display, filter/search refreshes, browser notifications, in-app sound toggle, and assign-to-me/release actions.
+- DM/comment separation, CRM side panel, tasks, SLA, hot leads, takeover, media composer, voice notes, emojis, product cards, and status-event cards remain preserved.
+- Clean Docker/PostgreSQL rerun is now validated through migration `041` by the Phase 6 stack.
+- Phase 3 Observability and Diagnostics is code-complete and smoke-tested on a clean Docker/PostgreSQL stack.
+- Phase 3 added worker heartbeat state, global health, Meta/AI Gateway health, channel diagnostics, dead-letter diagnosis/retry, all queue processor admin endpoints, and correlation ID persistence.
+- Phase 3 fixed a real retry bug: webhook event processing now uses per-event savepoints and agent orchestration enqueue no longer aborts ingestion when optional UUIDs are empty.
+- Phase 2 Scentra Admin is code-complete and smoke-tested on a clean Docker/PostgreSQL stack.
+- Admin frontend is now deployable from `docker-compose.saas.yml` with Traefik routing for `admin.scentra-ai.online`.
+- Secure first-superadmin creation is available through the optional `platform-admin-seed` Compose profile and existing `create_platform_admin` tool.
+- Admin UI hides local bootstrap outside localhost unless explicitly enabled.
+- Admin tenant feature flags now display effective plan/default/trial state plus overrides.
+- Admin E2E smoke passed for login, overview, tenants, plans, subscriptions, feature flags, impersonation, credits, invoices, audit, queues, observability, dead-letter sync, and queue processing.
+- Phase 1 security is code-complete and smoke-tested on a clean Docker/PostgreSQL stack.
+- Migration `038_saas_phase1_security_hardening.sql` adds lockout, password reset, 2FA-prep, and security-event index schema.
+- Tenant/client flows now include register/trial, login, password recovery, password reset, authenticated password change, security status, and 2FA settings. Phase 13 later added email OTP enforcement.
+- Admin flows now include local bootstrap, login, password recovery, and password reset.
+- Backend now enforces CAPTCHA when enabled, endpoint/principal/IP auth rate limits, security events, persistent failed-login lockout, hashed expiring reset tokens, and lock clearing after reset/change/successful login.
+- Clean Docker validation passed with project `codexsaasphase1test`, fresh volume, temporary `coolify` network, and `SAAS_API_HOST_PORT=8019`.
+- PDF tracking artifact regenerated: `docs/Scentra_SaaS_Project_Status.pdf`.
+- Phase 2 PDF tracking artifact regenerated after admin validation and documentation sync.
+- SaaS codebase inspected: backend, frontends, migrations, Docker/env, integrations, workers, auth, billing, AI domains.
+- Root memory folders created: `docs/`, `tasks/`, `decisions/`, `architecture/`, `ai-memory/`.
+- Documentation scope corrected after user clarification: non-SaaS root app and Android are out of active scope.
+- Runtime logic was changed only in the SaaS auth/security scope requested by the user.
+- No dependencies were intentionally installed or updated.
+
+## Completed Memory Artifacts
+
+- `AGENTS.md`
+- `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+- `docs/PROJECT_CONTEXT.md`
+- `docs/FRONTEND.md`
+- `docs/BACKEND.md`
+- `docs/DATABASE.md`
+- `docs/API_REFERENCE.md`
+- `docs/DEPENDENCIES.md`
+- `docs/ENVIRONMENT.md`
+- `docs/KNOWN_ISSUES.md`
+- `docs/AGENT_RULES.md`
+- `ai-memory/CURRENT_STATE.md`
+- `ai-memory/SYSTEM_OVERVIEW.md`
+- `ai-memory/CRITICAL_WARNINGS.md`
+- `ai-memory/SAFE_MODIFICATION_GUIDE.md`
+- `ai-memory/FILE_MAP.md`
+- `ai-memory/BUSINESS_LOGIC.md`
+- `architecture/*.md`
+- `decisions/ADR-*.md`
+
+## Open Verification Notes
+
+- SaaS phase status is based on static code inspection, not production acceptance.
+- Production acceptance still requires real Turnstile keys/toggles, SMTP env vars, production secret/CORS review, and deployment-domain smoke tests.
+- No SaaS automated test suite was detected during this pass.
+- Before any future implementation, re-check the touched files and their references.
+
+## Checks Run For This Memory Pass
+
+- Listed SaaS files and routers with `rg`.
+- Verified requested memory files exist with `rg --files docs tasks decisions architecture ai-memory`.
+- Searched for non-SaaS residue; remaining mentions are explicit out-of-scope boundaries or pre-existing docs.
+- Checked `git status --short`; unrelated pre-existing Android/root changes remain untouched.
+
+## Latest Update
+
+- Continued Phase 11 runtime ModelOps/canary routing:
+  - `saas-version/backend/app_saas/intelligence/service.py`
+  - `saas-version/backend/app_saas/intelligence/schemas.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+- Current governance/runtime added:
+  - Admin can register new model registry entries through `POST /admin/intelligence/models`.
+  - Admin UI can register candidate/external/pending model metadata and then patch rollout controls.
+  - Prediction runtime now does deterministic canary selection by tenant/prediction/subject/window and falls back to production baseline when traffic is outside the canary bucket.
+  - Prediction output records `scoring_engine = baseline_rules` to prevent confusing model metadata selection with real artifact inference.
+- Validation results:
+  - Backend compile and admin frontend build passed.
+  - Clean Docker/PostgreSQL stack `codexsaasphase11canary` applied migrations through `048`.
+  - API, Swagger `/docs`, OpenAPI, admin frontend `/health`, API worker and standalone worker started.
+  - Authenticated canary smoke passed for model registration, `100%` canary selection, `0%` fallback and scoring-engine metadata.
+  - Browser smoke loaded Scentra Admin with no console errors.
+- Risks:
+  - Historical at that point: Phase 11 still had no trained ML models, external event broker, MLflow, BentoML or model-serving runtime.
+  - Canary routing now selects registry rows at runtime, but scores still use baseline rules until artifact execution is implemented.
+  - Older non-migration BOMs exist in unrelated SaaS source/docs files and should be normalized in a separate encoding cleanup task.
+- Continued Phase 11 model rollout governance:
+  - `saas-version/migrations/048_saas_intelligence_model_rollouts_phase11.sql`
+  - `saas-version/backend/app_saas/intelligence/schemas.py`
+  - `saas-version/backend/app_saas/intelligence/service.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+- Current governance added:
+  - Model registry controls for status, stage, shadow mode, rollout mode, traffic percent, feedback threshold, accuracy threshold, drift threshold and promotion status.
+  - Auditable `saas_intelligence_model_rollout_events`.
+  - Admin endpoints for registry listing, production-readiness assessment and registry patching.
+  - Admin UI panel `Model Registry & Rollout`.
+  - Runtime prediction guard: disabled/paused models are blocked; shadow/canary predictions are persisted as `shadow` and do not create recommendations automatically.
+- Validation results so far:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/admin/router.py` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - Clean Docker/PostgreSQL bootstrap through migration `048` passed.
+  - Authenticated Admin model-registry smoke passed.
+  - Spanish tracking PDF regenerated.
+- Risks:
+  - Historical at that point: Phase 11 still had no trained ML models, external event broker, MLflow, BentoML or model-serving runtime.
+  - Canary routing is stored/governed, but current baseline prediction path does not yet split traffic between competing trained artifacts.
+- Implemented/reviewed Phase 11 Scentra Intelligence Engine foundation and automation:
+  - `saas-version/migrations/046_saas_intelligence_engine_phase11.sql`
+  - `saas-version/backend/app_saas/intelligence/*`
+  - `saas-version/backend/app_saas/workers/intelligence.py`
+  - `saas-version/backend/app_saas/main.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/backend/app_saas/advisor/service.py`
+  - `saas-version/backend/app_saas/billing/limits.py`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+  - `saas-version/admin-frontend/src/styles.css`
+- Current automation added:
+  - Derived canonical events from CRM/messages/webhooks/outbound/triggers/campaign A-B/remarketing/AI runs/billing.
+  - Worker feature recompute and gated prediction generation with advisory lock and cooldown.
+  - Admin manual run endpoint `/admin/operations/intelligence/process`.
+  - Remarketing feature snapshot bug fixed by using `state = 'active'`.
+- Validation results so far:
+  - `python -m compileall saas-version/backend/app_saas/intelligence saas-version/backend/app_saas/workers/intelligence.py saas-version/backend/app_saas/workers/runner.py saas-version/backend/app_saas/main.py saas-version/backend/app_saas/admin/router.py` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL checks returned `BOM_FILES=NONE` and `UTF8_ERRORS=NONE`.
+  - SaaS-scope `git diff --check` passed.
+  - Spanish project tracking PDF regenerated at `docs/Scentra_SaaS_Project_Status.pdf`.
+- Updated docs/memory:
+  - `docs/SCENTRA_INTELLIGENCE_ENGINE.md`
+  - `architecture/INTELLIGENCE_ENGINE.md`
+  - `decisions/ADR-021-scentra-intelligence-engine-phase11.md`
+  - `decisions/ADR-022-phase11-derived-intelligence-worker.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+- Risks:
+  - Phase 11 currently ships baseline/rule predictions and baseline ModelOps metrics, not trained ML model quality.
+  - Inline event emission/external streaming, advanced drift monitoring and trained model serving remain future Phase 11 work.
+- Implemented/reviewed Phase 10 Verticalizacion:
+  - `saas-version/migrations/045_saas_verticalization_phase10.sql`
+  - `saas-version/backend/app_saas/verticals/*`
+  - `saas-version/backend/app_saas/main.py`
+  - `saas-version/backend/app_saas/auth/router.py`
+  - `saas-version/backend/app_saas/auth/schemas.py`
+  - `saas-version/backend/app_saas/tenants/router.py`
+  - `saas-version/backend/app_saas/tenants/schemas.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/backend/app_saas/admin/schemas.py`
+  - `saas-version/backend/app_saas/agents/service.py`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/frontend/src/styles.css`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+- Validation results:
+  - `python -m compileall saas-version/backend/app_saas/verticals saas-version/backend/app_saas/main.py saas-version/backend/app_saas/auth/router.py saas-version/backend/app_saas/tenants/router.py saas-version/backend/app_saas/admin/router.py saas-version/backend/app_saas/agents/service.py` passed.
+  - `npm run build` in `saas-version/frontend` passed with the existing Vite large-bundle warning.
+  - `npm run build` in `saas-version/admin-frontend` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL checks returned `NO_SQL_BOM` and `ALL_SQL_UTF8_STRICT`.
+  - SaaS-scope `git diff --check` passed.
+  - Docker clean-stack rerun could not execute because Docker Desktop daemon was unavailable at `dockerDesktopLinuxEngine`.
+- Updated docs/memory:
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-020-phase10-verticalization-packs.md`
+- Risks:
+  - Rerun clean Docker/PostgreSQL bootstrap through migration `045` when Docker is available.
+  - Stage each vertical pack before applying to mature production tenants because pack application updates the default CRM pipeline.
+  - Triggers and flows are intentionally left inactive/draft and require human review/preflight before activation.
+- Implemented/reviewed Phase 8 AI Agents Enterprise:
+  - `saas-version/migrations/043_saas_ai_agents_phase8_operational.sql`
+  - `saas-version/backend/app_saas/agents/service.py`
+  - `saas-version/backend/app_saas/agents/router.py`
+  - `saas-version/backend/app_saas/agents/orchestrator.py`
+  - `saas-version/backend/app_saas/agents/schemas.py`
+  - `saas-version/backend/app_saas/ai_agent/service.py`
+  - `saas-version/backend/app_saas/crm/router.py`
+  - `saas-version/backend/app_saas/crm/schemas.py`
+  - `saas-version/frontend/src/AiAgentsPanel.jsx`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/frontend/src/styles.css`
+- Validation results:
+  - `python -m py_compile saas-version/backend/app_saas/agents/service.py saas-version/backend/app_saas/agents/router.py saas-version/backend/app_saas/agents/orchestrator.py saas-version/backend/app_saas/ai_agent/service.py saas-version/backend/app_saas/crm/router.py saas-version/backend/app_saas/crm/schemas.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config` passed.
+  - SQL checks returned `NO_SQL_BOM` and `ALL_SQL_UTF8_STRICT`.
+  - Docker clean-stack rerun could not execute because Docker Desktop daemon was unavailable at `dockerDesktopLinuxEngine`.
+- Updated docs/memory:
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `architecture/WORKER_FLOW.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-018-phase8-ai-agents-operational.md`
+- Risks:
+  - Rerun clean Docker/PostgreSQL bootstrap through migration `043` when Docker is available.
+  - Stage real conversations with manual assignment, auto-router/orchestrator assignment, collective memory, and budget hard-stop before production rollout.
+  - Assigned inactive agents intentionally block general fallback; train operators to release/reassign from Inbox.
+- Implemented/reviewed Phase 7 Campanas, Triggers y Remarketing:
+  - `saas-version/migrations/042_saas_campaigns_phase7_operational.sql`
+  - `saas-version/backend/app_saas/campaigns/router.py`
+  - `saas-version/backend/app_saas/campaigns/schemas.py`
+  - `saas-version/backend/app_saas/workers/triggers.py`
+  - `saas-version/backend/app_saas/workers/remarketing.py`
+  - `saas-version/backend/app_saas/workers/dispatch.py`
+  - `saas-version/backend/app_saas/broadcasts/router.py`
+  - `saas-version/frontend/src/CampaignsPanel.jsx`
+  - `saas-version/frontend/src/SaasTriggerBuilderPanel.jsx`
+  - `saas-version/frontend/src/SaasTriggerBuilderPanel.css`
+- Validation results:
+  - `py -3 -m py_compile saas-version\backend\app_saas\campaigns\router.py saas-version\backend\app_saas\campaigns\schemas.py saas-version\backend\app_saas\workers\triggers.py saas-version\backend\app_saas\workers\remarketing.py saas-version\backend\app_saas\workers\dispatch.py saas-version\backend\app_saas\broadcasts\router.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL checks returned `NO_SQL_BOM` and `ALL_SQL_UTF8_STRICT`.
+  - Docker clean-stack rerun could not execute because Docker Desktop daemon was unavailable at `dockerDesktopLinuxEngine`.
+- Updated docs/memory:
+  - `docs/SEGUIMIENTO_PROYECTO_SAAS_ES.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/WORKER_FLOW.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-017-phase7-campaigns-operational.md`
+- Risks:
+  - Rerun clean Docker/PostgreSQL bootstrap through migration `042` when Docker is available.
+  - Live Meta provider acceptance is still needed for approved-template state changes at dispatch time.
+  - A/B reporting currently measures queued/failed variants; deeper conversion attribution belongs to analytics/ML.
+- Implemented Phase 6 Knowledge Base y RAG:
+  - `saas-version/migrations/041_saas_knowledge_rag_phase6_operational.sql`
+  - `saas-version/backend/app_saas/knowledge/router.py`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/frontend/src/styles.css`
+- Validation results:
+  - `py -3 -m py_compile saas-version\backend\app_saas\knowledge\router.py saas-version\backend\app_saas\ai_agent\service.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL checks returned `NO_SQL_BOM` and `ALL_SQL_UTF8_STRICT`.
+  - Clean Docker/PostgreSQL stack `codexsaasphase6` applied migrations `001` through `041`.
+  - API `/saas/v1/health`, Swagger `/docs`, OpenAPI `/openapi.json`, admin `/health`, API worker, and standalone worker passed.
+  - Knowledge smoke passed: tenant register, TXT upload, active source with 1 chunk, sparse-vector search, RAG evaluation score 93/pass, health `ready`, vectorized chunks `1`.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-016-phase6-knowledge-rag-operational.md`
+- Risks:
+  - RAG uses local sparse-vector plus lexical retrieval, not pgvector/external vector DB; high-scale semantic search belongs to Phase 12.
+  - URL ingestion blocks private-network crawling for SSRF safety; intranet crawling needs an explicit allowlist/proxy design.
+  - Production acceptance should still include large PDF/CSV samples and real AI reply smoke with tenant provider credentials.
+- Implemented Phase 5 CRM Comercial:
+  - `saas-version/migrations/040_saas_crm_commercial_phase5.sql`
+  - `saas-version/backend/app_saas/crm/router.py`
+  - `saas-version/backend/app_saas/crm/schemas.py`
+  - `saas-version/backend/app_saas/ai_agent/service.py`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/frontend/src/CrmPanel.jsx`
+  - `saas-version/frontend/src/styles.css`
+- Validation results:
+  - `python -m py_compile saas-version/backend/app_saas/crm/router.py saas-version/backend/app_saas/crm/schemas.py saas-version/backend/app_saas/ai_agent/service.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL BOM scan returned `NO_BOM_SQL`.
+  - Clean Docker/PostgreSQL bootstrap for migration `040` was later covered by the Phase 6 stack applying migrations `001` through `041`.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `architecture/API_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+- Risks:
+  - Clean Docker/PostgreSQL migration `040` bootstrap was later rerun successfully as part of Phase 6.
+  - Customer merge should be rehearsed on staging/backup data before bulk production use.
+- Implemented Phase 4 Robust Inbox:
+  - `saas-version/backend/app_saas/crm/router.py`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/frontend/src/styles.css`
+- Validation results:
+  - `python -m py_compile saas-version/backend/app_saas/crm/router.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config` passed.
+  - Browser smoke against `http://127.0.0.1:5174/` confirmed the client shell loaded with no console errors.
+  - Clean Docker/PostgreSQL rerun was later completed successfully as part of Phase 6.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `ai-memory/BUSINESS_LOGIC.md`
+  - `ai-memory/CURRENT_STATE.md`
+  - `ai-memory/FILE_MAP.md`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-014-phase4-inbox-robustness.md`
+- Risks:
+  - Live delivered/read status acceptance still needs real Meta webhook traffic.
+  - Full clean-stack Docker bootstrap was later rerun successfully as part of Phase 6.
+- Implemented Phase 3 Observability and Diagnostics:
+  - `saas-version/migrations/039_saas_phase3_observability_hardening.sql`
+  - `saas-version/backend/app_saas/observability/service.py`
+  - `saas-version/backend/app_saas/main.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/backend/app_saas/workers/runner.py`
+  - `saas-version/backend/app_saas/workers/ingest.py`
+  - `saas-version/backend/app_saas/agents/orchestrator.py`
+  - `saas-version/backend/app_saas/webhooks/router.py`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+  - `saas-version/admin-frontend/src/styles.css`
+- Validation results:
+  - `python -m py_compile` passed for touched backend modules.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config` passed.
+  - `NO_SQL_BOM` and `ALL_SQL_UTF8_STRICT` passed.
+  - Clean Docker/PostgreSQL stack with project `codexsaasphase3clean` applied migrations `001` through `039`.
+  - API `/saas/v1/health`, Swagger `/docs`, admin `/health`, admin index, admin login, and Admin `Salud` UI passed.
+  - Embedded and standalone worker heartbeats reported OK.
+  - Admin operation endpoints for webhooks, outbound, triggers, AI, remarketing, agents, and Meta token refresh returned 200.
+  - Seeded webhook event processed into inbox/message/orchestrator records without transaction-abort errors.
+  - Seeded dead-letter retry requeued an outbound source and preserved correlation ID.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `docs/Scentra_SaaS_Project_Status.pdf`
+  - `architecture/API_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `architecture/WORKER_FLOW.md`
+  - `ai-memory/*`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-013-phase3-observability-diagnostics.md`
+- Risks:
+  - Production log retention/alerting still depends on deployment tooling.
+  - Real Meta/AI provider health requires production credentials and traffic.
+  - Multiple local Compose projects on the same external `coolify` network can collide on service aliases; validate one temporary SaaS stack at a time or isolate networks.
+  - Similar nullable UUID cast patterns remain outside Phase 3 AI/integration paths and should be audited when those domains are next modified.
+- Implemented Phase 2 Scentra Admin:
+  - `saas-version/docker-compose.saas.yml`
+  - `saas-version/admin-frontend/Dockerfile`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+  - `saas-version/backend/app_saas/config.py`
+- Validation results:
+  - `python -m py_compile` passed for touched backend modules/tools.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config` passed.
+  - Clean Docker/PostgreSQL stack passed with API, worker, and admin frontend healthy.
+  - Admin frontend `/health` returned OK and index returned 200.
+  - `platform-admin-seed` created a superadmin in the clean DB.
+  - Admin API smoke passed for auth/me, overview, plans, tenants, tenant detail/update, feature flag override, support impersonation, subscriptions, credits, invoices, audit, queues, observability, dead-letter sync, and queue processors.
+  - CORS preflight passed for `https://admin.scentra-ai.online` and local `http://127.0.0.1:8011`.
+  - `docs/Scentra_SaaS_Project_Status.pdf` regenerated from the updated status report.
+- Updated docs/memory:
+  - `docs/BACKEND.md`
+  - `docs/FRONTEND.md`
+  - `docs/ENVIRONMENT.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `architecture/AUTH_FLOW.md`
+  - `architecture/FRONTEND_BACKEND_FLOW.md`
+  - `architecture/SYSTEM_DIAGRAMS.md`
+  - `ai-memory/*`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-012-scentra-admin-production-ops.md`
+- Risks:
+  - DNS/TLS/Coolify acceptance must still be verified in the real production environment.
+  - Production must override local secrets and provide correct `ADMIN_VITE_*`, CAPTCHA, DB, JWT, and secret env vars.
+- Implemented Phase 1 security:
+  - `saas-version/migrations/038_saas_phase1_security_hardening.sql`
+  - `saas-version/backend/app_saas/config.py`
+  - `saas-version/backend/app_saas/auth/router.py`
+  - `saas-version/backend/app_saas/auth/schemas.py`
+  - `saas-version/backend/app_saas/admin/router.py`
+  - `saas-version/backend/app_saas/shared/security.py`
+  - `saas-version/backend/app_saas/shared/security_events.py`
+  - `saas-version/backend/app_saas/shared/email.py`
+  - `saas-version/docker-compose.saas.yml`
+  - `saas-version/frontend/src/App.jsx`
+  - `saas-version/admin-frontend/src/AdminApp.jsx`
+- Validation results:
+  - `python -m py_compile` passed for changed backend modules.
+  - `NO_SQL_BOM`
+  - `ALL_SQL_UTF8_STRICT`
+  - `NO_STATIC_ORDER_ISSUES`
+  - `COMPOSE_CONFIG_OK`
+  - `npm --prefix saas-version/frontend run build` passed.
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - Clean Docker/PostgreSQL bootstrap passed: migrations `001`-`038`, API health OK, `/docs` 200, worker started.
+  - Phase 1 API smoke passed: register/trial, login, forgot/reset, login after reset, 2FA prep, password change, admin bootstrap/login, and 423 lockout after failed attempts.
+- Updated docs/memory:
+  - `docs/API_REFERENCE.md`
+  - `docs/BACKEND.md`
+  - `docs/DATABASE.md`
+  - `docs/ENVIRONMENT.md`
+  - `docs/FRONTEND.md`
+  - `docs/KNOWN_ISSUES.md`
+  - `docs/SAAS_PROJECT_STATUS.md`
+  - `architecture/AUTH_FLOW.md`
+  - `architecture/DB_FLOW.md`
+  - `ai-memory/*`
+  - `tasks/ROADMAP.md`
+  - `tasks/TASK_STATE.md`
+  - `decisions/ADR-011-phase1-security-hardening.md`
+- Risks:
+  - Production password recovery needs valid SMTP env vars.
+  - Production CAPTCHA needs backend Turnstile secret and frontend site key/toggles.
+  - Phase 13 later implemented email OTP MFA; TOTP/authenticator-app MFA remains a future security expansion.
+  - Compose requires external network `coolify`.
+- Repaired migrations:
+  - `saas-version/migrations/022_instagram_business_integration.sql`
+  - `saas-version/migrations/030_saas_ai_agent_memory_vault_limits.sql`
+  - `saas-version/migrations/036_saas_knowledge_rag_phase8.sql`
+  - `saas-version/migrations/002_tenant_columns_non_breaking.sql`
+  - `saas-version/migrations/003_conversations_cutover.sql`
+- Validation results: `NO_SQL_BOM`, `ALL_SQL_UTF8_STRICT`, `NO_STATIC_ORDER_ISSUES`, `COMPOSE_CONFIG_OK`.
+- Added `docs/SAAS_PROJECT_STATUS.md` with phase progress, admin status, product gaps, and recommended phases 11-14.
+- Generated `docs/Scentra_SaaS_Project_Status.pdf` from the status source for portable project tracking.
+- Updated `docs/DATABASE.md`, `docs/KNOWN_ISSUES.md`, `architecture/DB_FLOW.md`, and `ai-memory/CURRENT_STATE.md`.
+- Risks: migration changes are historical but explicitly requested for clean bootstrap; later Phase 1 validation verified clean Docker/PostgreSQL bootstrap.
+- Adopted permanent persistent-memory workflow for future SaaS tasks.
+- Updated root `AGENTS.md`, `docs/AGENT_RULES.md`, `docs/PROJECT_CONTEXT.md`, `ai-memory/CURRENT_STATE.md`, and this task state with the workflow.
+- Added `decisions/ADR-009-persistent-memory-workflow.md`.
+- Added hierarchical SaaS domain `AGENTS.md` files under `saas-version/` for frontend, admin frontend, backend, app_saas, shared/auth/admin, workers/queues, webhooks, integrations, billing, API credentials, AI domains, CRM/campaigns/broadcasts/ads/social, migrations, and infra.
+- Updated root `AGENTS.md`, `docs/AGENT_RULES.md`, `ai-memory/FILE_MAP.md`, and `ai-memory/CURRENT_STATE.md` to reference nearest-domain AGENTS.
+- Added root `AGENTS.md` as the persistent Codex CLI bootstrap/system prompt for SaaS-only work.
+- Updated this task state and `ai-memory/CURRENT_STATE.md` to keep memory synchronized.
+- Risk: future agents ignoring the SaaS-only scope, mitigated by `AGENTS.md` mandatory bootstrap rules.
+
+## Update Rule
+
+After any future SaaS change, update this file with:
+
+- what changed
+- files touched
+- risks introduced
+- tests/checks run
+- docs/memory updated

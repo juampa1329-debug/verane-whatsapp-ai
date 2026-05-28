@@ -1,0 +1,435 @@
+%PDF-1.4
+% Scentra generated report
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R] /Count 7 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 2537 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Informe Fase 15.1, Fase 11 ML y Roadmap) Tj
+T* () Tj
+T* (INFORME SCENTRA: FASE 15.1, ENTRENAMIENTO ML FASE 11 Y ROADMAP 16-25) Tj
+T* () Tj
+T* (Alcance: solo saas-version/.) Tj
+T* (Fecha: 2026-05-27.) Tj
+T* (Fuente externa inicial: D:\\Juan Pablo\\Descargas\\README.md.) Tj
+T* (Fuente local completa analizada: external-repos/agency-agents/.) Tj
+T* () Tj
+T* (1. RESUMEN EJECUTIVO) Tj
+T* () Tj
+T* (Este informe agrega tres decisiones de seguimiento:) Tj
+T* () Tj
+T* (- Fase 15.1: aprovechar el repositorio externo de agentes como fuente de taxonomia, templates) Tj
+T* (  y rubricas, no como runtime ejecutable.) Tj
+T* (- Fase 11: explicar como se entrenan y promueven modelos ML reales dentro de Scentra sin) Tj
+T* (  romper el runtime actual.) Tj
+T* (- Roadmap 16-25: evaluar si las nuevas fases son viables y en que orden conviene ejecutarlas.) Tj
+T* () Tj
+T* (Conclusion principal:) Tj
+T* () Tj
+T* (Scentra ya tiene una base fuerte de SaaS, AI Agents, Intelligence Engine, ML opcional, Agent) Tj
+T* (  OS, AI Ecosystem, Enterprise AI Network, seguridad, performance, Product Ops, Workflow) Tj
+T* (  Composer, Trust AI y Real-Time Intelligence. Tras analizar la repo completa, lo siguiente) Tj
+T* (  debe avanzar con disciplina: mantener los templates externos como intake gobernado, usar) Tj
+T* (  Composer/Trust/Realtime como control-planes seguros y despues avanzar a voz/multimodal y) Tj
+T* (  fases de mayor autonomia.) Tj
+T* () Tj
+T* (2. ANALISIS DE LA REPO EXTERNA) Tj
+T* () Tj
+T* (La repo local analizada corresponde a agency-agents, llamada "The Agency" en el README.) Tj
+T* () Tj
+T* (Lo detectado:) Tj
+T* () Tj
+T* (- Es una libreria de agentes Markdown/personas/prompts.) Tj
+T* (- El archivo LICENSE local es MIT.) Tj
+T* (- El inventario local detecta 184 agentes validos con frontmatter.) Tj
+T* (- Tambien hay 16 documentos estrategicos/playbooks sin frontmatter de agente.) Tj
+T* (- Los agentes estan organizados en 14 categorias de agentes mas docs de estrategia.) Tj
+T* (- Los archivos suelen incluir identidad, personalidad, mision, reglas, workflows, entregables) Tj
+T* (  y metricas.) Tj
+T* (- Incluye scripts de conversion/instalacion para Claude Code y otras herramientas.) Tj
+T* (- No se presenta como backend SaaS, cola, base de datos, sandbox seguro, billing,) Tj
+T* (  observabilidad o runtime productivo.) Tj
+T* (- La carpeta local no fue detectada como subrepo Git independiente, asi que commit/tag) Tj
+T* (  upstream sigue sin verificar.) Tj
+T* () Tj
+T* (Valor para Scentra:) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 2394 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+() Tj
+T* (- Taxonomia de agentes por rol.) Tj
+T* (- Plantillas de personalidad y mision para agentes de fabrica.) Tj
+T* (- Rubricas de evaluacion por tipo de agente.) Tj
+T* (- Inspiracion para marketplace de agentes.) Tj
+T* (- Inspiracion para Agent OS, equipos multiagente y Workflow Composer.) Tj
+T* (- NEXUS/playbooks/handoffs como base para handoff contracts, QA gates, runbooks y evals.) Tj
+T* (- Agentes internos utiles para QA de Scentra: Code Reviewer, Security Engineer, Evidence) Tj
+T* (  Collector, Reality Checker, Database Optimizer y Technical Writer.) Tj
+T* () Tj
+T* (Riesgo:) Tj
+T* () Tj
+T* (- Los scripts no son runtime SaaS y no deben ejecutarse dentro de Scentra.) Tj
+T* (- Las claims de "production-ready" deben validarse con archivos reales y pruebas.) Tj
+T* (- Una libreria de prompts no reemplaza el runtime actual de Scentra.) Tj
+T* (- Importar prompts sin revision puede introducir permisos inseguros, mala marca, prompt) Tj
+T* (  injection o comportamiento no compatible con tenants.) Tj
+T* () Tj
+T* (3. FASE 15.1 PROPUESTA) Tj
+T* () Tj
+T* (Nombre:) Tj
+T* () Tj
+T* (Agent Template Intake & Taxonomy Mapping.) Tj
+T* () Tj
+T* (Objetivo:) Tj
+T* () Tj
+T* (Convertir el repositorio externo en una fuente revisada de templates, categorias, rubricas y) Tj
+T* (  packs de agentes para Scentra, manteniendo aislamiento multi-tenant, premium gating y) Tj
+T* (  aprobacion humana.) Tj
+T* () Tj
+T* (Entregables:) Tj
+T* () Tj
+T* (- Intake read-only del repo completo. Estado: completado a nivel documental.) Tj
+T* (- Revision de licencia y atribucion. Estado: LICENSE MIT detectado; commit/tag y modificacion) Tj
+T* (  local siguen pendientes.) Tj
+T* (- Parser de inventario de agentes. Estado: completado como script offline.) Tj
+T* (- Mapeo categoria externa -> rol/industria Scentra. Estado: completado como artefactos) Tj
+T* (  offline.) Tj
+T* (- Esquema de normalizacion de templates. Estado: completado en JSON offline.) Tj
+T* (- Mapeo a factory agents, custom agents, marketplace, Agent OS, herramientas y memoria.) Tj
+T* (- Matriz de riesgos por agente/categoria.) Tj
+T* (- Importacion piloto de 5-10 templates como drafts deshabilitados.) Tj
+T* (- Rubricas de evaluacion para agentes QA.) Tj
+T* (- ADR antes de importar contenido al producto.) Tj
+T* () Tj
+T* (Criterios de cierre:) Tj
+T* () Tj
+T* (- Ningun script externo fue ejecutado.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 2202 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Ningun agente fue instalado globalmente en Codex/Claude.) Tj
+T* (- Ningun plugin externo corre dentro de API/worker.) Tj
+T* (- Los templates importados quedan disabled/draft hasta aprobacion.) Tj
+T* (- Las herramientas son explicitas y approval-first.) Tj
+T* (- Se conserva la regla actual: una conversacion solo tiene un dueno IA activo.) Tj
+T* () Tj
+T* (4. LO QUE SIGUE NECESITANDO CONFIRMACION) Tj
+T* () Tj
+T* (La repo local ya esta disponible. Para pasar de analisis a importacion segura todavia falta) Tj
+T* (  confirmar:) Tj
+T* () Tj
+T* (- Source URL oficial.) Tj
+T* (- Commit hash o release tag upstream.) Tj
+T* (- Si la carpeta local tiene cambios privados.) Tj
+T* (- Confirmacion de licencia MIT o compatible con SaaS comercial.) Tj
+T* (- Reglas de atribucion si existen.) Tj
+T* (- Carpetas prioritarias.) Tj
+T* (- Confirmacion de que no hay secretos, tokens, datos de clientes o prompts privados.) Tj
+T* () Tj
+T* (Fases 15.1B/15.1C/15.2/15.3 ya completadas sin tocar runtime:) Tj
+T* () Tj
+T* (- saas-version/scripts/phase15-agent-template-intake.mjs.) Tj
+T* (- saas-version/scripts/phase15-nexus-eval-harness.mjs.) Tj
+T* (- docs/phase15_1/agent_template_inventory.json.) Tj
+T* (- docs/phase15_1/agent_template_inventory.csv.) Tj
+T* (- docs/phase15_1/agent_template_drafts.json.) Tj
+T* (- docs/phase15_1/agent_template_risk_report.md.) Tj
+T* (- docs/phase15_1/nexus_handoff_contracts.json.) Tj
+T* (- docs/phase15_1/nexus_playbooks.json.) Tj
+T* (- docs/phase15_1/agent_eval_rubrics.json.) Tj
+T* (- docs/phase15_1/agent_eval_results.json.) Tj
+T* (- docs/phase15_1/phase15_2_15_3_report.md.) Tj
+T* () Tj
+T* (Resultado 15.2/15.3:) Tj
+T* () Tj
+T* (- 7 contratos de handoff NEXUS.) Tj
+T* (- 7 playbooks de fase.) Tj
+T* (- 4 runbooks de escenario.) Tj
+T* (- 6 rubricas de evaluacion Scentra.) Tj
+T* (- 29 drafts evaluados, todos bloqueados para activacion hasta revision humana.) Tj
+T* () Tj
+T* (5. COMO SE ENTRENAN LOS MODELOS DE FASE 11) Tj
+T* () Tj
+T* (Scentra no debe iniciar con entrenamiento pesado ni GPU. La estrategia correcta es) Tj
+T* (  incremental, tabular, explicable, multi-tenant y apagada por defecto.) Tj
+T* () Tj
+T* (Flujo operativo:) Tj
+T* () Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 1990 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(1. Capturar eventos estructurados.) Tj
+T* (2. Generar auto-labels desde eventos reales.) Tj
+T* (3. Recomputar features por tenant/sujeto/modelo.) Tj
+T* (4. Construir dataset desde Postgres.) Tj
+T* (5. Entrenar LightGBM, XGBoost o sklearn fallback.) Tj
+T* (6. Evaluar offline.) Tj
+T* (7. Registrar modelo en registry.) Tj
+T* (8. Ejecutar shadow inference.) Tj
+T* (9. Hacer canary con bajo porcentaje.) Tj
+T* (10. Promover a produccion solo con aceptacion humana.) Tj
+T* () Tj
+T* (Infraestructura ya preparada:) Tj
+T* () Tj
+T* (- saas_intelligence_events) Tj
+T* (- saas_ml_auto_labels) Tj
+T* (- saas_intelligence_feature_values) Tj
+T* (- saas_ml_training_datasets) Tj
+T* (- saas_ml_model_evaluations) Tj
+T* (- saas_intelligence_model_registry) Tj
+T* (- MLflow opcional.) Tj
+T* (- BentoML image opcional.) Tj
+T* (- XGBoost, LightGBM y scikit-learn en imagen ML.) Tj
+T* (- Qdrant opcional, no conectado aun al RAG productivo.) Tj
+T* () Tj
+T* (Flags importantes:) Tj
+T* () Tj
+T* (- SAAS_ML_ENABLED=false por defecto.) Tj
+T* (- SAAS_ML_SHADOW_INFERENCE_ENABLED=true en staging para comparar sin afectar negocio.) Tj
+T* (- SAAS_ML_AUTO_TRAIN_ENABLED=false inicialmente.) Tj
+T* (- SAAS_ML_SERVICE_URL=http://ml-service:8090.) Tj
+T* (- SAAS_MLFLOW_TRACKING_URI=http://mlflow:5000.) Tj
+T* () Tj
+T* (Modelos iniciales:) Tj
+T* () Tj
+T* (- Lead Scoring V1: probabilidad de conversion y temperatura.) Tj
+T* (- Churn Prediction V1: riesgo de abandono.) Tj
+T* (- Smart Remarketing V1: mejor canal, hora, frecuencia y segmento.) Tj
+T* (- Operational Anomaly V1: degradacion de webhooks, colas y APIs.) Tj
+T* () Tj
+T* (Datos minimos recomendados:) Tj
+T* () Tj
+T* (- Lead scoring: 500 a 1,000 leads etiquetados; mejor 5,000+.) Tj
+T* (- Churn: 300 a 500 ejemplos; mejor 2,000+.) Tj
+T* (- Remarketing: 1,000+ resultados de campanas/triggers.) Tj
+T* (- Anomalias: suficiente trafico normal y eventos de incidente.) Tj
+T* () Tj
+T* (Lo que no se necesita inicialmente:) Tj
+T* () Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 2280 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- GPU.) Tj
+T* (- Entrenar LLMs propios.) Tj
+T* (- Kafka/NATS en el stack default.) Tj
+T* (- Training distribuido.) Tj
+T* (- Datasets externos privados.) Tj
+T* () Tj
+T* (6. REGLAS DE SEGURIDAD ML) Tj
+T* () Tj
+T* (- No vender modelos bootstrap como precision productiva.) Tj
+T* (- No compartir mensajes crudos entre tenants.) Tj
+T* (- No compartir telefonos, nombres, conversaciones o documentos privados.) Tj
+T* (- Los modelos cross-tenant solo pueden usar features anonimizadas/agregadas.) Tj
+T* (- Revisar distribucion de labels antes de entrenar.) Tj
+T* (- Mantener fallback baseline_rules.) Tj
+T* (- Shadow no debe cambiar decisiones de negocio.) Tj
+T* (- Canary debe iniciar bajo y medirse con accuracy, drift, latencia, costo y quejas.) Tj
+T* (- Produccion requiere rollback documentado.) Tj
+T* () Tj
+T* (7. EVALUACION ROADMAP FASES 16-25) Tj
+T* () Tj
+T* (Las fases son viables, pero deben ordenarse por madurez, riesgo y dependencia. El analisis) Tj
+T* (  completo de agency-agents cambia el orden: primero conviene construir intake, handoffs y) Tj
+T* (  evals para que las fases de workflow, gobierno y autonomia nazcan con reglas claras.) Tj
+T* () Tj
+T* (Orden recomendado actualizado despues de implementar Fase 18, Fase 22, Fase 16, Fase 24,) Tj
+T* (  Fase 19, Fase 20 y Fase 17:) Tj
+T* () Tj
+T* (1. Phase 21: Scentra AI Cloud Platform.) Tj
+T* (2. Phase 23: AI Marketplace Economy.) Tj
+T* (3. Phase 25: Enterprise Decision Intelligence.) Tj
+T* () Tj
+T* (8. VIABILIDAD POR FASE) Tj
+T* () Tj
+T* (Phase 16: AI Real-Time Intelligence Layer.) Tj
+T* () Tj
+T* (- Viabilidad: alta.) Tj
+T* (- Estado: implementada como control-plane PostgreSQL-first.) Tj
+T* (- Usa eventos, predicciones, recomendaciones, Operations y Trust AI sin mutar runtime.) Tj
+T* (- Transporte actual: polling inteligente y SSE acotado; Kafka/NATS queda como decision futura) Tj
+T* (  por volumen.) Tj
+T* () Tj
+T* (Phase 17: Federated Learning & Global Intelligence.) Tj
+T* () Tj
+T* (- Viabilidad: media.) Tj
+T* (- Estado: implementada a nivel codigo como control-plane opt-in, premium-gated y) Tj
+T* (  aggregate-only.) Tj
+T* (- Valor alto, complejidad legal/tecnica alta.) Tj
+T* (- Ya existe base con politicas tenant, paquetes estadisticos locales, rondas federadas,) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 2045 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(  agregados ponderados y signals globales.) Tj
+T* (- Aun requiere acceptance multi-tenant real, privacidad/legal y runbook ModelOps antes de usar) Tj
+T* (  signals para seleccion de modelos productivos.) Tj
+T* () Tj
+T* (Phase 18: AI Workflow Composer.) Tj
+T* () Tj
+T* (- Viabilidad: alta.) Tj
+T* (- Muy buena siguiente fase.) Tj
+T* (- Debe generar workflows como drafts con simulador, preflight, versionado y rollback.) Tj
+T* () Tj
+T* (Phase 19: Autonomous Revenue Engine.) Tj
+T* () Tj
+T* (- Viabilidad: alta pero riesgosa.) Tj
+T* (- Estado: implementada como control-plane supervisado; no ejecuta envios, cobros, mutaciones) Tj
+T* (  CRM ni activaciones runtime.) Tj
+T* (- Acceptance productiva requiere datos reales de pedidos/pagos/valor comercial por tenant.) Tj
+T* () Tj
+T* (Phase 20: AI Enterprise Memory Network.) Tj
+T* () Tj
+T* (- Viabilidad: media-alta.) Tj
+T* (- Estado: implementada como grafo tenant-scoped de memoria revisable.) Tj
+T* (- Acceptance productiva requiere retencion, export/delete, lineage y uso de prompts/RAG solo) Tj
+T* (  con nodos publicados.) Tj
+T* () Tj
+T* (Phase 21: Scentra AI Cloud Platform.) Tj
+T* () Tj
+T* (- Viabilidad: media.) Tj
+T* (- Mejor despues de APIs estables, SDK, auth gateway, billing y soporte enterprise.) Tj
+T* () Tj
+T* (Phase 22: AI Trust, Compliance & Governance Enterprise.) Tj
+T* () Tj
+T* (- Viabilidad: muy alta.) Tj
+T* (- Debe adelantarse o correr en paralelo.) Tj
+T* (- Habilita ventas enterprise, autonomia segura, auditoria y procurement.) Tj
+T* () Tj
+T* (Phase 23: AI Marketplace Economy.) Tj
+T* () Tj
+T* (- Viabilidad: media-alta.) Tj
+T* (- Requiere sandbox, review, revenue share, legal terms, abuse monitoring y certificacion.) Tj
+T* () Tj
+T* (Phase 24: Voice & Multimodal Intelligence.) Tj
+T* () Tj
+T* (- Viabilidad: alta.) Tj
+T* (- Encaja con WhatsApp/Instagram por audios, imagenes y documentos.) Tj
+T* (- Empezar con transcripcion, resumen y clasificacion de adjuntos.) Tj
+T* () Tj
+T* (Phase 25: Enterprise Decision Intelligence.) Tj
+T* () Tj
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 1221 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Viabilidad: alta pero tardia.) Tj
+T* (- Requiere datos historicos confiables, modelos validados y gobierno maduro.) Tj
+T* () Tj
+T* (9. RECOMENDACION FINAL) Tj
+T* () Tj
+T* (Fase 15.1A/15.1B/15.1C/15.2/15.3 ya cuentan con analisis, normalizacion, drafts, handoffs y) Tj
+T* (  evals offline. La repo externa queda aprovechada como fuente de templates, blueprints y) Tj
+T* (  rubricas, sin activar agentes ni ejecutar scripts externos.) Tj
+T* () Tj
+T* (Fase 11 ya puede entrenar modelos reales, pero el valor comercial depende de datos reales,) Tj
+T* (  labels revisados, shadow/canary, drift/costo y lenguaje de producto prudente.) Tj
+T* () Tj
+T* (Para el roadmap, la siguiente apuesta mas fuerte es:) Tj
+T* () Tj
+T* (1. Fase 24 para voz/multimodal sobre WhatsApp, Instagram y adjuntos.) Tj
+T* (2. Fase 19 para revenue automation approval-first y segura frente a politicas Meta.) Tj
+T* (3. Fase 20 para memoria enterprise con lineage, permisos y delete/export.) Tj
+T* (4. Fase 17 debe pasar acceptance multi-tenant/privacy/ModelOps antes de claims productivos.) Tj
+T* (5. Fase 21/23/25 solo cuando haya mas datos, sandbox, gobierno, capacidad y politicas) Tj
+T* (  comerciales maduras.) Tj
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 16 0 R >>
+endobj
+xref
+0 18
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000182 00000 n 
+0000000252 00000 n 
+0000002841 00000 n 
+0000002967 00000 n 
+0000005413 00000 n 
+0000005539 00000 n 
+0000007793 00000 n 
+0000007919 00000 n 
+0000009962 00000 n 
+0000010090 00000 n 
+0000012423 00000 n 
+0000012551 00000 n 
+0000014649 00000 n 
+0000014777 00000 n 
+0000016051 00000 n 
+trailer
+<< /Size 18 /Root 1 0 R >>
+startxref
+16179
+%%EOF

@@ -1,0 +1,290 @@
+{
+  "phase": "15.2",
+  "generated_on": "2026-05-27",
+  "status": "offline_contracts",
+  "runtime_import": false,
+  "database_writes": false,
+  "source_path": "external-repos/agency-agents/strategy/coordination/handoff-templates.md",
+  "contracts": [
+    {
+      "contract_key": "nexus.standard_handoff.v1",
+      "title": "Standard Handoff Template",
+      "kind": "standard_handoff",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS Handoff Document",
+        "Metadata",
+        "Context",
+        "Deliverable Request",
+        "Quality Expectations"
+      ],
+      "required_fields": [
+        "nexus_handoff_document",
+        "metadata",
+        "context",
+        "deliverable_request",
+        "quality_expectations"
+      ],
+      "max_attempts": null,
+      "allowed_results": [
+        "draft",
+        "submitted",
+        "accepted",
+        "escalated"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "9a4309d40e40575225d2469c601c363e7973feff425544dd8bfb33955bebba0b",
+      "template_excerpt": "# NEXUS Handoff Document ## Metadata | Field | Value | |-------|-------| | **From** | [Agent Name] ([Division]) | | **To** | [Agent Name] ([Division]) | | **Phase** | Phase [N] [Phase Name] | | **Task Reference** | [Task ID from Sprint Prioritizer backlog] | | **Priority** | [Critical / High / Medium / Low] | | **Timestamp** | [YYYY-MM-DDTHH:MM:SSZ] | ## Context **Project**: [Project name] **Current State**: [What has been completed so far be specific] **Relevant Files**: - [file/path/1] [what it contains] - [file/path/2] [what it contains] **Dependencies**: [What this work depends on being complete] **Constraints**: [Technical, timeline, or resource constraints] ## Deliverable Request **What is needed**: [Specific, measurable deliverable description] **Acceptance criteria**: - [ ] [Criterion 1 measurable] - [ ] [Criterion 2 measurable] - [ ] [Criterion 3 measurable] **Reference mater..."
+    },
+    {
+      "contract_key": "nexus.qa_pass.v1",
+      "title": "QA Feedback Loop PASS",
+      "kind": "qa_pass",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS QA Verdict: PASS",
+        "Task",
+        "Verdict: PASS",
+        "Evidence",
+        "Notes",
+        "Next Action"
+      ],
+      "required_fields": [
+        "nexus_qa_verdict_pass",
+        "task",
+        "verdict_pass",
+        "evidence",
+        "notes",
+        "next_action"
+      ],
+      "max_attempts": null,
+      "allowed_results": [
+        "pass",
+        "fail",
+        "needs_work"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": false,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "048e20006622f9e0d42a0f19dc21a9e97b76e292aa41ba30744b73c63b60f0df",
+      "template_excerpt": "# NEXUS QA Verdict: PASS ## Task | Field | Value | |-------|-------| | **Task ID** | [ID] | | **Task Description** | [Description] | | **Developer Agent** | [Agent Name] | | **QA Agent** | [Agent Name] | | **Attempt** | [N] of 3 | | **Timestamp** | [YYYY-MM-DDTHH:MM:SSZ] | ## Verdict: PASS ## Evidence **Screenshots**: - Desktop (1920x1080): [filename/path] - Tablet (768x1024): [filename/path] - Mobile (375x667): [filename/path] **Functional Verification**: - [x] [Acceptance criterion 1] verified - [x] [Acceptance criterion 2] verified - [x] [Acceptance criterion 3] verified **Brand Consistency**: Verified colors, typography, spacing match design system **Accessibility**: Verified keyboard navigation, contrast ratios, semantic HTML **Performance**: [Load time measured] within acceptable range ## Notes [Any observations, minor suggestions for future improvement, or positive callouts] ##..."
+    },
+    {
+      "contract_key": "nexus.qa_fail.v1",
+      "title": "QA Feedback Loop FAIL",
+      "kind": "qa_fail",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS QA Verdict: FAIL",
+        "Task",
+        "Verdict: FAIL",
+        "Issues Found",
+        "Issue 1: [Category] [Severity: Critical/High/Medium/Low]",
+        "Issue 2: [Category] [Severity]",
+        "Acceptance Criteria Status",
+        "Retry Instructions"
+      ],
+      "required_fields": [
+        "nexus_qa_verdict_fail",
+        "task",
+        "verdict_fail",
+        "issues_found",
+        "issue_1_category_severity_critical_high_medium_low",
+        "issue_2_category_severity",
+        "acceptance_criteria_status",
+        "retry_instructions"
+      ],
+      "max_attempts": 3,
+      "allowed_results": [
+        "pass",
+        "fail",
+        "needs_work"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "8d9cac5107b5a801fb9a01dd2860525b5f2d53e1fb22e07e7cfe350013c347ae",
+      "template_excerpt": "# NEXUS QA Verdict: FAIL ## Task | Field | Value | |-------|-------| | **Task ID** | [ID] | | **Task Description** | [Description] | | **Developer Agent** | [Agent Name] | | **QA Agent** | [Agent Name] | | **Attempt** | [N] of 3 | | **Timestamp** | [YYYY-MM-DDTHH:MM:SSZ] | ## Verdict: FAIL ## Issues Found ### Issue 1: [Category] [Severity: Critical/High/Medium/Low] **Description**: [Exact description of the problem] **Expected**: [What should happen according to acceptance criteria] **Actual**: [What actually happens] **Evidence**: [Screenshot filename or test output] **Fix instruction**: [Specific, actionable instruction to resolve] **File(s) to modify**: [Exact file paths] ### Issue 2: [Category] [Severity] **Description**: [...] **Expected**: [...] **Actual**: [...] **Evidence**: [...] **Fix instruction**: [...] **File(s) to modify**: [...] [Continue for all issues found] ## Accept..."
+    },
+    {
+      "contract_key": "nexus.escalation_report.v1",
+      "title": "Escalation Report",
+      "kind": "escalation_report",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS Escalation Report",
+        "Task",
+        "Failure History",
+        "Attempt 1",
+        "Attempt 2",
+        "Attempt 3",
+        "Root Cause Analysis",
+        "Recommended Resolution",
+        "Impact Assessment",
+        "Decision Required"
+      ],
+      "required_fields": [
+        "nexus_escalation_report",
+        "task",
+        "failure_history",
+        "attempt_1",
+        "attempt_2",
+        "attempt_3",
+        "root_cause_analysis",
+        "recommended_resolution",
+        "impact_assessment",
+        "decision_required"
+      ],
+      "max_attempts": 3,
+      "allowed_results": [
+        "draft",
+        "submitted",
+        "accepted",
+        "escalated"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "5a1e5f627b804359281def7345aa308ac6eda29a25e84ac4de6efdfe1bd9b79b",
+      "template_excerpt": "# NEXUS Escalation Report ## Task | Field | Value | |-------|-------| | **Task ID** | [ID] | | **Task Description** | [Description] | | **Developer Agent** | [Agent Name] | | **QA Agent** | [Agent Name] | | **Attempts Exhausted** | 3/3 | | **Escalation To** | [Agents Orchestrator / Studio Producer] | | **Timestamp** | [YYYY-MM-DDTHH:MM:SSZ] | ## Failure History ### Attempt 1 - **Issues found**: [Summary] - **Fixes applied**: [What the developer changed] - **Result**: FAIL [Why it still failed] ### Attempt 2 - **Issues found**: [Summary] - **Fixes applied**: [What the developer changed] - **Result**: FAIL [Why it still failed] ### Attempt 3 - **Issues found**: [Summary] - **Fixes applied**: [What the developer changed] - **Result**: FAIL [Why it still failed] ## Root Cause Analysis **Why the task keeps failing**: [Analysis of the underlying problem] **Systemic issue**: [Is this a one-o..."
+    },
+    {
+      "contract_key": "nexus.phase_gate_handoff.v1",
+      "title": "Phase Gate Handoff",
+      "kind": "phase_gate_handoff",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS Phase Gate Handoff",
+        "Transition",
+        "Gate Criteria Results",
+        "Documents Carried Forward",
+        "Key Constraints for Next Phase",
+        "Agent Activation for Next Phase",
+        "Risks Carried Forward"
+      ],
+      "required_fields": [
+        "nexus_phase_gate_handoff",
+        "transition",
+        "gate_criteria_results",
+        "documents_carried_forward",
+        "key_constraints_for_next_phase",
+        "agent_activation_for_next_phase",
+        "risks_carried_forward"
+      ],
+      "max_attempts": null,
+      "allowed_results": [
+        "draft",
+        "submitted",
+        "accepted",
+        "escalated"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "762efcb4f5e8ceb05e4946c6f3e8edb2d8dde881761764212e24c0d5e350c579",
+      "template_excerpt": "# NEXUS Phase Gate Handoff ## Transition | Field | Value | |-------|-------| | **From Phase** | Phase [N] [Name] | | **To Phase** | Phase [N+1] [Name] | | **Gate Keeper(s)** | [Agent Name(s)] | | **Gate Result** | [PASSED / FAILED] | | **Timestamp** | [YYYY-MM-DDTHH:MM:SSZ] | ## Gate Criteria Results | # | Criterion | Threshold | Result | Evidence | |---|-----------|-----------|--------|----------| | 1 | [Criterion] | [Threshold] | PASS / FAIL | [Evidence reference] | | 2 | [Criterion] | [Threshold] | PASS / FAIL | [Evidence reference] | | 3 | [Criterion] | [Threshold] | PASS / FAIL | [Evidence reference] | ## Documents Carried Forward 1. [Document name] [Purpose for next phase] 2. [Document name] [Purpose for next phase] 3. [Document name] [Purpose for next phase] ## Key Constraints for Next Phase - [Constraint 1 from this phase's findings] - [Constraint 2 from this phase's findings]..."
+    },
+    {
+      "contract_key": "nexus.sprint_handoff.v1",
+      "title": "Sprint Handoff",
+      "kind": "sprint_handoff",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS Sprint Handoff",
+        "Sprint Summary",
+        "Completion Status",
+        "Quality Metrics",
+        "Carried Over to Next Sprint",
+        "Retrospective Insights",
+        "Next Sprint Preview"
+      ],
+      "required_fields": [
+        "nexus_sprint_handoff",
+        "sprint_summary",
+        "completion_status",
+        "quality_metrics",
+        "carried_over_to_next_sprint",
+        "retrospective_insights",
+        "next_sprint_preview"
+      ],
+      "max_attempts": null,
+      "allowed_results": [
+        "draft",
+        "submitted",
+        "accepted",
+        "escalated"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "03a77e01c5904dffc45fece064341ca4486a040550edf83de61e49858582fbb3",
+      "template_excerpt": "# NEXUS Sprint Handoff ## Sprint Summary | Field | Value | |-------|-------| | **Sprint** | [Number] | | **Duration** | [Start date] [End date] | | **Sprint Goal** | [Goal statement] | | **Velocity** | [Planned] / [Actual] story points | ## Completion Status | Task ID | Description | Status | QA Attempts | Notes | |---------|-------------|--------|-------------|-------| | [ID] | [Description] | Complete | [N] | [Notes] | | [ID] | [Description] | Complete | [N] | [Notes] | | [ID] | [Description] | Carried Over | [N] | [Reason] | ## Quality Metrics - **First-pass QA rate**: [X]% - **Average retries**: [N] - **Tasks completed**: [X/Y] - **Story points delivered**: [N] ## Carried Over to Next Sprint | Task ID | Description | Reason | Priority | |---------|-------------|--------|----------| | [ID] | [Description] | [Why not completed] | [RICE score] | ## Retrospective Insights **What went..."
+    },
+    {
+      "contract_key": "nexus.incident_handoff.v1",
+      "title": "Incident Handoff",
+      "kind": "incident_handoff",
+      "source_path": "strategy/coordination/handoff-templates.md",
+      "status": "offline_contract",
+      "required_sections": [
+        "NEXUS Incident Handoff",
+        "Incident",
+        "Description",
+        "Current State",
+        "Actions Taken",
+        "Handoff Context",
+        "Stakeholder Communication"
+      ],
+      "required_fields": [
+        "nexus_incident_handoff",
+        "incident",
+        "description",
+        "current_state",
+        "actions_taken",
+        "handoff_context",
+        "stakeholder_communication"
+      ],
+      "max_attempts": null,
+      "allowed_results": [
+        "draft",
+        "submitted",
+        "accepted",
+        "escalated"
+      ],
+      "safety_policy": {
+        "evidence_required": true,
+        "human_approval_required": true,
+        "no_runtime_side_effects": true,
+        "tenant_scoped": true
+      },
+      "template_hash": "6a6c6ea6856d500763dd8ad2c102f0de5e438d514122a345435c250918ee3269",
+      "template_excerpt": "# NEXUS Incident Handoff ## Incident | Field | Value | |-------|-------| | **Severity** | [P0 / P1 / P2 / P3] | | **Detected by** | [Agent or system] | | **Detection time** | [Timestamp] | | **Assigned to** | [Agent Name] | | **Status** | [Investigating / Mitigating / Resolved / Post-mortem] | ## Description **What happened**: [Clear description of the incident] **Impact**: [Who/what is affected and how severely] **Timeline**: - [HH:MM] [Event] - [HH:MM] [Event] - [HH:MM] [Event] ## Current State **Systems affected**: [List] **Workaround available**: [Yes/No describe if yes] **Estimated resolution**: [Time estimate] ## Actions Taken 1. [Action taken and result] 2. [Action taken and result] ## Handoff Context **For next responder**: - [What's been tried] - [What hasn't been tried yet] - [Suspected root cause] - [Relevant logs/metrics to check] ## Stakeholder Communication **Last update..."
+    }
+  ]
+}

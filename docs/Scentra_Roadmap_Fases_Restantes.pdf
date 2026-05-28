@@ -1,0 +1,211 @@
+%PDF-1.4
+% Scentra generated report
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 1728 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Roadmap Fases Restantes) Tj
+T* () Tj
+T* (ROADMAP SCENTRA SAAS: FASES RESTANTES) Tj
+T* () Tj
+T* (Alcance: solo saas-version/.) Tj
+T* (Fecha: 2026-05-28.) Tj
+T* () Tj
+T* (ESTADO GENERAL) Tj
+T* () Tj
+T* (Fases cerradas a nivel de codigo/repositorio:) Tj
+T* () Tj
+T* (- Fases 1 a 14.) Tj
+T* (- Fase 16: AI Real-Time Intelligence Layer.) Tj
+T* (- Fase 17: Federated Learning & Global Intelligence.) Tj
+T* (- Fase 18: AI Workflow Composer.) Tj
+T* (- Fase 19: Autonomous Revenue Engine.) Tj
+T* (- Fase 20: AI Enterprise Memory Network.) Tj
+T* (- Fase 22: AI Trust, Compliance & Governance.) Tj
+T* (- Fase 24.1 a 24.10: Voice & Multimodal Intelligence.) Tj
+T* () Tj
+T* (Fase 15 esta al 60% porque existe como intake offline seguro del repositorio externo de) Tj
+T* (  agentes, pero aun no se importaron templates a DB/Admin ni se activaron agentes de) Tj
+T* (  marketplace.) Tj
+T* () Tj
+T* (FASES QUE QUEDAN) Tj
+T* () Tj
+T* (FASE 21: SCENTRA AI CLOUD PLATFORM) Tj
+T* () Tj
+T* (Objetivo: convertir las capacidades AI de Scentra en plataforma cloud extensible.) Tj
+T* () Tj
+T* (Entregables sugeridos:) Tj
+T* () Tj
+T* (- Public/developer APIs versionadas.) Tj
+T* (- Auth externa para developer apps.) Tj
+T* (- SDKs oficiales.) Tj
+T* (- Portal de documentacion API.) Tj
+T* (- Rate limits por app/tenant/plan.) Tj
+T* (- API keys con scopes, rotacion y auditoria.) Tj
+T* (- Gateway de integraciones externas.) Tj
+T* (- Webhooks salientes firmados.) Tj
+T* (- Sandbox para desarrolladores.) Tj
+T* () Tj
+T* (Dependencias previas:) Tj
+T* () Tj
+T* (- Fase 22 Trust AI.) Tj
+T* (- Fase 24 provider gating.) Tj
+T* (- Fase 23 sandbox/marketplace si se exponen plugins.) Tj
+T* (- Politica comercial y legal de APIs.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 1459 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+() Tj
+T* (Riesgos:) Tj
+T* () Tj
+T* (- Superficie publica nueva.) Tj
+T* (- Abuso de APIs.) Tj
+T* (- Necesidad de soporte y observabilidad externa.) Tj
+T* () Tj
+T* (FASE 23: AI MARKETPLACE ECONOMY) Tj
+T* () Tj
+T* (Objetivo: monetizar agentes, playbooks, workflows, plugins y AI packs.) Tj
+T* () Tj
+T* (Entregables sugeridos:) Tj
+T* () Tj
+T* (- Marketplace real tenant/Admin.) Tj
+T* (- Review/certificacion de items.) Tj
+T* (- Versionado y changelog.) Tj
+T* (- Ratings/reviews.) Tj
+T* (- Revenue share.) Tj
+T* (- Billing hooks.) Tj
+T* (- Sandbox de plugins.) Tj
+T* (- Abuse monitoring.) Tj
+T* (- Politicas legales y terminos de creadores.) Tj
+T* () Tj
+T* (Dependencias previas:) Tj
+T* () Tj
+T* (- Fase 15 intake externo.) Tj
+T* (- Fase 18 Composer.) Tj
+T* (- Fase 22 Trust/Governance.) Tj
+T* (- Fase 21 developer platform si hay terceros.) Tj
+T* () Tj
+T* (Riesgos:) Tj
+T* () Tj
+T* (- Codigo no confiable.) Tj
+T* (- Prompts inseguros.) Tj
+T* (- Disputas de monetizacion.) Tj
+T* (- Responsabilidad por contenido generado por terceros.) Tj
+T* () Tj
+T* (FASE 25: ENTERPRISE DECISION INTELLIGENCE) Tj
+T* () Tj
+T* (Objetivo: convertir Scentra en capa ejecutiva de decision empresarial.) Tj
+T* () Tj
+T* (Entregables sugeridos:) Tj
+T* () Tj
+T* (- Decision cockpit ejecutivo.) Tj
+T* (- What-if analysis.) Tj
+T* (- Recomendaciones priorizadas por ROI/riesgo.) Tj
+T* (- Arboles de decision y evidencia.) Tj
+T* (- Simulaciones de negocio.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 1970 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Integracion con Revenue, Memory, Federated, Realtime y Trust.) Tj
+T* (- Reportes ejecutivos por tenant/industria.) Tj
+T* () Tj
+T* (Dependencias previas:) Tj
+T* () Tj
+T* (- Datos reales suficientes.) Tj
+T* (- Fase 17 con cohorts aceptados.) Tj
+T* (- Fase 19 con fuentes reales de revenue.) Tj
+T* (- Fase 20 con memoria publicada confiable.) Tj
+T* (- Fase 22 para trazabilidad/gobierno.) Tj
+T* () Tj
+T* (Riesgos:) Tj
+T* () Tj
+T* (- Decisiones incorrectas por datos incompletos.) Tj
+T* (- Sobreconfianza en IA.) Tj
+T* (- Necesidad de explicabilidad y aprobacion humana.) Tj
+T* () Tj
+T* (ACCEPTANCE PENDIENTE DE FASES YA IMPLEMENTADAS) Tj
+T* () Tj
+T* (- Fase 17: correr Docker/migracion/API/Swagger/worker hasta 068, bootstrap limpio 001-068,) Tj
+T* (  prueba multi-tenant opt-in, revision privacidad/legal y runbook ModelOps.) Tj
+T* (- Fase 19: validar con datos reales de pedidos/pagos antes de usar forecasts comercialmente.) Tj
+T* (- Fase 20: validar prompt/RAG con nodos publicados solamente.) Tj
+T* (- Fase 24: probar credenciales reales de proveedores, media real, fuentes aprobadas, pricing) Tj
+T* (  real y policies off/demo/canary/full.) Tj
+T* (- Fase 11 ML: entrenar con labels reales revisados antes de promover modelos fuera de) Tj
+T* (  shadow/canary.) Tj
+T* () Tj
+T* (ORDEN RECOMENDADO) Tj
+T* () Tj
+T* (1. Acceptance productiva de Fase 17.) Tj
+T* (2. Acceptance productiva de Fases 19/20/24.) Tj
+T* (3. Fase 21: AI Cloud Platform.) Tj
+T* (4. Fase 23: AI Marketplace Economy.) Tj
+T* (5. Fase 25: Enterprise Decision Intelligence.) Tj
+T* () Tj
+T* (REGLA PRINCIPAL) Tj
+T* () Tj
+T* (No avanzar a marketplace publico, APIs externas o decision intelligence comercial sin:) Tj
+T* () Tj
+T* (- feature flags apagados por defecto;) Tj
+T* (- gating por tenant/plan;) Tj
+T* (- auditoria;) Tj
+T* (- rollback;) Tj
+T* (- sandbox;) Tj
+T* (- politicas legales;) Tj
+T* (- validacion con datos reales;) Tj
+T* (- documentacion sincronizada.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000154 00000 n 
+0000000224 00000 n 
+0000002004 00000 n 
+0000002130 00000 n 
+0000003641 00000 n 
+0000003767 00000 n 
+0000005789 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+5915
+%%EOF

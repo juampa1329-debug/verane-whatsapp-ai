@@ -1,0 +1,597 @@
+{
+  "phase": "15.2",
+  "generated_on": "2026-05-27",
+  "status": "offline_blueprints",
+  "runtime_import": false,
+  "database_writes": false,
+  "playbooks": [
+    {
+      "playbook_key": "agency.nexus_phase_0_discovery.v1",
+      "title": "Phase 0 Playbook Intelligence & Discovery",
+      "source_path": "strategy/playbooks/phase-0-discovery.md",
+      "status": "offline_blueprint",
+      "objective": "Validate the opportunity before committing resources. No building until the problem, market, and regulatory landscape are understood.",
+      "preconditions": [
+        "Project brief or initial concept exists",
+        "Stakeholder sponsor identified",
+        "Budget for discovery phase approved"
+      ],
+      "activation_sequence": [
+        {
+          "level": 3,
+          "title": "Wave 1: Parallel Launch (Day 1)"
+        },
+        {
+          "level": 3,
+          "title": "Wave 2: Parallel Launch (Day 1, independent of Wave 1)"
+        }
+      ],
+      "quality_gate": [
+        "Market opportunity validated with TAM > minimum viable threshold - Trend Researcher report",
+        "3 validated user pain points with supporting data - Feedback Synthesizer + UX Researcher",
+        "No blocking compliance issues identified - Legal Compliance Checker matrix",
+        "Key metrics and data sources identified - Analytics Reporter audit",
+        "Technology stack feasible and assessed - Tool Evaluator assessment",
+        "Executive summary delivered with GO/NO-GO recommendation - Executive Summary Generator"
+      ],
+      "gate_decision": "- **GO**: Proceed to Phase 1 Strategy & Architecture - **NO-GO**: Archive findings, document learnings, redirect resources - **PIVOT**: Modify scope/direction based on findings, re-run targeted discovery",
+      "handoff_package": "```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_1_strategy.v1",
+      "title": "Phase 1 Playbook Strategy & Architecture",
+      "source_path": "strategy/playbooks/phase-1-strategy.md",
+      "status": "offline_blueprint",
+      "objective": "Define what we're building, how it's structured, and what success looks like before writing a single line of code. Every architectural decision is documented. Every feature is prioritized. Every dollar is accounted for.",
+      "preconditions": [
+        "Phase 0 Quality Gate passed (GO decision)",
+        "Phase 0 Handoff Package received",
+        "Stakeholder alignment on project scope"
+      ],
+      "activation_sequence": [
+        {
+          "level": 3,
+          "title": "Step 1: Strategic Framing (Day 1-3, Parallel)"
+        },
+        {
+          "level": 4,
+          "title": "Finance Tracker Budget and Resource Planning"
+        },
+        {
+          "level": 3,
+          "title": "Step 2: Technical Architecture (Day 3-7, Parallel, after Step 1 outputs available)"
+        },
+        {
+          "level": 3,
+          "title": "Step 3: Prioritization (Day 7-10, Sequential, after Step 2)"
+        }
+      ],
+      "quality_gate": [
+        "Architecture covers 100% of spec requirements - Senior PM task list cross-referenced with architecture",
+        "Brand system complete (logo, colors, typography, voice) - Brand Guardian deliverable",
+        "All technical components have implementation path - Backend Architect + UX Architect specs",
+        "Budget approved and within constraints - Finance Tracker plan",
+        "Sprint plan is velocity-based and realistic - Sprint Prioritizer backlog",
+        "Security architecture defined - Backend Architect security spec",
+        "Compliance requirements integrated into architecture - Legal requirements mapped to technical decisions"
+      ],
+      "gate_decision": "**Dual sign-off required**: Studio Producer (strategic) + Reality Checker (technical) - **APPROVED**: Proceed to Phase 2 with full Architecture Package - **REVISE**: Specific items need rework (return to relevant Step) - **RESTRUCTURE**: Fundamental architecture issues (restart Phase 1)",
+      "handoff_package": "```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_2_foundation.v1",
+      "title": "Phase 2 Playbook Foundation & Scaffolding",
+      "source_path": "strategy/playbooks/phase-2-foundation.md",
+      "status": "offline_blueprint",
+      "objective": "Build the technical and operational foundation that all subsequent work depends on. Get the skeleton standing before adding muscle. After this phase, every developer has a working environment, a deployable pipeline, and a design system to build with.",
+      "preconditions": [
+        "Phase 1 Quality Gate passed (Architecture Package approved)",
+        "Phase 1 Handoff Package received",
+        "All architecture documents finalized"
+      ],
+      "activation_sequence": [
+        {
+          "level": 3,
+          "title": "Workstream A: Infrastructure (Day 1-3, Parallel)"
+        },
+        {
+          "level": 3,
+          "title": "Workstream B: Application Foundation (Day 1-4, Parallel)"
+        }
+      ],
+      "quality_gate": [
+        "CI/CD pipeline builds, tests, and deploys - Pipeline execution logs",
+        "Database schema deployed with all tables/indexes - Migration success output",
+        "API scaffold responding on health check - curl response evidence",
+        "Frontend skeleton renders in browser - Evidence Collector screenshots",
+        "Monitoring dashboards showing metrics - Dashboard screenshots",
+        "Design system tokens implemented - Component library demo",
+        "Theme toggle functional (light/dark/system) - Before/after screenshots",
+        "Git workflow and processes documented - Studio Operations playbook"
+      ],
+      "gate_decision": "**Dual sign-off required**: DevOps Automator (infrastructure) + Evidence Collector (visual) - **PASS**: Working skeleton with full DevOps pipeline Phase 3 activation - **FAIL**: Specific infrastructure or application issues Fix and re-verify",
+      "handoff_package": "```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_3_build.v1",
+      "title": "Phase 3 Playbook Build & Iterate",
+      "source_path": "strategy/playbooks/phase-3-build.md",
+      "status": "offline_blueprint",
+      "objective": "Implement all features through continuous DevQA loops. Every task is validated before the next begins. This is where the bulk of the work happens and where NEXUS's orchestration delivers the most value.",
+      "preconditions": [
+        "Phase 2 Quality Gate passed (foundation verified)",
+        "Sprint Prioritizer backlog available with RICE scores",
+        "CI/CD pipeline operational",
+        "Design system and component library ready",
+        "API scaffold with auth system ready"
+      ],
+      "activation_sequence": [
+        {
+          "level": 2,
+          "title": "Parallel Build Tracks"
+        },
+        {
+          "level": 3,
+          "title": "Track A: Core Product Development"
+        },
+        {
+          "level": 3,
+          "title": "Track B: Growth & Marketing Preparation"
+        },
+        {
+          "level": 3,
+          "title": "Track C: Quality & Operations"
+        },
+        {
+          "level": 3,
+          "title": "Track D: Brand & Experience Polish"
+        },
+        {
+          "level": 3,
+          "title": "Daily Execution (Day 2 to Day N-1)"
+        }
+      ],
+      "quality_gate": [
+        "All sprint tasks pass QA (100% completion) - Evidence Collector screenshots per task",
+        "All API endpoints validated - API Tester regression report",
+        "Performance baselines met (P95 < 200ms) - Performance Benchmarker report",
+        "Brand consistency verified (95%+ adherence) - Brand Guardian audit",
+        "No critical bugs (zero P0/P1 open) - Test Results Analyzer summary",
+        "All acceptance criteria met - Task-by-task verification",
+        "Code review completed for all PRs - Git history evidence"
+      ],
+      "gate_decision": "**Gate Keeper**: Agents Orchestrator - **PASS**: Feature-complete application Phase 4 activation - **CONTINUE**: More sprints needed Continue Phase 3 - **ESCALATE**: Systemic issues Studio Producer intervention",
+      "handoff_package": "```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_4_hardening.v1",
+      "title": "Phase 4 Playbook Quality & Hardening",
+      "source_path": "strategy/playbooks/phase-4-hardening.md",
+      "status": "offline_blueprint",
+      "objective": "The final quality gauntlet. The Reality Checker defaults to \"NEEDS WORK\" you must prove production readiness with overwhelming evidence. This phase exists because first implementations typically need 2-3 revision cycles, and that's healthy.",
+      "preconditions": [
+        "Phase 3 Quality Gate passed (all tasks QA'd)",
+        "Phase 3 Handoff Package received",
+        "All features implemented and individually verified"
+      ],
+      "activation_sequence": [
+        {
+          "level": 3,
+          "title": "Step 1: Evidence Collection (Day 1-2, All Parallel)"
+        },
+        {
+          "level": 3,
+          "title": "Step 2: Analysis (Day 3-4, Parallel, after Step 1)"
+        },
+        {
+          "level": 3,
+          "title": "Step 3: Final Judgment (Day 5-7, Sequential)"
+        }
+      ],
+      "quality_gate": [
+        "User journeys complete - All critical paths working end-to-end",
+        "Cross-device consistency - Desktop + Tablet + Mobile all working",
+        "Performance certified - P95 < 200ms, LCP < 2.5s, uptime > 99.9%",
+        "Security validated - Zero critical vulnerabilities",
+        "Compliance certified - All regulatory requirements met",
+        "Specification compliance - 100% of spec requirements implemented",
+        "Infrastructure ready - Production environment validated"
+      ],
+      "gate_decision": "**Sole authority**: Reality Checker ### If READY (proceed to Phase 5): ```markdown",
+      "handoff_package": "### For Launch Team: - Reality Checker certification report - Performance certification - Compliance certification - Infrastructure readiness report - Known limitations (if any) ### For Growth Hacker: - Product ready for users - Feature list for marketing messaging - Performance data for credibility ### For DevOps Automator: - Production deployment approved - Blue-green deployment plan - Rollback procedures confirmed ``` ### If NEEDS WORK (return to Phase 3): ```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_5_launch.v1",
+      "title": "Phase 5 Playbook Launch & Growth",
+      "source_path": "strategy/playbooks/phase-5-launch.md",
+      "status": "offline_blueprint",
+      "objective": "Coordinate go-to-market execution across all channels simultaneously. Maximum impact at launch. Every marketing agent fires in concert while engineering ensures stability.",
+      "preconditions": [
+        "Phase 4 Quality Gate passed (Reality Checker READY verdict)",
+        "Phase 4 Handoff Package received",
+        "Production deployment plan approved",
+        "Marketing content pipeline ready (from Phase 3 Track B)"
+      ],
+      "activation_sequence": [
+        {
+          "level": 2,
+          "title": "Launch Timeline"
+        },
+        {
+          "level": 3,
+          "title": "T-7: Pre-Launch Week"
+        },
+        {
+          "level": 3,
+          "title": "T-1: Launch Eve"
+        },
+        {
+          "level": 3,
+          "title": "T-0: Launch Day"
+        },
+        {
+          "level": 4,
+          "title": "Hour 0: Deployment"
+        },
+        {
+          "level": 4,
+          "title": "Hour 1-2: Marketing Activation"
+        },
+        {
+          "level": 4,
+          "title": "Hour 2-8: Monitoring & Response"
+        },
+        {
+          "level": 3,
+          "title": "T+1 to T+7: Post-Launch Week"
+        },
+        {
+          "level": 3,
+          "title": "T+7 to T+14: Optimization Week"
+        },
+        {
+          "level": 3,
+          "title": "For Continuous Improvement:"
+        }
+      ],
+      "quality_gate": [
+        "Deployment successful (zero-downtime) - DevOps Automator deployment logs",
+        "Systems stable (no P0/P1 in 48 hours) - Infrastructure Maintainer monitoring",
+        "User acquisition channels active - Analytics Reporter dashboard",
+        "Feedback loop operational - Feedback Synthesizer report",
+        "Stakeholders informed - Executive Summary Generator output",
+        "Support operational - Support Responder metrics",
+        "Growth metrics tracking - Growth Hacker channel reports"
+      ],
+      "gate_decision": "**Dual sign-off**: Studio Producer (strategic) + Analytics Reporter (data) - **STABLE**: Product launched, systems stable, growth active Phase 6 activation - **CRITICAL**: Major issues requiring immediate engineering response Hotfix cycle - **ROLLBACK**: Fundamental problems Revert deployment, return to Phase 4",
+      "handoff_package": "```markdown",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    },
+    {
+      "playbook_key": "agency.nexus_phase_6_operate.v1",
+      "title": "Phase 6 Playbook Operate & Evolve",
+      "source_path": "strategy/playbooks/phase-6-operate.md",
+      "status": "offline_blueprint",
+      "objective": "Sustained operations with continuous improvement. The product is live now make it thrive. This phase has no end date; it runs as long as the product is in market.",
+      "preconditions": [
+        "Phase 5 Quality Gate passed (stable launch)",
+        "Phase 5 Handoff Package received",
+        "Operational cadences established",
+        "Baseline metrics documented"
+      ],
+      "activation_sequence": [
+        {
+          "level": 3,
+          "title": "Continuous (Always Active)"
+        },
+        {
+          "level": 3,
+          "title": "Daily"
+        },
+        {
+          "level": 3,
+          "title": "Weekly"
+        },
+        {
+          "level": 3,
+          "title": "Bi-Weekly"
+        },
+        {
+          "level": 3,
+          "title": "Monthly"
+        },
+        {
+          "level": 3,
+          "title": "Quarterly"
+        },
+        {
+          "level": 2,
+          "title": "Continuous Improvement Loop"
+        },
+        {
+          "level": 3,
+          "title": "Monthly Growth Review (Growth Hacker leads)"
+        },
+        {
+          "level": 3,
+          "title": "Monthly Financial Review (Finance Tracker)"
+        },
+        {
+          "level": 3,
+          "title": "Monthly Compliance Check (Legal Compliance Checker)"
+        },
+        {
+          "level": 3,
+          "title": "Quarterly Strategic Review (Studio Producer)"
+        }
+      ],
+      "quality_gate": [
+        "System uptime - > 99.9%",
+        "MTTR - < 30 minutes",
+        "MoM user growth - > 20%",
+        "Activation rate - > 60%",
+        "Day 7 retention - > 40%",
+        "Day 30 retention - > 20%",
+        "LTV:CAC ratio - > 3:1",
+        "Portfolio ROI - > 25%",
+        "NPS score - > 50",
+        "Support resolution time - < 4 hours",
+        "Regulatory adherence - > 98%",
+        "Deployment frequency - Multiple/day",
+        "Process improvement - 20%/quarter"
+      ],
+      "gate_decision": "",
+      "handoff_package": "",
+      "scentra_mapping": {
+        "runtime": "future_workflow_composer_blueprint",
+        "activation_mode": "draft_only",
+        "requires_preflight": true,
+        "requires_human_approval": true,
+        "tenant_scoped": true,
+        "no_customer_facing_side_effects": true
+      }
+    }
+  ],
+  "runbooks": [
+    {
+      "scenario_key": "agency.scenario_enterprise_feature.v1",
+      "title": "Runbook: Enterprise Feature Development",
+      "source_path": "strategy/runbooks/scenario-enterprise-feature.md",
+      "status": "offline_blueprint",
+      "scenario": "You're adding a major feature to an existing enterprise product. Compliance, security, and quality gates are non-negotiable. Multiple stakeholders need alignment. The feature must integrate seamlessly with existing systems.",
+      "roster_summary": "### Core Team | Agent | Role | |-------|------| | Agents Orchestrator | Pipeline controller | | Project Shepherd | Cross-functional coordination | | Senior Project Manager | Spec-to-task conversion | | Sprint Prioritizer | Backlog management | | UX Architect | Technical foundation | | UX Researcher | User validation | | UI Designer | Component design | | Frontend Developer | UI implementation | | Backend Architect | API and system integration | | Senior Developer | Complex implementation | | DevOps Automator | CI/CD and deployment | | Evidence Collector | Visual QA | | API Tester | Endpoint validation | | Reality Checker | Final quality gate | | Performance Benchmarker | Load testing | ### Compliance & Governance | Agent | Role | |-------|------| | Legal Compliance Checker | Regulatory compliance | | Brand Guardian | Brand consistency | | Finance Tracker | Budget tracking | | Executiv...",
+      "execution_plan": [
+        {
+          "level": 3,
+          "title": "Phase 1: Requirements & Architecture (Week 1-2)"
+        },
+        {
+          "level": 3,
+          "title": "Phase 2: Foundation (Week 3)"
+        },
+        {
+          "level": 3,
+          "title": "Phase 3: Build (Week 4-9)"
+        },
+        {
+          "level": 3,
+          "title": "Phase 4: Hardening (Week 10-11)"
+        },
+        {
+          "level": 3,
+          "title": "Phase 5: Rollout (Week 12)"
+        }
+      ],
+      "success_criteria": [
+        "Threshold - Verification",
+        "> 80% - Test Results Analyzer",
+        "P95 < 200ms - Performance Benchmarker",
+        "WCAG 2.1 AA - Evidence Collector",
+        "Zero critical vulnerabilities - Legal Compliance Checker",
+        "95%+ adherence - Brand Guardian",
+        "100% - Reality Checker",
+        "10x current traffic - Performance Benchmarker"
+      ],
+      "risk_controls": [
+        "Probability - Impact",
+        "High - High",
+        "Medium - High",
+        "Medium - Critical",
+        "Medium - High",
+        "Low - High"
+      ],
+      "scentra_mapping": {
+        "runtime": "future_runbook_blueprint",
+        "activation_mode": "draft_only",
+        "requires_human_approval": true,
+        "no_runtime_side_effects": true
+      }
+    },
+    {
+      "scenario_key": "agency.scenario_incident_response.v1",
+      "title": "Runbook: Incident Response",
+      "source_path": "strategy/runbooks/scenario-incident-response.md",
+      "status": "offline_blueprint",
+      "scenario": "Something is broken in production. Users are affected. Speed of response matters, but so does doing it right. This runbook covers detection through post-mortem.",
+      "roster_summary": "### P0 Critical Response Team | Agent | Role | Action | |-------|------|--------| | **Infrastructure Maintainer** | Incident commander | Assess scope, coordinate response | | **DevOps Automator** | Deployment/rollback | Execute rollback if needed | | **Backend Architect** | Root cause investigation | Diagnose system issues | | **Frontend Developer** | UI-side investigation | Diagnose client-side issues | | **Support Responder** | User communication | Status page updates, user notifications | | **Executive Summary Generator** | Stakeholder communication | Real-time executive updates | ### P1 High Response Team | Agent | Role | |-------|------| | **Infrastructure Maintainer** | Incident commander | | **DevOps Automator** | Deployment support | | **Relevant Developer Agent** | Fix implementation | | **Support Responder** | User communication | ### P2 Medium Response | Agent | Role | |---...",
+      "execution_plan": [
+        {
+          "level": 3,
+          "title": "Step 1: Detection & Triage (0-5 minutes)"
+        },
+        {
+          "level": 3,
+          "title": "Step 2: Investigation (5-30 minutes)"
+        },
+        {
+          "level": 3,
+          "title": "Step 3: Mitigation (15-60 minutes)"
+        },
+        {
+          "level": 3,
+          "title": "Step 4: Resolution Verification (Post-fix)"
+        },
+        {
+          "level": 3,
+          "title": "Step 5: Post-Mortem (Within 48 hours)"
+        }
+      ],
+      "success_criteria": [],
+      "risk_controls": [
+        "Escalate To - Action",
+        "Studio Producer - Additional resources, vendor escalation",
+        "Project Shepherd - Resource reallocation",
+        "Legal Compliance Checker - Regulatory notification assessment",
+        "Legal Compliance Checker + Executive Summary Generator - GDPR/CCPA notification",
+        "Finance Tracker + Studio Producer - Business impact assessment"
+      ],
+      "scentra_mapping": {
+        "runtime": "future_runbook_blueprint",
+        "activation_mode": "draft_only",
+        "requires_human_approval": true,
+        "no_runtime_side_effects": true
+      }
+    },
+    {
+      "scenario_key": "agency.scenario_marketing_campaign.v1",
+      "title": "Runbook: Multi-Channel Marketing Campaign",
+      "source_path": "strategy/runbooks/scenario-marketing-campaign.md",
+      "status": "offline_blueprint",
+      "scenario": "You're launching a coordinated marketing campaign across multiple channels. Content needs to be platform-specific, brand-consistent, and data-driven. The campaign needs to drive measurable acquisition and engagement.",
+      "roster_summary": "### Campaign Core | Agent | Role | |-------|------| | Social Media Strategist | Campaign lead, cross-platform strategy | | Content Creator | Content production across all formats | | Growth Hacker | Acquisition strategy, funnel optimization | | Brand Guardian | Brand consistency across all channels | | Analytics Reporter | Performance tracking and optimization | ### Platform Specialists | Agent | Role | |-------|------| | Twitter Engager | Twitter/X campaign execution | | TikTok Strategist | TikTok content and growth | | Instagram Curator | Instagram visual content | | Reddit Community Builder | Reddit authentic engagement | | App Store Optimizer | App store presence (if mobile) | ### Support | Agent | Role | |-------|------| | Trend Researcher | Market timing and trend alignment | | Experiment Tracker | A/B testing campaign variations | | Executive Summary Generator | Campaign report...",
+      "execution_plan": [
+        {
+          "level": 3,
+          "title": "Week 1: Strategy & Content Creation"
+        },
+        {
+          "level": 3,
+          "title": "Week 2: Launch & Activate"
+        },
+        {
+          "level": 3,
+          "title": "Week 3-4: Sustain & Optimize"
+        }
+      ],
+      "success_criteria": [
+        "[Target based on budget] - Social Media Strategist",
+        "> 3% average across platforms - Platform agents",
+        "> 2% on CTAs - Growth Hacker",
+        "> 5% landing page - Growth Hacker",
+        "< [Target CAC] - Growth Hacker",
+        "Net positive - Brand Guardian",
+        "[Target count] - Content Creator",
+        "5 - Experiment Tracker"
+      ],
+      "risk_controls": [],
+      "scentra_mapping": {
+        "runtime": "future_runbook_blueprint",
+        "activation_mode": "draft_only",
+        "requires_human_approval": true,
+        "no_runtime_side_effects": true
+      }
+    },
+    {
+      "scenario_key": "agency.scenario_startup_mvp.v1",
+      "title": "Runbook: Startup MVP Build",
+      "source_path": "strategy/runbooks/scenario-startup-mvp.md",
+      "status": "offline_blueprint",
+      "scenario": "You're building a startup MVP a new product that needs to validate product-market fit quickly. Speed matters, but so does quality. You need to go from idea to live product with real users in 4-6 weeks.",
+      "roster_summary": "### Core Team (Always Active) | Agent | Role | |-------|------| | Agents Orchestrator | Pipeline controller | | Senior Project Manager | Spec-to-task conversion | | Sprint Prioritizer | Backlog management | | UX Architect | Technical foundation | | Frontend Developer | UI implementation | | Backend Architect | API and database | | DevOps Automator | CI/CD and deployment | | Evidence Collector | QA for every task | | Reality Checker | Final quality gate | ### Growth Team (Activated Week 3+) | Agent | Role | |-------|------| | Growth Hacker | Acquisition strategy | | Content Creator | Launch content | | Social Media Strategist | Social campaign | ### Support Team (As Needed) | Agent | Role | |-------|------| | Brand Guardian | Brand identity | | Analytics Reporter | Metrics and dashboards | | Rapid Prototyper | Quick validation experiments | | AI Engineer | If product includes AI featur...",
+      "execution_plan": [
+        {
+          "level": 3,
+          "title": "Growth Team (Activated Week 3+)"
+        },
+        {
+          "level": 2,
+          "title": "Week-by-Week Execution"
+        },
+        {
+          "level": 3,
+          "title": "Week 1: Discovery + Architecture (Phase 0 + Phase 1 compressed)"
+        },
+        {
+          "level": 3,
+          "title": "Week 2-3: Core Build (Phase 2 + Phase 3)"
+        },
+        {
+          "level": 3,
+          "title": "Week 4: Polish + Hardening (Phase 4)"
+        },
+        {
+          "level": 3,
+          "title": "Week 5-6: Launch + Growth (Phase 5)"
+        }
+      ],
+      "success_criteria": [
+        "6 weeks",
+        "100% of MVP scope",
+        "Within 48 hours of launch",
+        "> 99% in first week",
+        "50 responses in first 2 weeks"
+      ],
+      "risk_controls": [
+        "Mitigation",
+        "Sprint Prioritizer enforces MoSCoW \"Won't\" means won't",
+        "Rapid Prototyper mindset validate first, scale later",
+        "Evidence Collector runs on EVERY task no exceptions",
+        "Infrastructure Maintainer sets up monitoring in Week 1",
+        "Analytics + feedback collection built into Sprint 1"
+      ],
+      "scentra_mapping": {
+        "runtime": "future_runbook_blueprint",
+        "activation_mode": "draft_only",
+        "requires_human_approval": true,
+        "no_runtime_side_effects": true
+      }
+    }
+  ]
+}

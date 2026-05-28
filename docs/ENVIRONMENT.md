@@ -1,0 +1,219 @@
+# ENVIRONMENT
+
+Scope: SaaS only.
+
+## Backend Settings
+
+Source: `saas-version/backend/app_saas/config.py`.
+
+Core env vars:
+
+- `DATABASE_URL`
+- `SAAS_ENV`
+- `SAAS_JWT_SECRET`
+- `SAAS_JWT_ISSUER`
+- `SAAS_ACCESS_TOKEN_MINUTES`
+- `SAAS_REFRESH_TOKEN_DAYS`
+- `SAAS_SECRET_KEY`
+- `SAAS_CORS_ORIGINS`
+- `SAAS_TRIAL_DAYS`
+- `SAAS_TRIAL_PLAN_CODE`
+
+Worker env vars:
+
+- `SAAS_EMBEDDED_WORKER_ENABLED`
+- `SAAS_WORKER_IDLE_SEC`
+- `SAAS_WORKER_BATCH_SIZE`
+- `SAAS_WORKER_NAME`
+- `SAAS_META_TOKEN_REFRESH_INTERVAL_SEC`
+- `SAAS_META_TOKEN_REFRESH_DAYS_BEFORE_EXPIRY`
+- `SAAS_INTELLIGENCE_WORKER_INTERVAL_MINUTES`
+- `SAAS_INTELLIGENCE_EVENT_LIMIT`
+- `SAAS_INTELLIGENCE_LOOKBACK_HOURS`
+- `SAAS_INTELLIGENCE_PREDICTION_COOLDOWN_MINUTES`
+- `SAAS_AUTONOMOUS_OPS_ANALYSIS_LIMIT`
+
+Optional ML env vars:
+
+- `SAAS_ML_ENABLED`
+- `SAAS_ML_SHADOW_INFERENCE_ENABLED`
+- `SAAS_ML_AUTO_TRAIN_ENABLED`
+- `SAAS_ML_SERVICE_URL`
+- `SAAS_ML_INFERENCE_TIMEOUT_SEC`
+- `SAAS_MLFLOW_TRACKING_URI`
+- `MLFLOW_TRACKING_URI`
+- `SAAS_ML_MODEL_DIR`
+- `BENTOML_HOME`
+- `SAAS_QDRANT_URL`
+
+Security/captcha/rate limit:
+
+- `SAAS_CAPTCHA_ENABLED`
+- `SAAS_CAPTCHA_PROVIDER`
+- `TURNSTILE_SECRET_KEY`
+- `SAAS_RATE_LIMIT_ENABLED`
+- `SAAS_LOGIN_LOCK_FAILED_ATTEMPTS`
+- `SAAS_LOGIN_LOCK_MINUTES`
+- `SAAS_PASSWORD_RESET_MINUTES`
+- `SAAS_PASSWORD_RESET_PATH`
+- `SAAS_MFA_OTP_MINUTES`
+- `SAAS_MFA_OTP_LENGTH`
+- `SAAS_MFA_MAX_ATTEMPTS`
+- `SAAS_MFA_REQUIRED_ROLES`
+- `SAAS_ADMIN_MFA_REQUIRED_ROLES`
+- `SAAS_SECURITY_NOTIFY_ENABLED`
+
+Password recovery email:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `SMTP_STARTTLS`
+
+Phase 13 MFA/security notices:
+
+- Email OTP MFA uses the same SMTP settings as password recovery.
+- In local mode, OTP/reset flows can expose dev tokens for smoke testing. Production must configure SMTP instead.
+- `SAAS_MFA_REQUIRED_ROLES` and `SAAS_ADMIN_MFA_REQUIRED_ROLES` are comma-separated role lists. Empty means only users with 2FA enabled are challenged.
+- `SAAS_SECURITY_NOTIFY_ENABLED=true` enables security notification emails for supported account/security changes.
+
+Public URLs:
+
+- `SAAS_PUBLIC_API_BASE`
+- `SAAS_PUBLIC_APP_BASE`
+
+Meta/Instagram:
+
+- `META_APP_ID`
+- `META_APP_SECRET`
+- `META_GRAPH_VERSION`
+- `META_REDIRECT_URI`
+- `META_WEBHOOK_VERIFY_TOKEN`
+- `INSTAGRAM_APP_ID`
+- `INSTAGRAM_APP_SECRET`
+- `INSTAGRAM_REDIRECT_URI`
+- `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`
+
+Billing:
+
+- `SAAS_BILLING_PROVIDER`
+- `SAAS_BILLING_SUCCESS_URL`
+- `SAAS_BILLING_CANCEL_URL`
+- `SAAS_BILLING_LIFECYCLE_INTERVAL_MINUTES`
+- `BILLING_PAST_DUE_GRACE_DAYS`
+- Stripe, MercadoPago, and Wompi provider vars are present in config/compose.
+- Production provider webhooks require provider-specific secrets: `STRIPE_WEBHOOK_SECRET`, `MERCADOPAGO_WEBHOOK_SECRET`, and `WOMPI_EVENTS_KEY`.
+
+## Frontend Env
+
+Client app:
+
+- `VITE_API_BASE`
+- `VITE_CAPTCHA_ENABLED`
+- `VITE_TURNSTILE_SITE_KEY`
+- `VITE_APP_LOCALE` optional; defaults to `es-CO` in the Phase 14 text catalog.
+
+Admin app:
+
+- `VITE_API_BASE`
+- `VITE_CLIENT_APP_BASE`
+- `VITE_CAPTCHA_ENABLED`
+- `VITE_TURNSTILE_SITE_KEY`
+- `VITE_ADMIN_BOOTSTRAP_ENABLED`
+- `VITE_ADMIN_LOCALE` optional; defaults to `es-CO` in the Phase 14 text catalog.
+
+Docker Compose build vars for admin app:
+
+- `ADMIN_VITE_API_BASE`
+- `ADMIN_VITE_CLIENT_APP_BASE`
+- `ADMIN_VITE_CAPTCHA_ENABLED`
+- `ADMIN_VITE_TURNSTILE_SITE_KEY`
+- `ADMIN_VITE_BOOTSTRAP_ENABLED`
+- `SAAS_ADMIN_HOST_PORT`
+
+Optional platform admin seed vars:
+
+- `SAAS_ADMIN_EMAIL`
+- `SAAS_ADMIN_PASSWORD`
+- `SAAS_ADMIN_FULL_NAME`
+- `SAAS_ADMIN_ROLE`
+- `SAAS_ADMIN_NOTES`
+
+## Docker Compose
+
+File: `saas-version/docker-compose.saas.yml`.
+
+Services:
+
+- `scentra-saas-db`: Postgres 16
+- `api`: migrations then Uvicorn
+- `worker`: standalone background worker
+- `admin-frontend`: Nginx-served React admin app for `admin.scentra-ai.online`
+- `platform-admin-seed`: optional `admin-seed` profile service for secure first superadmin creation
+- `mlflow`: optional `ml` profile service for experiment/model tracking
+- `ml-service`: optional `ml` profile FastAPI/BentoML image for synthetic/autolabel training, dataset building, inference, drift and metrics
+- `qdrant`: optional `ml` profile vector infrastructure for future use
+
+Network:
+
+- external network `coolify`
+
+Important compose defaults:
+
+- `SAAS_JWT_SECRET` defaults to `change-me-local-saas-secret`; never use this in production.
+- `SAAS_CORS_ORIGINS` includes local and production Scentra domains.
+- API/worker services pass through Phase 1 security env vars for CAPTCHA, rate limits, lockout, reset expiry/path, and SMTP.
+- `api` command applies migrations from `/app/migrations` before starting.
+- `admin-frontend` defaults to production API/client URLs unless `ADMIN_VITE_*` build vars override them.
+- `platform-admin-seed` is not part of default `up`; run it explicitly with the `admin-seed` profile.
+- ML services are not part of default `up`; run them explicitly with the `ml` profile. API/worker defaults keep `SAAS_ML_ENABLED=false`.
+- Optional local ML ports: `SAAS_MLFLOW_HOST_PORT` default `5000`, `SAAS_ML_HOST_PORT` default `8090`, `SAAS_QDRANT_HOST_PORT` default `6333`.
+- `ml-service` depends on DB and MLflow; it can log training jobs/artifacts/inference/drift plus datasets/evaluations to Postgres when migrations `049` and `050` exist.
+- Local validation on non-default admin ports must include that origin in `SAAS_CORS_ORIGINS`; default compose includes local admin port `8011`.
+- Avoid running multiple SaaS Compose projects on the same external `coolify` network at once unless aliases are isolated; duplicate `scentra-saas-db` aliases can make API containers reach the wrong DB.
+
+Voice Intelligence runtime:
+
+- No new environment variable is required for Phase 24.2.
+- Real audio analysis requires an encrypted tenant Google/Gemini credential configured through SaaS API credentials, with an audio-capable selected model such as a Gemini Flash family model.
+- If no valid tenant provider credential/model is available, the endpoint fails safely instead of falling back to a non-audio provider.
+
+Vision Intelligence runtime:
+
+- No new environment variable is required for Phase 24.3.
+- Real image/document analysis requires encrypted tenant AI credentials configured through SaaS API credentials.
+- Google/Gemini is the default/safest provider path and the current document/OCR route.
+- OpenRouter and Kimi can be selected for image analysis when the tenant credential and selected model support vision; the endpoint fails safely if the provider/model cannot process the media.
+
+Web/Image Search Intelligence runtime:
+
+- No new environment variable is required for Phase 24.4.
+- Real search requires an encrypted tenant API credential configured through SaaS API credentials for one of:
+  - `tavily` with `TAVILY_API_KEY`.
+  - `brave_search` with `BRAVE_SEARCH_API_KEY`.
+  - `serpapi` with `SERPAPI_API_KEY`.
+- If no valid tenant search credential is configured, `/saas/v1/media/search` fails safely with a controlled client error instead of falling back to a global key.
+- External result URLs are screened for public HTTP(S) targets before persistence/approval; private/internal URLs are blocked.
+
+Agent Multimodal Tools runtime:
+
+- No new environment variable is required for Phase 24.5.
+- Full commercial use is controlled by plan/tenant Intelligence flags: `agent_multimodal_tools`, `agent_voice_tools`, `agent_vision_tools`, `agent_external_search_tools`, or umbrella `ai_premium`; demo mode can preview through existing demo gates.
+- Voice/vision agent tools still require the same tenant AI credentials and media availability as Phase 24.2/24.3.
+- Web/image search agent tools still require tenant Tavily/Brave/SerpAPI credentials and human approval of each result before the runtime agent can use an external source as context.
+- Missing credentials or invalid media fail safely and leave an auditable failed tool run; no global provider secret fallback is used.
+
+Multimodal Memory runtime:
+
+- No new environment variable is required for Phase 24.6.
+- Full commercial use is controlled by plan/tenant Intelligence flags: `multimodal_memory_events`, `multimodal_training_events`, `multimodal_rag_materialization`, `multimodal_agent_memory`, or umbrella `ai_premium`.
+- Training-ready event capture is separate from memory capture; enabling memory does not automatically authorize training usage.
+- RAG/collective-memory materialization uses existing Knowledge and agent memory tables; customer content requires explicit operator approval.
+
+## Secret Handling
+
+- Tenant/provider credentials use encrypted storage via `shared/secrets.py`.
+- Encryption key is derived from `SAAS_SECRET_KEY` or `SAAS_JWT_SECRET`.
+- `saas-version/keys/saasprivate.key` exists in the tree; treat as sensitive until ownership/purpose is verified.

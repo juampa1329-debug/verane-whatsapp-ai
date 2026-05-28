@@ -1,0 +1,321 @@
+%PDF-1.4
+% Scentra generated report
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R] /Count 5 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Length 1772 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Manual Fases Nuevas) Tj
+T* () Tj
+T* (MANUAL OPERATIVO: NUEVAS FASES AI SCENTRA) Tj
+T* () Tj
+T* (Alcance: solo saas-version/.) Tj
+T* (Fecha: 2026-05-28.) Tj
+T* () Tj
+T* (Este manual resume como quedaron las fases nuevas implementadas y como operarlas con) Tj
+T* (  seguridad.) Tj
+T* () Tj
+T* (FASE 16: AI REAL-TIME INTELLIGENCE LAYER) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Muestra eventos, metricas live, sesiones, cursores y alertas consultivas.) Tj
+T* (- Usa PostgreSQL polling y SSE acotado.) Tj
+T* (- No agrega Kafka/NATS/Redis Streams.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Habilitar features realtime por tenant/plan.) Tj
+T* (2. Abrir Inteligencia.) Tj
+T* (3. Revisar live feed, alertas y event mix.) Tj
+T* (4. Marcar cursor visto cuando el operador ya reviso eventos.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- Alertas son consultivas. No ejecutan acciones runtime.) Tj
+T* () Tj
+T* (FASE 17: FEDERATED LEARNING & GLOBAL INTELLIGENCE) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Permite a tenants hacer opt-in para compartir paquetes estadisticos agregados.) Tj
+T* (- Genera rondas federadas por tarea/industria.) Tj
+T* (- Agrega updates ponderados y crea signals globales.) Tj
+T* () Tj
+T* (Uso tenant:) Tj
+T* () Tj
+T* (1. Admin habilita federated_learning o ai_premium en modo full.) Tj
+T* (2. Tenant abre Inteligencia > Federated Learning.) Tj
+T* (3. Activa Opt-in federado.) Tj
+T* (4. Define privacidad, min muestras locales y min tenants de cohorte.) Tj
+T* (5. Selecciona tareas: lead scoring, churn, remarketing u operaciones.) Tj
+T* (6. Ejecuta Preview update.) Tj
+T* (7. Si el preview es elegible, ejecuta Crear ronda + enviar.) Tj
+T* (8. En una ronda abierta, puede enviar update o calcular agregado.) Tj
+T* () Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 1614 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Uso worker:) Tj
+T* () Tj
+T* (- El worker participa solo si hay full access, opt-in y auto-participation.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- No comparte mensajes, conversaciones, media, prompts, secretos ni nombres de tenants.) Tj
+T* (- No promueve modelos automaticamente.) Tj
+T* (- Signals federados requieren revision ModelOps antes de afectar produccion.) Tj
+T* () Tj
+T* (FASE 18: AI WORKFLOW COMPOSER) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Permite disenar workflows AI con templates, grafo, preflight, simulacion, aprobaciones,) Tj
+T* (  versiones y rollback.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Habilitar ai_workflow_composer.) Tj
+T* (2. Crear workflow desde template o custom.) Tj
+T* (3. Ejecutar preflight.) Tj
+T* (4. Simular sin efectos.) Tj
+T* (5. Solicitar/aprobar.) Tj
+T* (6. Activar como composer_only.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- Activar no despliega triggers/flows/campanas reales todavia.) Tj
+T* () Tj
+T* (FASE 19: AUTONOMOUS REVENUE ENGINE) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Detecta oportunidades comerciales desde CRM, predicciones y estados de pago.) Tj
+T* (- Genera oportunidades, forecasts, reportes y playbooks supervisados.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Habilitar revenue features o ai_premium.) Tj
+T* (2. En Inteligencia, configurar politica: nivel, moneda, meta, max acciones/mes y action) Tj
+T* (  types permitidos.) Tj
+T* (3. Ejecutar Vista previa.) Tj
+T* (4. Ejecutar Analizar revenue.) Tj
+T* (5. Aprobar, ejecutar como metadata o descartar oportunidades.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 1545 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- No envia mensajes, no cobra, no muta CRM/campanas/workflows.) Tj
+T* () Tj
+T* (FASE 20: AI ENTERPRISE MEMORY NETWORK) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Crea grafo tenant-scoped con memoria colectiva, Knowledge/RAG, multimodal y vertical) Tj
+T* (  insights.) Tj
+T* (- Permite revisar, publicar, archivar, exportar, importar y borrar nodos.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Habilitar memory features.) Tj
+T* (2. Configurar politica: privacidad, retencion, scopes, revision cliente, routing) Tj
+T* (  multiagente.) Tj
+T* (3. Ejecutar preview de sync.) Tj
+T* (4. Ejecutar sync real.) Tj
+T* (5. Revisar nodos candidate.) Tj
+T* (6. Publicar solo memoria validada.) Tj
+T* (7. Exportar/importar JSON si hace falta portabilidad.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- Import siempre entra como candidate.) Tj
+T* (- Nodos privados/candidate no deben entrar a prompts/RAG.) Tj
+T* () Tj
+T* (FASE 22: AI TRUST, COMPLIANCE & GOVERNANCE) Tj
+T* () Tj
+T* (Que hace:) Tj
+T* () Tj
+T* (- Control-plane de politicas, riesgos, model cards, incidentes, auditorias y reportes AI.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Habilitar Trust AI.) Tj
+T* (2. Crear o revisar politicas.) Tj
+T* (3. Ejecutar risk scan.) Tj
+T* (4. Revisar model cards.) Tj
+T* (5. Generar reportes.) Tj
+T* (6. Usar Admin Trust para vista multi-tenant.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- No es certificacion legal.) Tj
+T* (- No aplica enforcement automatico.) Tj
+T* () Tj
+T* (FASE 24: VOICE & MULTIMODAL INTELLIGENCE) Tj
+T* () Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 2047 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(Que hace:) Tj
+T* () Tj
+T* (- AI Gateway con adjuntos.) Tj
+T* (- Analisis de audio.) Tj
+T* (- Analisis de imagen/documentos.) Tj
+T* (- Busqueda web/imagen con aprobacion humana.) Tj
+T* (- Herramientas multimodales para agentes.) Tj
+T* (- Memoria/training events multimodales.) Tj
+T* (- UX Inbox para aprobar/usar/enviar referencias.) Tj
+T* (- Admin/Premium Gating.) Tj
+T* (- Observabilidad y Safe Rollout.) Tj
+T* () Tj
+T* (Uso:) Tj
+T* () Tj
+T* (1. Admin configura features, plan limits, provider policies y pricing.) Tj
+T* (2. Tenant configura credenciales reales por proveedor.) Tj
+T* (3. Operador analiza audio, imagen/documento o busca referencia externa.) Tj
+T* (4. Operador aprueba fuentes externas.) Tj
+T* (5. Operador usa/envia referencia desde Inbox.) Tj
+T* (6. Observabilidad revisa costo, latencia, errores, calidad y fuentes.) Tj
+T* (7. Rollout se configura off/demo/canary/full por modalidad/proveedor.) Tj
+T* () Tj
+T* (Limite:) Tj
+T* () Tj
+T* (- No auto-envia referencias.) Tj
+T* (- No entrena modelos automaticamente.) Tj
+T* (- No usa fuentes externas sin aprobacion.) Tj
+T* () Tj
+T* (MANUAL FASE 11 ML: ENTRENAR MODELOS) Tj
+T* () Tj
+T* (Flujo recomendado:) Tj
+T* () Tj
+T* (1. Ejecutar con SAAS_ML_ENABLED=true solo en staging o entorno controlado.) Tj
+T* (2. Verificar que MLflow, ML service y Qdrant esten levantados con profile ml.) Tj
+T* (3. Generar auto-labels desde Admin AI Predictivo.) Tj
+T* (4. Recalcular feature pipelines.) Tj
+T* (5. Construir dataset Postgres.) Tj
+T* (6. Entrenar autolabel con LightGBM, XGBoost o sklearn fallback.) Tj
+T* (7. Revisar metricas offline, distribucion de labels y drift.) Tj
+T* (8. Registrar modelo en Model Registry en shadow.) Tj
+T* (9. Habilitar shadow inference para comparar contra baseline.) Tj
+T* (10. Pasar a canary bajo porcentaje solo con aceptacion humana.) Tj
+T* (11. Promover a production solo con rollback documentado y evidencia.) Tj
+T* () Tj
+T* (Requisitos minimos:) Tj
+T* () Tj
+T* (- Datos reales tenant-safe.) Tj
+T* (- Labels revisados.) Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 1351 >>
+stream
+BT
+/F1 10 Tf
+50 790 Td
+14 TL
+(- Feature gates por plan/tenant.) Tj
+T* (- Costos/cuotas definidos.) Tj
+T* (- Runbook de rollback.) Tj
+T* () Tj
+T* (No hacer:) Tj
+T* () Tj
+T* (- No entrenar LLMs propios al inicio.) Tj
+T* (- No usar GPU.) Tj
+T* (- No vender modelos sinteticos/autolabel como precision productiva.) Tj
+T* (- No compartir datos crudos entre tenants.) Tj
+T* () Tj
+T* (OPERACION EN VPS ORACLE CLOUD FREE TIER) Tj
+T* () Tj
+T* (Viabilidad:) Tj
+T* () Tj
+T* (- El stack base API/worker/Postgres/frontends puede correr para dev o demo pequena si se) Tj
+T* (  ajustan recursos.) Tj
+T* (- No es ideal para todo el perfil ML completo con MLflow, Qdrant, builds, frontends y trafico) Tj
+T* (  real simultaneo.) Tj
+T* () Tj
+T* (Recomendacion:) Tj
+T* () Tj
+T* (- En free tier, usar features ML/AI pesadas apagadas por defecto.) Tj
+T* (- Ejecutar entrenamientos manuales y pequenos.) Tj
+T* (- Evitar correr MLflow/Qdrant/ML service continuamente si la RAM es limitada.) Tj
+T* (- Para produccion real, usar VPS con mas RAM/CPU, backup gestionado y monitoreo.) Tj
+T* () Tj
+T* (REGLA DE SEGURIDAD) Tj
+T* () Tj
+T* (Todas estas fases son feature-flagged, premium-gated y deben mantenerse apagadas por defecto) Tj
+T* (  para tenants no autorizados. Cualquier cambio futuro debe actualizar CURRENT_STATE.md,) Tj
+T* (  TASK_STATE.md, docs, riesgos y ADRs.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000168 00000 n 
+0000000238 00000 n 
+0000002062 00000 n 
+0000002188 00000 n 
+0000003854 00000 n 
+0000003980 00000 n 
+0000005577 00000 n 
+0000005703 00000 n 
+0000007803 00000 n 
+0000007931 00000 n 
+0000009335 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R >>
+startxref
+9463
+%%EOF

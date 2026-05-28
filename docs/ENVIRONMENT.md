@@ -221,4 +221,5 @@ Multimodal Memory runtime:
 
 - Tenant/provider credentials use encrypted storage via `shared/secrets.py`.
 - Encryption key is derived from `SAAS_SECRET_KEY` or `SAAS_JWT_SECRET`.
+- `SAAS_SECRET_KEY` must be stable across redeploys. Do not replace it with a Meta token or a newly generated value after tenants have saved provider credentials; existing encrypted AI/TTS/search keys will become unreadable and the AI Gateway will behave as if credentials are missing.
 - `saas-version/keys/saasprivate.key` exists in the tree; treat as sensitive until ownership/purpose is verified.

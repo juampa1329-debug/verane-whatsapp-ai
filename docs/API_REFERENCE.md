@@ -699,4 +699,4 @@ Billing webhook notes:
 - `GET /diagnostics/overview`
 - `POST /diagnostics/run`
 - `POST /diagnostics/whatsapp/simulate-inbound`
-- Diagnostics responses include server timestamps and recent webhook endpoint/callback metadata for production triage.
+- Diagnostics responses include server timestamps, recent webhook endpoint/callback metadata, AI credential runtime readability, recent AI pending jobs, and recent AI Gateway run errors for production triage.

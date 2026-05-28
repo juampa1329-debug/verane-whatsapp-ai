@@ -69,7 +69,7 @@ Operational flow for a normal inbound WhatsApp message:
 
 Diagnostic endpoints:
 
-- `GET /saas/v1/diagnostics/overview`: tenant-safe overview of runtime, integrations, webhooks, queues, AI, social Meta and WhatsApp symptoms. It includes `generated_at`, webhook callback URLs, endpoint `last_seen_at`, recent event timestamps and whether a WhatsApp POST used stale-endpoint fallback.
+- `GET /saas/v1/diagnostics/overview`: tenant-safe overview of runtime, integrations, webhooks, queues, AI, social Meta and WhatsApp symptoms. It includes `generated_at`, webhook callback URLs, endpoint `last_seen_at`, recent event timestamps, whether a WhatsApp POST used stale-endpoint fallback, AI credential runtime readability, recent `saas_ai_pending_replies`, and recent `saas_ai_runs`.
 - `POST /saas/v1/diagnostics/run?limit=50`: owner/admin/supervisor operation that processes pending webhooks, AI replies and outbound messages and returns `started_at`/`finished_at`.
 - `POST /saas/v1/diagnostics/whatsapp/simulate-inbound`: inserts a synthetic Meta-style WhatsApp webhook, returns `started_at`/`finished_at`, and verifies whether Scentra can create/update Inbox records.
 - `POST /saas/v1/internal/whatsapp/check-subscription`: verifies WABA `subscribed_apps` status when Meta delivery is suspected.
@@ -81,7 +81,7 @@ Support interpretation:
 - If Meta still posts to an old `/webhooks/{provider}/{endpoint_key}` URL whose endpoint key no longer exists, WhatsApp POSTs can be recovered by matching payload WABA/Phone Number ID to an active connected WhatsApp integration and active webhook endpoint. Diagnostics mark those events as `fallback URL antigua`.
 - If Meta still posts to a legacy no-key callback such as `/saas/v1/webhooks/whatsapp` or `/saas/v1/webhooks/meta`, WhatsApp GET verification can match the active endpoint by verify token and WhatsApp POSTs can be recovered by WABA/Phone Number ID. Stored events use `x-scentra-endpoint-fallback=legacy_no_key_payload_asset`.
 - Canonical GET verification still uses the exact current endpoint key and verify token. The no-key compatibility GET route exists only for legacy WhatsApp/meta callbacks and resolves the endpoint by matching the verify token.
-- If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas and `saas_ai_pending_replies`.
+- If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas, `saas_ai_pending_replies`, and recent AI Gateway run errors. A saved credential with `runtime_status=unreadable_encrypted_secret` means the deployed `SAAS_SECRET_KEY` cannot decrypt the stored tenant key; restore the previous secret key or re-save the tenant provider credential.
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
 
 ## Inbox Read Endpoints And Runtime DDL

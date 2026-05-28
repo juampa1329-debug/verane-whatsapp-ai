@@ -25,6 +25,15 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Improved tenant diagnostics for "messages arrive but IA does not respond":
+  - `diagnostics/overview` now returns AI credential runtime readability without exposing secrets, recent `saas_ai_pending_replies`, and recent `saas_ai_runs`.
+  - Tenant `Configuracion -> Diagnostico` now shows "API IA usable", an explicit warning for unreadable encrypted credentials, recent AI pending jobs, and recent AI Gateway failures.
+  - This is intended to expose production cases where `SAAS_SECRET_KEY` changed and stored tenant AI credentials can no longer decrypt, causing the Gateway to skip as missing credential while the UI previously showed only "API IA guardada".
+- Cleaned the tenant Inbox list layout:
+  - Conversation cards now use natural grid row height, full-width buttons, contained layout/paint, and safer badge wrapping/truncation so narrow Inbox columns do not visually overlap rows.
+- Not changed: webhook ingest, Meta subscription/token handling, AI provider selection/fallback semantics, queued AI status transitions, outbound sending, DB schema/migrations, billing, tenant data or one-AI-owner behavior.
+- Validation passed: backend `py_compile` for diagnostics router, tenant frontend production build, and SaaS diff whitespace check.
+
 - Added SaaS billing invoice drift repair for production startup:
   - New Coolify API container is now confirmed to be the correct SaaS image: command is `migrate -> schema_check -> uvicorn`, and migrations run through latest expected migration.
   - Startup still restarted because `schema_check` found `saas_billing_invoices.amount_cents` missing while all migrations through `072` were marked applied.

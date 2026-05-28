@@ -7,6 +7,7 @@ Scope: SaaS only.
 - Production must override `SAAS_JWT_SECRET`; compose has a local fallback.
 - Treat `saas-version/keys/saasprivate.key` as sensitive until verified.
 - Do not log decrypted provider credentials.
+- `SAAS_SECRET_KEY` is the SaaS provider-credential encryption root. Do not rotate it casually, set it to a Meta token, or differ it between API/worker deployments after credentials exist; encrypted AI/TTS/search credentials become unreadable until the old key is restored or tenant credentials are re-saved.
 - Do not bypass `get_current_user`, `get_current_platform_admin`, role checks, or billing limits.
 - Captcha/rate-limit behavior is configurable; inspect settings before auth/security changes.
 - Password reset raw tokens must never be stored or logged; only hashed tokens belong in `saas_password_reset_tokens`.

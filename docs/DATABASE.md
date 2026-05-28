@@ -82,6 +82,8 @@ Behavior:
 - `066_saas_revenue_memory_network_phase19_20.sql`: Phase 19 revenue policies/opportunities/forecasts/experiments/reports plus Phase 20 enterprise memory graph policies/nodes/edges/sync runs/access logs and premium feature flags.
 - `067_saas_multimodal_observability_rollout_phase24.sql`: Phase 24.9/24.10 multimodal observability snapshots, rollout policies/events and default-off observability/rollout feature flags.
 - `068_saas_federated_learning_phase17.sql`: Phase 17 federated learning policies, rounds, tenant update packages, aggregate rows, global intelligence signals and default-off federated/global feature flags.
+- `069_saas_auth_billing_schema_drift_repair.sql`: production drift repair for missing auth/MFA/security-event and billing runtime/lifecycle columns/tables.
+- `070_saas_crm_intelligence_schema_drift_repair.sql`: production drift repair for missing CRM, integrations, campaign, verticalization and Intelligence runtime columns/tables used by registration, Inbox, dashboard and Advisor boot.
 - Phase 24.7 added no migration; Inbox reference UX reuses Web/Image Search, multimodal memory and CRM outbound tables.
 
 ## Important Table Families
@@ -148,6 +150,7 @@ Applied:
 - `067_saas_multimodal_observability_rollout_phase24.sql`: added as forward migration for reproducible Phase 24.9 Observability and Phase 24.10 Safe Rollout state.
 - `068_saas_federated_learning_phase17.sql`: added as forward migration for reproducible Phase 17 federated policies, rounds, aggregate updates, aggregate results, global signals and default-off federated/global feature flags.
 - `069_saas_auth_billing_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier auth/billing migrations were marked applied but columns or runtime billing tables were missing. It restores Phase 1 login/MFA/security-event columns/tables, tenant industry columns, Phase 5 billing runtime tables and Phase 9 billing lifecycle notice columns/indexes.
+- `070_saas_crm_intelligence_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier CRM/campaign/verticalization/Intelligence migrations were marked applied but app-boot and registration columns/tables were missing. It restores missing Inbox conversation fields, CRM labels/tasks/pipeline/custom-field/timeline tables, campaign template/segment/trigger/flow/quiet-hours tables, vertical pack audit state, integration list columns, and Intelligence predictions/recommendations.
 
 Checks:
 

@@ -25,6 +25,13 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Investigated follow-up production 500s after login:
+  - `GET /saas/v1/conversations?limit=200` failed while selecting Phase 4/8/11 CRM and predictive columns from `saas_conversations` and `saas_intelligence_predictions`.
+  - Browser also showed 500s for `POST /saas/v1/auth/register`, `/dashboard/overview`, `/integrations`, and `/advisor/briefing`.
+  - Code inspection showed registration now creates a trial tenant and immediately applies a vertical pack, which requires Phase 5 CRM tables, Phase 7 campaign/quiet-hours tables, Phase 10 vertical tenant columns/application audit, and Phase 11 prediction tables.
+- Added forward migration `070_saas_crm_intelligence_schema_drift_repair.sql` to repair older production databases with partially-applied CRM, campaign, verticalization, integration and Intelligence schema.
+- The repair is idempotent and creates/adds only missing runtime tables/columns used by login-adjacent client boot, registration, Inbox conversation listing, dashboard overview, integrations list and Advisor briefing.
+- No API behavior, frontend behavior, tenant isolation, auth policy, provider runtime, billing lifecycle or worker logic was changed.
 - Investigated production `POST /saas/v1/auth/login` 500.
 - Production logs showed PostgreSQL schema drift, not a frontend/password issue:
   - `saas_users.locked_until` missing in tenant login.

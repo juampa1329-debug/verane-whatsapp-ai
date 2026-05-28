@@ -8,6 +8,7 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - `saas-version/keys/saasprivate.key` exists. Treat it as secret material; do not expose, copy, or commit elsewhere without explicit verification.
 - API embedded worker and standalone `worker` service can both run. Queue processors must remain idempotent and concurrency-safe.
 - Verified production incident on 2026-05-28: tenant login 500 was caused by DB schema drift where `saas_users.locked_until` and `saas_billing_subscriptions.payment_failed_notice_sent_at` were missing. Production also showed missing `saas_billing_invoices`, confirming broader billing migration drift. Migration `069_saas_auth_billing_schema_drift_repair.sql` repairs this permanently; until redeployed, run the provided idempotent SQL hotfix directly in production PostgreSQL.
+- Verified follow-up production incident on 2026-05-28: after login, `/conversations`, `/dashboard/overview`, `/integrations`, `/advisor/briefing`, and `/auth/register` can still return 500 when production DB is missing later CRM, verticalization, campaign or Intelligence schema. Migration `070_saas_crm_intelligence_schema_drift_repair.sql` repairs the affected app-boot and registration schema. Production should still run the migration or equivalent SQL manually before relying on demo/user registration.
 
 ## High
 

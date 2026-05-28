@@ -4,7 +4,7 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Repair production login 500 caused by PostgreSQL schema drift in SaaS auth/billing columns, while preserving current demo-account access.
+Repair production 500s caused by PostgreSQL schema drift in SaaS auth, billing, CRM, verticalization and Intelligence tables/columns, while preserving current demo-account access.
 
 ## Status
 
@@ -18,8 +18,15 @@ Repair production login 500 caused by PostgreSQL schema drift in SaaS auth/billi
   - Added `saas-version/migrations/069_saas_auth_billing_schema_drift_repair.sql`.
   - The migration repairs Phase 1 auth columns, tenant industry columns, password reset/security event/MFA tables, missing Phase 5 billing runtime tables and Phase 9 billing lifecycle columns/indexes.
   - Hardened `auth/router.py` and `tenants/router.py` to coalesce nullable `plan_code`/`industry_code` values in tenant membership responses.
+- Follow-up production incident identified:
+  - Login now returns normally after the emergency SQL, but app boot still shows 500s for `/conversations`, `/dashboard/overview`, `/integrations`, `/advisor/briefing`, and `/auth/register`.
+  - `/conversations` log shows current backend selecting CRM/AI owner/predictive fields that may be absent from the production schema.
+  - Registration now calls `apply_industry_pack`, so it requires CRM pipeline/custom-field tables, campaign template/segment/trigger/flow tables, global quiet-hours table and vertical pack audit columns/tables.
+- Added `saas-version/migrations/070_saas_crm_intelligence_schema_drift_repair.sql`.
+  - Repairs missing `saas_conversations` CRM/runtime columns, labels, tasks, CRM custom fields, pipelines/stages, timeline/merge tables, campaign template/segment/trigger/flow/quiet-hours tables, verticalization columns/audit table, integration list columns, and Intelligence predictions/recommendations tables.
+  - This is a forward, idempotent schema repair only.
 - Not changed:
-  - No auth policy, JWT contract, CAPTCHA behavior, password hashing, billing state machine, frontend contract, provider runtime or tenant isolation was changed.
+  - No auth policy, JWT contract, CAPTCHA behavior, password hashing, billing state machine, frontend contract, provider runtime, worker logic or tenant isolation was changed.
 
 - Completed AI Gateway resilience hardening:
   - `saas-version/backend/app_saas/ai_gateway/service.py` now retries retryable model candidates inside the same provider before moving to the next provider in the configured chain.

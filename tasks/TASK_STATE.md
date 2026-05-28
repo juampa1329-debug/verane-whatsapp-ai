@@ -4,11 +4,39 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Improve production Inbox UX after message flow recovery: move the filter controls out of the left preview list and into the top of the conversation panel so conversation previews have more vertical room.
+Fix production Inbox AI response/status symptoms after message flow recovery: conversation has customer inbound messages, an operator outbound "Hola" stays at one check, browser shows protected-media 403s, and the AI does not answer while the card shows `IA: Advisor Agent`.
 
 ## Status
 
-- Completed current UI update:
+- Completed current backend fix:
+  - `backend/app_saas/ai_agent/service.py` now processes the explicit pending inbound `last_message_id` even if a human/operator outbound message is newer in the thread.
+  - Conversation memory now records the target inbound message id, not the newest outbound message.
+  - `_recent_messages` now includes `external_message_id` so the WhatsApp typing indicator can use the real Meta inbound message id when available.
+  - If an assigned runtime agent lacks `conversation.reply` (example: `Advisor Agent`), the AI runtime releases that invalid customer-chat owner and continues through general conversation AI, preserving one-AI-owner for valid reply-capable agents.
+  - `workers/ingest.py` now matches Meta statuses through direct and nested provider ids and avoids downgrading delivery state when late `sent/delivered/read` events arrive out of order.
+- Completed current UI/product-send fix:
+  - Outbound message footers now render a visible status label beside the WhatsApp-style checks: `En cola`, `Enviado`, `Entregado`, `Leido` or `No enviado`.
+  - WooCommerce product cards in Scentra now show the product image complete with compact `contain` rendering instead of cropped oversized previews.
+  - Product captions now format customer-facing WhatsApp text with product name, category, aroma/attributes, price, product link and real photo URL.
+  - When a WooCommerce product has `image_url`, Scentra still stores/renders the message as `product`, but the outbound queue sends it to WhatsApp as an image link with caption so the customer receives a media bubble plus details.
+  - If Meta rejects the remote product image link, dispatch falls back to sending the same formatted product caption as text so the reply is not lost.
+- Not changed:
+  - No DB schema, migrations, provider credentials, prompts, Meta webhook callback/subscription, billing gates, tenant auth or AI Gateway fallback policy was changed.
+  - No backend image download/conversion was added; if a WooCommerce image URL is private, expired or unsupported by Meta, WhatsApp can still reject that specific media link, but product sends now attempt text fallback.
+- Validation:
+  - `python -m py_compile` passed for AI, agents, CRM, dispatch and ingest modules touched in this fix.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `git -C saas-version diff --check` passed.
+- Production acceptance after redeploy:
+  - Open the affected conversation. If it still shows `IA: Advisor Agent`, send/receive one new customer message or run `Procesar pendientes`; the invalid non-reply owner should clear on the next AI cycle.
+  - Confirm diagnostics shows a recent pending AI job completing instead of `latest_not_inbound` or `active_agent_cannot_send_messages`.
+  - Send a real outbound and confirm later Meta `delivered/read` statuses move the check state beyond single `sent` when Meta sends those statuses.
+  - Send one WooCommerce product with image and confirm WhatsApp receives the image media bubble with the formatted product caption.
+  - The two browser 403s are still likely protected `/media/whatsapp/{media_id}` fetches; inspect the JSON detail if they persist, because media permission/expiration is separate from AI reply dispatch.
+
+- Previous completed UI update:
+  - Inbox filters were moved out of the left preview list and into the top of the conversation panel so conversation previews have more vertical room.
+
   - `frontend/src/App.jsx` now renders Inbox mode tabs, sync status, channel/search filters, AI-agent filter and smart queue chips inside a new `.inbox-top-filters` block at the top of `.inbox-thread`.
   - `frontend/src/styles.css` now keeps `.inbox-list` as header plus scrollable preview list and adds responsive styles for the top filter bar.
   - Existing filter state, handlers, polling, API calls, comment/DM mode switching, AI-agent filtering and queue chips were preserved.

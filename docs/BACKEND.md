@@ -82,7 +82,11 @@ Support interpretation:
 - If Meta still posts to a legacy no-key callback such as `/saas/v1/webhooks/whatsapp` or `/saas/v1/webhooks/meta`, WhatsApp GET verification can match the active endpoint by verify token and WhatsApp POSTs can be recovered by WABA/Phone Number ID. Stored events use `x-scentra-endpoint-fallback=legacy_no_key_payload_asset`.
 - Canonical GET verification still uses the exact current endpoint key and verify token. The no-key compatibility GET route exists only for legacy WhatsApp/meta callbacks and resolves the endpoint by matching the verify token.
 - If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas, `saas_ai_pending_replies`, and recent AI Gateway run errors. A saved credential with `runtime_status=unreadable_encrypted_secret` means the deployed `SAAS_SECRET_KEY` cannot decrypt the stored tenant key; restore the previous secret key or re-save the tenant provider credential.
+- Pending conversation AI jobs are tied to the inbound `last_message_id`; a later human outbound message should not make the job skip as `latest_not_inbound`.
+- `Advisor Agent` is an internal Scentra copilot and is not a valid customer-chat owner unless an agent explicitly has `conversation.reply`. Non-reply agents must not block the general conversation AI.
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
+- Meta delivery status updates are applied by `workers/ingest.py` from WhatsApp `statuses` events and should progress `sent -> delivered -> read` without regressing from late lower-rank events.
+- WooCommerce product sends keep the stored Inbox message as `product`; when the product has a public `image_url`, the outbound queue dispatches it to WhatsApp as an `image` link with caption so the customer receives a media bubble plus product details. If Meta rejects that remote image link, the dispatcher falls back to the formatted text caption instead of losing the reply.
 
 ## Inbox Read Endpoints And Runtime DDL
 

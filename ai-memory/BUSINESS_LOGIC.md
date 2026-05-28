@@ -207,8 +207,9 @@ Platform roles include:
 - Phase 16 defaults to polling with bounded SSE available for future clients; it does not add Kafka, NATS, Redis Streams, WebSockets or new dependencies.
 - Realtime alerts are advisory only and do not execute CRM, campaign, Meta, billing, workflow, agent, Trust or model-rollout side effects.
 - Agent activation requires preflight readiness; runtime AI budget hard stop is enforced before provider execution.
-- Conversations can have one AI owner through `assigned_ai_agent_id`/`ai_owner_mode`. Manual Inbox assignment and orchestrator/auto-router assignment move the conversation from general AI to the selected agent.
+- Conversations can have one AI owner through `assigned_ai_agent_id`/`ai_owner_mode`. Manual Inbox assignment and orchestrator/auto-router assignment move the conversation from general AI to the selected reply-capable agent.
 - If an assigned agent is inactive or unavailable, conversation AI skips rather than silently falling back to general AI; operators must release or reassign the conversation.
+- If an assigned runtime agent is active but is not customer-facing because it lacks the `conversation.reply` tool (for example `Advisor Agent`), the conversation AI runtime records an agent event, releases that invalid chat owner, and continues with general conversation AI on the next cycle.
 - Agent-specific memory is preserved by default when an agent is archived/deleted; the memory vault can restore, export, import, or delete memories later.
 - Collective memory exists at tenant level and is injected into assigned-agent conversation prompts so agents do not operate only from isolated memories.
 - Knowledge domain handles PDF/TXT/CSV source upload, safe URL ingestion, sparse-vector plus lexical search, citations, health, reindex, deletion, retrieval logs, and quality evaluations.
@@ -217,6 +218,7 @@ Platform roles include:
 ## Operational Logic
 
 - Webhook events, trigger messages, remarketing flows, AI replies, agent orchestration, outbound messages, Intelligence processing, reliability snapshots/dry-runs, billing lifecycle, and Meta token refresh are processed asynchronously.
+- WooCommerce product messages are stored/rendered as `product` in Scentra. For WhatsApp delivery, a product with public `image_url` is queued as an image-link media message with the formatted product caption; without a usable image URL it remains caption/text only. If Meta rejects the remote product image, dispatch falls back to text caption delivery rather than losing the reply.
 - Admin endpoints expose queue processing and dead-letter/observability controls.
 - Phase 3 admin health combines API/DB, worker heartbeats, Meta status, AI Gateway status, queue snapshots, channel diagnostics, Meta error history, and dead-letter candidates.
 - Dead-letter retry can requeue outbound, webhook, trigger, AI pending, remarketing, and agent orchestration sources.

@@ -25,6 +25,21 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Fixed two production Inbox/AI runtime issues:
+  - `ai_agent/service.py` now keeps the explicit pending inbound `last_message_id` as the reply target even if a human sends an outbound message before the worker processes the AI job. This prevents pending AI replies from being marked `latest_not_inbound` just because an operator typed a quick message like "Hola".
+  - `_recent_messages` now loads `external_message_id`, allowing best-effort WhatsApp typing indicators to reference the real inbound provider message id instead of always skipping as `provider_message_id_missing`.
+  - If a conversation is assigned to a non-customer-facing agent that lacks `conversation.reply` (for example `Advisor Agent`), the runtime records an agent event, clears that invalid customer-chat owner, and continues with general conversation AI. Assigned active agents that can reply still preserve the one-AI-owner model.
+  - `workers/ingest.py` now matches Meta delivery statuses against both nested outbound provider responses and direct message payload provider ids, and avoids regressing `read -> delivered -> sent` states when late status events arrive.
+- Completed follow-up Inbox/product-send improvements:
+  - Tenant frontend now shows outbound status as explicit text plus checks (`En cola`, `Enviado`, `Entregado`, `Leido`, `No enviado`) instead of relying only on the check glyph.
+  - WooCommerce product cards in Scentra keep the image compact and use `object-fit: contain`, so the product photo is visible complete instead of cropped/oversized.
+  - Product outbound captions now include a customer-friendly WhatsApp structure with product name, category, aroma/attributes, price, product URL and real photo URL.
+  - WhatsApp product sends now keep the Scentra message as `product` for UI, but queue the Meta outbound as `image` with a public `media_url` link when the product has `image_url`; if no image URL exists, the existing text-only path remains.
+  - Product image delivery has a conservative fallback: if Meta rejects the remote WooCommerce image link, the dispatcher sends the formatted product caption as text instead of failing the customer reply.
+- Not changed: provider credentials, AI Gateway fallback policy, prompts, billing quotas, Meta webhook URLs/subscriptions, outbound sending, DB schema/migrations, frontend UI or tenant data beyond clearing invalid non-reply AI chat owners during the next AI cycle.
+- Not changed: no external image download/conversion was added; Meta/WhatsApp fetches the public image link directly before the text fallback is used.
+- Validation passed: backend `py_compile` for touched AI/agents/CRM/dispatch/ingest modules, tenant frontend production build, and SaaS diff whitespace check.
+
 - Moved the tenant Inbox filters out of the left preview column and into the top of the conversation/thread panel:
   - `frontend/src/App.jsx` now renders mode tabs, sync status, channel/search filters, AI-agent filter and queue chips inside `.inbox-top-filters`.
   - `frontend/src/styles.css` keeps `.inbox-list` as header plus scrollable preview list and gives the thread panel a top-filter row before the conversation header/messages.

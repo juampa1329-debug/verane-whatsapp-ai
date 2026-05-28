@@ -17,6 +17,7 @@ Behavior:
 - `set_tenant_context(conn, tenant_id)` sets `app.current_tenant` for DB-level tenant context.
 - Migration runner applies SQL files from `saas-version/migrations`.
 - Schema readiness is checked by `app_saas.shared.schema_readiness` and CLI `app_saas.tools.schema_check`; Docker runs this check after migrations and before API startup.
+- Migration `073_saas_billing_invoice_amount_cents_repair.sql` repairs production/bootstrap drift where `saas_billing_invoices` exists without the runtime/readiness compatibility column `amount_cents`.
 
 ## Migration Timeline
 

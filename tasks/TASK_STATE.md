@@ -8,6 +8,18 @@ Recover SaaS production deployment/schema readiness so Coolify runs the real Saa
 
 ## Status
 
+- New production blocker after correct SaaS image deploy:
+  - The new container `skk088...` is now the correct SaaS image and runs `python -m app_saas.tools.migrate /app/migrations && python -m app_saas.tools.schema_check /app/migrations && uvicorn app_saas.main:app ...`.
+  - Migrations report no pending versions through `072`, but `schema_check` fails with missing column `saas_billing_invoices.amount_cents`.
+  - This explains the restart loop and browser-side CORS-looking failures: the proxy has no healthy API backend.
+- Completed code repair:
+  - Added migration `073_saas_billing_invoice_amount_cents_repair.sql`.
+  - It adds `amount_cents INTEGER NOT NULL DEFAULT 0` to `saas_billing_invoices` and backfills from existing invoice amount columns when present.
+- Immediate production hotfix available:
+  - Run `ALTER TABLE saas_billing_invoices ADD COLUMN IF NOT EXISTS amount_cents INTEGER NOT NULL DEFAULT 0;` on the production DB, then the restarting container should pass schema readiness on its next loop.
+- Not changed:
+  - No billing lifecycle logic, payment webhook logic, invoice generation behavior, auth, CORS, webhooks, AI runtime, worker processors, frontend behavior or provider credentials were changed.
+
 - Production deployment root cause identified:
   - Coolify API app screenshots showed `Base Directory: /` and `Dockerfile Location: /backend/Dockerfile`.
   - The running API container reported command `uvicorn app.main:app`, contained `/app/app`, and did not contain `/app/app_saas` or `/app/migrations`.

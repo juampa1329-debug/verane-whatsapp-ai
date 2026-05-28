@@ -25,6 +25,13 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Added SaaS billing invoice drift repair for production startup:
+  - New Coolify API container is now confirmed to be the correct SaaS image: command is `migrate -> schema_check -> uvicorn`, and migrations run through latest expected migration.
+  - Startup still restarted because `schema_check` found `saas_billing_invoices.amount_cents` missing while all migrations through `072` were marked applied.
+  - Added migration `073_saas_billing_invoice_amount_cents_repair.sql` to add `amount_cents INTEGER NOT NULL DEFAULT 0` idempotently and backfill it from `total_cents`, `amount_due_cents`, or `amount_paid_cents` when available.
+- Not changed: billing business logic, invoice/payment state transitions, auth, CORS, webhooks, AI runtime, worker processors, frontend behavior or tenant data semantics.
+- Production action: either redeploy commit containing migration `073`, or run the emergency `ALTER TABLE saas_billing_invoices ADD COLUMN IF NOT EXISTS amount_cents INTEGER NOT NULL DEFAULT 0;` against the current production DB to let the restarting container pass `schema_check`.
+
 - Hardened SaaS Dockerfile-only deployment for Coolify:
   - Production inspection showed the API Coolify app was building from root `/backend/Dockerfile`, yielding a legacy container that runs `uvicorn app.main:app` and does not contain `/app/app_saas` or `/app/migrations`.
   - `saas-version/backend/Dockerfile` now runs the same default startup gate as Compose: `python -m app_saas.tools.migrate /app/migrations && python -m app_saas.tools.schema_check /app/migrations && uvicorn app_saas.main:app --host 0.0.0.0 --port 8000`.

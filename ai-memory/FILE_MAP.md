@@ -132,6 +132,9 @@ Scope: SaaS only.
 - `saas-version/migrations/066_saas_revenue_memory_network_phase19_20.sql`: Phase 19 revenue engine tables and Phase 20 enterprise memory network tables/feature flags.
 - `saas-version/migrations/067_saas_multimodal_observability_rollout_phase24.sql`: Phase 24.9 multimodal observability snapshots plus Phase 24.10 rollout policies/events and default-off feature flags.
 - `saas-version/migrations/068_saas_federated_learning_phase17.sql`: Phase 17 federated policies, rounds, aggregate updates, aggregate results, global signals and default-off federated/global feature flags.
+- `saas-version/migrations/069_saas_auth_billing_schema_drift_repair.sql`: production auth/billing schema-drift repair for missing login, MFA/security-event and billing lifecycle/runtime columns/tables.
+- `saas-version/migrations/070_saas_crm_intelligence_schema_drift_repair.sql`: production CRM, campaign, verticalization, integration and Intelligence schema-drift repair for app boot and registration paths.
+- `saas-version/migrations/071_saas_app_boot_schema_drift_repair.sql`: production app-boot schema-drift repair for base Inbox/messages/outbound, vertical-pack seed support, audit events, campaign preflight/A-B support and Advisor runtime tables.
 - `saas-version/migrations/README.md`: migration notes.
 
 ## Tracking Artifacts

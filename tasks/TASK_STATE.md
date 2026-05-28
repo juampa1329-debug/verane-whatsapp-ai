@@ -8,6 +8,26 @@ Prevent production 500s caused by PostgreSQL schema drift by adding an API readi
 
 ## Status
 
+- Follow-up production bug:
+  - `POST /saas/v1/auth/register` also returned 500.
+  - Root risk remains PostgreSQL schema drift in registration-adjacent vertical-pack seed paths.
+- Added registration hardening:
+  - `auth/register` still requires user, tenant, membership and trial subscription creation.
+  - `apply_industry_pack` now runs inside a nested transaction/savepoint.
+  - If vertical pack seeding fails, registration records `auth.register` warning `vertical_pack_apply_failed` and continues so account creation is not blocked by non-critical seed drift.
+- Expanded app-boot schema repair:
+  - `071_saas_app_boot_schema_drift_repair.sql` now also repairs audit events, CRM/vertical-pack seed columns/indexes, campaign quiet-hours conflict support, Advisor tables and base Inbox/outbound fields.
+  - `schema_readiness.py` now checks the real app-boot/registration contract, including `msg_type`, quiet-hours `enabled`, vertical pack `pack_version`, `saas_audit_events`, and vertical-pack seed columns.
+- Validation passed:
+  - Backend `py_compile` for auth router, schema readiness, schema check and health router.
+  - Docker Compose config.
+  - SQL migration UTF-8/BOM scan.
+  - Static readiness/migration text check for required tables/columns.
+  - `git diff --check` for SaaS changes.
+- Remaining acceptance:
+  - Apply migrations `069`, `070`, `071` on production or redeploy the new API image and let startup run `migrate -> schema_check`.
+  - Restart API/worker and verify `/saas/v1/ready`, login, register, `/conversations`, `/dashboard/overview`, `/crm/config`, `/integrations`, and `/advisor/briefing`.
+
 - Added schema readiness prevention layer:
   - `saas-version/backend/app_saas/shared/schema_readiness.py` defines the critical schema contract for current SaaS runtime boot paths.
   - `saas-version/backend/app_saas/tools/schema_check.py` runs the contract as a deploy/startup CLI.

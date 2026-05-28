@@ -26,7 +26,7 @@ flowchart TB
   SQL001 --> SQL002["002 guarded legacy tenantization"]
   SQL002 --> SQL003["003 guarded legacy cutover"]
   SQL003 --> SQL004["004 guarded RLS policies"]
-  SQL004 --> SQLRest["005-070 SaaS schema"]
+  SQL004 --> SQLRest["005-071 SaaS schema"]
   SQLRest --> Check["Schema readiness check"]
   Check --> Ready["API/worker can use SaaS schema"]
 ```
@@ -58,6 +58,7 @@ flowchart TB
 - Phase 8 AI Agents depends on `saas_ai_agents`, `saas_ai_agent_evals`, `saas_ai_agent_collective_memory`, `saas_ai_agent_memory_archives`, and `saas_conversations.assigned_ai_agent_id`/`ai_owner_mode`.
 - Phase 9 Billing depends on `saas_billing_subscriptions`, `saas_billing_invoices`, `saas_billing_checkout_sessions`, `saas_billing_provider_events`, `saas_billing_payments`, and lifecycle notice/PDF fields from migration `044`.
 - Phase 10 Verticalization depends on `saas_tenants.industry_code`, `vertical_pack_*` tenant fields, and `saas_vertical_pack_applications`; pack application also writes existing CRM/campaign/agent tables.
+- Production schema drift repairs `069`, `070`, and `071` restore runtime-critical auth/billing, CRM/Intelligence, base Inbox, vertical-pack seed, audit and Advisor columns when older databases have migration records but incomplete physical schema.
 - Phase 11 Intelligence depends on `saas_intelligence_events`, `saas_intelligence_event_contracts`, `saas_intelligence_event_replay_cursors`, `saas_intelligence_feature_values`, `saas_intelligence_predictions`, `saas_intelligence_prediction_feedback`, `saas_intelligence_model_metrics`, `saas_intelligence_model_rollout_events`, `saas_intelligence_recommendations`, `saas_intelligence_feature_grants`, `saas_intelligence_model_registry`, `saas_intelligence_usage`, `saas_ml_training_jobs`, `saas_ml_model_artifacts`, `saas_ml_inference_runs`, `saas_ml_drift_snapshots`, `saas_ml_auto_labels`, `saas_ml_feature_sets`, `saas_ml_feature_pipeline_runs`, `saas_ml_training_datasets`, `saas_ml_model_evaluations`, `saas_ai_operation_policies`, `saas_ai_operation_playbooks`, `saas_ai_operation_anomalies`, `saas_ai_operation_actions`, `saas_ai_operation_reports`, `saas_ai_marketplace_items`, `saas_ai_marketplace_installations`, `saas_ai_plugins`, `saas_ai_tool_registry`, `saas_ai_ecosystem_event_subscriptions`, `saas_ai_developer_apps`, `saas_ai_external_integrations`, `saas_ai_apps`, `saas_ai_ecosystem_traces`, `saas_ai_ecosystem_metrics`, `saas_ai_vertical_industry_models`, `saas_ai_vertical_benchmarks`, `saas_ai_vertical_tenant_benchmarks`, `saas_ai_vertical_insights`, `saas_ai_vertical_playbooks`, `saas_ai_knowledge_network`, and `saas_ai_network_metrics`.
 - Phase 12 Reliability depends on `saas_reliability_slo_policies`, `saas_reliability_backpressure_policies`, `saas_reliability_retention_policies`, `saas_reliability_cleanup_runs`, `saas_reliability_snapshots`, `saas_reliability_drills`, plus expected indexes on webhook/outbound/trigger/AI/remarketing/agent/conversation/message/intelligence/audit tables.
 - Phase 13 Security/Compliance depends on `saas_mfa_challenges`, `saas_privacy_requests`, `saas_users.two_factor_*`, `saas_security_events`, and `saas_audit_events`.

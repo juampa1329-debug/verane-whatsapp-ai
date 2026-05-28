@@ -20,6 +20,7 @@ File: `saas-version/backend/app_saas/main.py`.
 - The readiness contract verifies migration application state and critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths.
 - `app_saas.tools.schema_check` runs the same contract as a CLI gate after migrations and before Uvicorn in Docker.
 - Production deploys should route traffic only to containers that pass `/ready`; a container with pending migrations or missing critical schema must remain unhealthy instead of serving user-facing 500s.
+- Tenant registration keeps user/tenant/membership/trial creation mandatory. Industry vertical-pack seeding runs in a savepoint so non-critical seed drift records `auth.register` warning `vertical_pack_apply_failed` instead of blocking account creation.
 
 ## Router Modules
 

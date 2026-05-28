@@ -25,6 +25,20 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Production registration 500 was also addressed at code level: `auth/register` now keeps user, tenant, membership and trial subscription creation mandatory, but wraps `apply_industry_pack` in a nested transaction/savepoint. A vertical-pack seed failure records `auth.register` warning `vertical_pack_apply_failed` and no longer aborts account creation.
+- Migration `071_saas_app_boot_schema_drift_repair.sql` was expanded to cover registration-adjacent vertical-pack seed drift: audit events, CRM pipeline/custom-field/label/template/segment/trigger/flow columns, quiet-hours unique support and app-boot Advisor/Inbox tables.
+- Schema readiness now checks the real vertical-pack/app-boot contract, including `saas_audit_events`, template/segment/trigger/flow seed columns, `saas_messages.msg_type`, quiet-hours `enabled`, and vertical pack `pack_version`.
+- Production action remains required: apply repair migrations `069`, `070`, `071` or redeploy the new API image so `migrate -> schema_check -> uvicorn` runs before traffic.
+- Follow-up production browser errors still showed 500s for `/conversations`, `/dashboard/overview`, `/advisor/briefing`, `/crm/config`, `/integrations`, and `/auth/register`.
+- Code review found that migration `070` repaired later CRM/AI/verticalization drift but did not repair some base Inbox columns/tables from earlier migrations because those were assumed to exist.
+- Added migration `071_saas_app_boot_schema_drift_repair.sql` to repair missing base app-boot schema:
+  - `saas_conversations` base Inbox fields: `takeover`, `last_message_text`, `last_message_at`, `unread_count`, `tags`, `notes`, timestamps.
+  - `saas_messages` runtime fields: `channel`, `external_message_id`, `direction`, `msg_type`, text/media/payload/timestamp fields.
+  - `saas_outbound_messages` queue runtime fields.
+  - campaign preflight/A-B support tables and columns.
+  - Advisor `saas_ai_insights` and `saas_ai_recommendations` runtime columns.
+- Corrected the schema readiness contract to use real schema column names (`msg_type`, `enabled`, `pack_version`) instead of aliases/nonexistent names.
+- No business logic, auth policy, provider runtime, Meta runtime, worker processors or frontend contracts were changed.
 - Added a production schema readiness gate to prevent SaaS containers from serving traffic when PostgreSQL drift would produce route-level 500s.
 - New backend helper `app_saas.shared.schema_readiness` checks migration state plus critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths.
 - New CLI `app_saas.tools.schema_check` runs the same contract after migrations and exits non-zero when pending migrations, missing tables or missing columns are detected.

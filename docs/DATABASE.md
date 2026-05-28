@@ -85,6 +85,7 @@ Behavior:
 - `068_saas_federated_learning_phase17.sql`: Phase 17 federated learning policies, rounds, tenant update packages, aggregate rows, global intelligence signals and default-off federated/global feature flags.
 - `069_saas_auth_billing_schema_drift_repair.sql`: production drift repair for missing auth/MFA/security-event and billing runtime/lifecycle columns/tables.
 - `070_saas_crm_intelligence_schema_drift_repair.sql`: production drift repair for missing CRM, integrations, campaign, verticalization and Intelligence runtime columns/tables used by registration, Inbox, dashboard and Advisor boot.
+- `071_saas_app_boot_schema_drift_repair.sql`: production drift repair for missing base Inbox conversation/message/outbound columns, vertical-pack seed columns/indexes, audit events, campaign preflight support and Advisor insight/recommendation runtime tables used by app boot and registration-adjacent flows.
 - Phase 24.7 added no migration; Inbox reference UX reuses Web/Image Search, multimodal memory and CRM outbound tables.
 
 ## Important Table Families
@@ -153,6 +154,7 @@ Applied:
 - `068_saas_federated_learning_phase17.sql`: added as forward migration for reproducible Phase 17 federated policies, rounds, aggregate updates, aggregate results, global signals and default-off federated/global feature flags.
 - `069_saas_auth_billing_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier auth/billing migrations were marked applied but columns or runtime billing tables were missing. It restores Phase 1 login/MFA/security-event columns/tables, tenant industry columns, Phase 5 billing runtime tables and Phase 9 billing lifecycle notice columns/indexes.
 - `070_saas_crm_intelligence_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier CRM/campaign/verticalization/Intelligence migrations were marked applied but app-boot and registration columns/tables were missing. It restores missing Inbox conversation fields, CRM labels/tasks/pipeline/custom-field/timeline tables, campaign template/segment/trigger/flow/quiet-hours tables, vertical pack audit state, integration list columns, and Intelligence predictions/recommendations.
+- `071_saas_app_boot_schema_drift_repair.sql`: added as forward repair migration for production databases still missing base Inbox columns/tables from earlier app-boot migrations, including `takeover`, `last_message_text`, `unread_count`, message `msg_type`/media fields, outbound queue fields, vertical pack seed columns/indexes, `saas_audit_events`, campaign preflight support, A/B event support, and Advisor insights/recommendations.
 
 Checks:
 

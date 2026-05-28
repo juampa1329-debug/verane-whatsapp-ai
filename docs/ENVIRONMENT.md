@@ -175,6 +175,8 @@ Important compose defaults:
 - Local validation on non-default admin ports must include that origin in `SAAS_CORS_ORIGINS`; default compose includes local admin port `8011`.
 - Avoid running multiple SaaS Compose projects on the same external `coolify` network at once unless aliases are isolated; duplicate `scentra-saas-db` aliases can make API containers reach the wrong DB.
 - Zero-downtime production deployments should run migrations/schema checks before switching traffic, or use rolling/blue-green behavior. A failed schema check intentionally prevents a new API container from becoming ready.
+- Dockerfile-only deployments must still build from the SaaS source. In Coolify Dockerfile mode use base directory `saas-version` and Dockerfile `backend/Dockerfile`; using root `/backend/Dockerfile` deploys the legacy non-SaaS app and will not contain `/app/app_saas` or `/app/migrations`.
+- `saas-version/backend/Dockerfile` now runs the same startup gate as Compose by default: `migrate -> schema_check -> uvicorn`. Do not paste that command into the VPS host shell; it must run inside the container/Coolify app where Python and `app_saas` exist.
 
 Voice Intelligence runtime:
 

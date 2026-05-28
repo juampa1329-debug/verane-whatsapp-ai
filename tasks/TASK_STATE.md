@@ -4,9 +4,26 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Recover SaaS WhatsApp inbound when Meta still posts to an old webhook endpoint key or no-key legacy webhook URL, and make diagnostics timestamped enough to verify production delivery.
+Recover SaaS production deployment/schema readiness so Coolify runs the real SaaS API image, applies migrations, passes `/saas/v1/ready`, and then real WhatsApp inbound can be diagnosed without legacy-container drift.
 
 ## Status
+
+- Production deployment root cause identified:
+  - Coolify API app screenshots showed `Base Directory: /` and `Dockerfile Location: /backend/Dockerfile`.
+  - The running API container reported command `uvicorn app.main:app`, contained `/app/app`, and did not contain `/app/app_saas` or `/app/migrations`.
+  - Running `python -m app_saas.tools.migrate /app/migrations` inside that container fails because it is the legacy non-SaaS image.
+  - Running the startup command directly on the VPS host can fail with `python: command not found`; that command belongs inside the SaaS API container or Coolify Start Command.
+- Completed fix:
+  - `saas-version/backend/Dockerfile` now defaults to the same safe startup gate as Compose: `migrate -> schema_check -> uvicorn`.
+  - `docs/ENVIRONMENT.md`, `docs/KNOWN_ISSUES.md`, and `saas-version/infra/coolify-production.md` now document the correct Coolify Dockerfile settings and the legacy-container risk.
+- Required production action:
+  - In Coolify API app set `Base Directory = saas-version`, `Dockerfile Location = /backend/Dockerfile`, `Port Exposes = 8000`.
+  - Redeploy the API.
+  - Verify the new container has `/app/app_saas` and `/app/migrations`.
+  - Verify `https://api.scentra-ai.online/saas/v1/ready` returns `200`.
+  - Only after readiness is green, retest real WhatsApp inbound and compare `Ultimos webhooks`.
+- Not changed:
+  - No app route, webhook, AI runtime, worker, DB migration, provider credential, tenant data or frontend behavior was changed.
 
 - Follow-up production symptom:
   - The user confirmed `Simular mensaje entrante` creates Inbox records, and outbound messages sent from Scentra arrive in WhatsApp, but real WhatsApp inbound still does not appear in Scentra.

@@ -25,6 +25,14 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Hardened SaaS Dockerfile-only deployment for Coolify:
+  - Production inspection showed the API Coolify app was building from root `/backend/Dockerfile`, yielding a legacy container that runs `uvicorn app.main:app` and does not contain `/app/app_saas` or `/app/migrations`.
+  - `saas-version/backend/Dockerfile` now runs the same default startup gate as Compose: `python -m app_saas.tools.migrate /app/migrations && python -m app_saas.tools.schema_check /app/migrations && uvicorn app_saas.main:app --host 0.0.0.0 --port 8000`.
+  - Coolify Dockerfile mode must use base directory `saas-version`, Dockerfile `/backend/Dockerfile`, exposed port `8000`.
+  - Do not run the startup command directly in the VPS host shell; host Ubuntu may not have Python and cannot import container code. Run it through Coolify/start command or inside the rebuilt SaaS API container.
+- Not changed: application routes, webhook logic, AI runtime, worker processing, migrations, database data, provider credentials, frontend behavior or tenant settings.
+- Production action required: fix Coolify build settings, redeploy API, confirm the new container has `/app/app_saas` and `/app/migrations`, then verify `GET /saas/v1/ready` returns `200`.
+
 - Added production compatibility for WhatsApp/Meta webhook callbacks without `endpoint_key`:
   - `webhooks/router.py` now accepts `GET|POST /saas/v1/webhooks/whatsapp` and `GET|POST /saas/v1/webhooks/meta` in addition to the canonical `/saas/v1/webhooks/{provider}/{endpoint_key}` route.
   - GET verification for the no-key routes resolves the active tenant endpoint by matching the provided Meta verify token against active WhatsApp/meta webhook endpoint token hashes.

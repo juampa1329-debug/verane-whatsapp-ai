@@ -107,6 +107,7 @@ Operational hardening added after provider/model transient failures such as Goog
 - Provider policies are checked per candidate model before external calls. Admin-disabled providers/models, missing credentials and quota/cost policy blocks are not bypassed.
 - Conversation AI, assigned agents, custom agents, Agent OS runtime paths and Advisor inherit the behavior through `generate_with_gateway`.
 - If all candidates fail from retryable provider errors, `ai_agent/service.py` returns `ai_generation_error` so `saas_ai_pending_replies` remains retryable instead of being permanently skipped.
+- CRM internal notes produced by AI are merged through `crm/notes.py`; repeated `IA:` note units are deduplicated while human notes are preserved. Manual CRM note saves also compact duplicated AI note lines.
 
 ## Groq Provider Compatibility
 

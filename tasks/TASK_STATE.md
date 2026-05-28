@@ -4,9 +4,27 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Prevent production 500s/403 noise caused by PostgreSQL schema drift and Phase 24 multimodal Inbox read paths while preserving current SaaS runtime behavior.
+Prevent SaaS AI/CRM internal notes from repeatedly appending the same information.
 
 ## Status
+
+- Completed CRM note deduplication:
+  - Added a CRM note helper that compacts repeated `IA:` note units while preserving human/non-AI notes.
+  - Conversation AI now asks providers to return only new `crm.notes` information.
+  - AI CRM merge now appends only new note units instead of whole repeated summaries.
+  - Manual CRM note saves compact duplicated AI note lines, so existing noisy notes can be cleaned by saving the ficha after redeploy.
+- Validation passed:
+  - `python -m py_compile` for `crm/notes.py`, `ai_agent/service.py`, and `crm/router.py`.
+  - `git -C saas-version diff --check` for touched backend files.
+- Not changed:
+  - No database schema, route contract, auth, billing, Meta runtime, outbound queue, AI memory summary, provider routing, RAG, agent ownership or frontend form contract was changed.
+
+- Previous UI cleanup:
+  - Removed the `Timeline completo` card from the Inbox CRM side panel because it duplicated the main conversation thread.
+  - Removed the redundant conversation timeline API load from `loadMessages`.
+  - Compacted predictive metric labels and made predictive buttons wrap safely in narrow CRM columns.
+  - Added truncation/overflow protection for conversation names, channel metadata, badges and previews in the Inbox list.
+  - Validation passed: `npm --prefix saas-version/frontend run build`, `git -C saas-version diff --check`.
 
 - Follow-up production bug:
   - Browser console showed 500s and 403s after entering the app and opening conversations.

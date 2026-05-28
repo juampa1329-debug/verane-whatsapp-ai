@@ -125,7 +125,7 @@ Admin views detected:
 ## Phase 5 Client CRM UI
 
 - `App.jsx` loads `/crm/config` for active CRM custom fields and pipeline stages.
-- Inbox CRM side panel now renders tenant custom fields, dynamic pipeline stages, duplicate candidates with merge action, and a unified conversation timeline.
+- Inbox CRM side panel now renders tenant custom fields, dynamic pipeline stages, duplicate candidates with merge action, predictive intelligence, tasks, AI context and Meta status events. It intentionally does not render a full conversation timeline because the main Inbox thread is the canonical conversation history.
 - `CrmPanel.jsx` can create tenant custom fields, apply industry pipeline presets, add pipeline stages, and edit customer fichas with custom-field values.
 - Custom-field values are sent as `custom_fields` and persisted backend-side into `profile_json.custom_fields`.
 

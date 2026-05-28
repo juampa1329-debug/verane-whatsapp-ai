@@ -25,6 +25,18 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Hardened SaaS CRM internal notes against repeated AI summaries:
+  - Added `backend/app_saas/crm/notes.py` with note compaction and AI-note merge helpers.
+  - Conversation AI now instructs models to return only new `crm.notes` content and backend-side merges AI notes by compact note units instead of appending whole repeated summaries.
+  - Existing duplicated `IA:` note lines are compacted during the next AI CRM update; manual CRM saves also compact duplicated AI note lines while preserving non-AI human notes.
+  - No schema, API route shape, auth, billing, Meta runtime, outbound dispatch, memory summary, RAG, provider routing or agent ownership behavior was changed.
+  - Validation passed: backend `py_compile` for touched CRM/AI modules and `git diff --check`.
+- Cleaned up SaaS Inbox/CRM side-panel UX at code level:
+  - Removed the duplicate CRM `Timeline completo` card from `frontend/src/App.jsx`; conversation history remains in the main Inbox thread and message status events remain in `Estados Meta`.
+  - Stopped loading `/saas/v1/conversations/{id}/timeline?limit=80` when opening a conversation, reducing redundant CRM panel work.
+  - Hardened `frontend/src/styles.css` for narrow CRM/InBox columns: predictive cards now use compact labels and wrapping-safe buttons, and conversation list rows/badges now truncate safely instead of overlapping.
+  - No backend route, API contract, database schema, auth, billing, Meta runtime, agent assignment, multimodal logic or AI runtime was changed.
+  - Validation passed: tenant frontend production build and `git diff --check`.
 - Follow-up production Inbox console errors were addressed at code/schema level:
   - Added migration `072_saas_phase24_inbox_multimodal_drift_repair.sql`.
   - The repair covers Phase 24 multimodal read paths used when opening a conversation: voice/vision analyses, Web/Image Search runs/results, multimodal memory events, Intelligence events, Knowledge sources and collective memory dependency tables.

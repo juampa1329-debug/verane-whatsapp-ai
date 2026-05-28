@@ -81,6 +81,13 @@ Support interpretation:
 - If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas and `saas_ai_pending_replies`.
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
 
+## Inbox Read Endpoints And Runtime DDL
+
+- Production read endpoints used by the Inbox must not execute `ALTER TABLE` or broad runtime schema repair during normal traffic.
+- `GET /saas/v1/agents/multimodal-memory/events` is an optional Phase 24 read surface; it should return an empty `events` array when `saas_multimodal_memory_events` is absent/incomplete rather than calling `ensure_multimodal_memory_tables`.
+- `GET /saas/v1/media/search/runs` is an optional Phase 24 read surface; it should return an empty `runs` array when Web/Image Search tables are absent/incomplete rather than running `_ensure_web_image_search_tables`.
+- Mutation/execution endpoints can keep defensive ensure helpers, but frequently-polled Inbox reads should stay read-only to avoid PostgreSQL `AccessExclusiveLock` deadlocks under concurrent browser requests.
+
 ## Module Map
 
 - `admin/`: platform admin auth, MFA, tenants, plans, subscriptions, billing ops, audit, observability, Security Center.

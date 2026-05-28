@@ -25,6 +25,14 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Fixed a production deadlock class in SaaS Inbox Phase 24 read paths:
+  - Production showed `psycopg2.errors.DeadlockDetected` on `GET /saas/v1/agents/multimodal-memory/events`, caused by the read path calling `ensure_multimodal_memory_tables() -> ensure_intelligence_tables() -> ensure_ml_training_tables()` and running `ALTER TABLE saas_intelligence_feature_values` during normal traffic.
+  - `agents/multimodal_memory.py:list_multimodal_memory_events` is now read-only: it checks whether `saas_multimodal_memory_events` and required columns exist and returns `[]` if the optional Phase 24 table is missing/incomplete instead of running DDL.
+  - `media/router.py:GET /media/search/runs` is now read-only for Inbox boot: it no longer calls `_ensure_web_image_search_tables()` or intelligence feature resolution during the GET path, and `_load_search_runs` returns `[]` when Web/Image Search tables are absent or incomplete.
+  - Mutation/execution endpoints still keep their existing DDL/feature-gate behavior; only non-critical Inbox read endpoints were changed to prevent production UI 500s.
+- Not changed: webhook ingest, Meta subscription/token handling, AI generation, outbound dispatch, CRM mutation, billing, migrations, provider credentials or tenant data.
+- Production action required after redeploy: retest `GET /saas/v1/agents/multimodal-memory/events?...` and `GET /saas/v1/media/search/runs?...`; then use `Configuracion -> Diagnostico` to verify whether real WhatsApp webhooks are arriving separately from these optional UI read errors.
+
 - Investigated SaaS message-flow symptoms reported from production screenshots:
   - Real customer WhatsApp messages must enter through `webhooks/router.py`, be stored in `saas_webhook_events`, be converted by `workers/ingest.py` into `saas_conversations`/`saas_messages`, and only then can triggers, AI pending replies and outbound dispatch run.
   - If a real WhatsApp message does not appear in the Inbox, the first diagnostic cut is Meta webhook delivery/subscription, not the LLM provider.

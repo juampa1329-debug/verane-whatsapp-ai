@@ -4,9 +4,32 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Diagnose SaaS WhatsApp/AI message-flow interruption, fix compressed Inbox CRM predictive mini-card, and add an operator manual for daily use/troubleshooting.
+Fix SaaS production Inbox 500/deadlock on Phase 24 multimodal read endpoints and keep WhatsApp message-flow diagnosis separate.
 
 ## Status
+
+- Production incident:
+  - `GET /saas/v1/agents/multimodal-memory/events?...` returned 500.
+  - Backend log showed PostgreSQL `DeadlockDetected` while a read request called runtime schema repair and attempted `ALTER TABLE saas_intelligence_feature_values`.
+  - Browser also showed intermittent 500s for `/saas/v1/media/search/runs?...`.
+- Completed fix:
+  - `list_multimodal_memory_events` no longer calls `ensure_multimodal_memory_tables` on the GET/read path.
+  - The multimodal memory read path checks table/column presence via `information_schema` and returns `[]` when the optional table is missing or incomplete.
+  - `GET /media/search/runs` no longer executes Web/Image Search DDL or Intelligence feature resolution during Inbox boot.
+  - `_load_search_runs` now checks Web/Image Search table/column readiness and returns `[]` when the optional schema is missing or incomplete.
+  - Execution/mutation endpoints still keep existing feature gates and runtime repair behavior; only non-critical Inbox reads were made read-only/degraded-safe.
+- Validation for this fix:
+  - `python -m py_compile` passed for `agents/multimodal_memory.py` and `media/router.py`.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - `git -C saas-version diff --check` passed.
+  - Root docs/memory `git diff --check` passed for updated documentation.
+- Not changed:
+  - No webhook ingest, Meta token/subscription, AI generation, outbound dispatch, CRM mutation, schema migration, billing, provider credential or tenant-data behavior was changed.
+- Remaining production verification:
+  - Redeploy API.
+  - Verify `/agents/multimodal-memory/events?...` returns 200 with `events: []` or existing events.
+  - Verify `/media/search/runs?...` returns 200 with `runs: []` or existing runs.
+  - Then diagnose missing WhatsApp messages from `Configuracion -> Diagnostico`; these optional UI read 500s are separate from whether Meta inbound webhooks are arriving.
 
 - Completed current operator/UX task:
   - Traced the production message path from Meta webhook to Inbox, triggers, AI pending reply and outbound dispatch.

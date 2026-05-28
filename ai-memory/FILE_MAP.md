@@ -135,6 +135,7 @@ Scope: SaaS only.
 - `saas-version/migrations/069_saas_auth_billing_schema_drift_repair.sql`: production auth/billing schema-drift repair for missing login, MFA/security-event and billing lifecycle/runtime columns/tables.
 - `saas-version/migrations/070_saas_crm_intelligence_schema_drift_repair.sql`: production CRM, campaign, verticalization, integration and Intelligence schema-drift repair for app boot and registration paths.
 - `saas-version/migrations/071_saas_app_boot_schema_drift_repair.sql`: production app-boot schema-drift repair for base Inbox/messages/outbound, vertical-pack seed support, audit events, campaign preflight/A-B support and Advisor runtime tables.
+- `saas-version/migrations/072_saas_phase24_inbox_multimodal_drift_repair.sql`: production Phase 24 Inbox multimodal drift repair for voice/vision/search/memory read paths.
 - `saas-version/migrations/README.md`: migration notes.
 
 ## Tracking Artifacts

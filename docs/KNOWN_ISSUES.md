@@ -116,6 +116,9 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - Groq `http_403: error code: 1010` was mitigated by adding explicit provider HTTP headers and refreshing static model fallbacks. If the provider still rejects calls, treat it as a Groq/Cloudflare project/IP/fingerprint block and keep OpenRouter, Google, Mistral or Kimi configured as fallback.
 - Humanized AI replies now reduce output size and split long replies into multiple outbound messages while preserving CRM/memory/RAG context. This improves naturalness but can increase monthly message usage because each fragment is queued and billed as a separate outbound message.
 - WhatsApp typing indicators are best-effort and depend on Meta Cloud accepting the inbound provider message id, connected `meta_cloud`/`whatsapp_cloud` dispatch mode and current Graph behavior. Do not treat "escribiendo..." as guaranteed delivery-state telemetry.
+- Production Inbox console errors after selecting a conversation were traced to Phase 24 multimodal read paths and schema drift. Migration `072` plus runtime `ensure_*` column repairs cover voice/vision/search/multimodal-memory tables; redeploy/apply migrations before retesting.
+- `GET /saas/v1/media/search/runs` no longer returns feature-gate 403 for disabled Web/Image Search during normal Inbox boot; it returns an empty read model. Execution endpoints remain premium-gated.
+- 403s from `/saas/v1/media/whatsapp/{media_id}` are still possible and usually indicate Meta token/permission/WABA/media-expiration issues rather than PostgreSQL drift. Check the JSON `detail.code` and Meta hint before changing code.
 
 ## Agent Cautions
 

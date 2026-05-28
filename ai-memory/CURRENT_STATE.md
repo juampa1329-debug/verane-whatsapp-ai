@@ -25,6 +25,14 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Follow-up production Inbox console errors were addressed at code/schema level:
+  - Added migration `072_saas_phase24_inbox_multimodal_drift_repair.sql`.
+  - The repair covers Phase 24 multimodal read paths used when opening a conversation: voice/vision analyses, Web/Image Search runs/results, multimodal memory events, Intelligence events, Knowledge sources and collective memory dependency tables.
+  - Runtime `ensure_*` helpers now add missing columns for partial Phase 24 tables instead of assuming `CREATE TABLE IF NOT EXISTS` is enough.
+  - `GET /saas/v1/media/search/runs` now returns an empty disabled-access model when Web/Image Search is not enabled, avoiding normal Inbox boot 403s for tenants without that premium feature; execution endpoints remain gated.
+  - Schema readiness now checks Phase 24 multimodal tables/columns so future deploys with drift fail readiness before traffic.
+- Not changed: Meta media proxy semantics, provider credentials, AI execution gates, CRM mutation, outbound sending, agent ownership and billing logic.
+- Production action required: apply migration `072` or redeploy the updated API image so `migrate -> schema_check -> uvicorn` runs, then verify `/saas/v1/ready` and conversation open.
 - Production registration 500 was also addressed at code level: `auth/register` now keeps user, tenant, membership and trial subscription creation mandatory, but wraps `apply_industry_pack` in a nested transaction/savepoint. A vertical-pack seed failure records `auth.register` warning `vertical_pack_apply_failed` and no longer aborts account creation.
 - Migration `071_saas_app_boot_schema_drift_repair.sql` was expanded to cover registration-adjacent vertical-pack seed drift: audit events, CRM pipeline/custom-field/label/template/segment/trigger/flow columns, quiet-hours unique support and app-boot Advisor/Inbox tables.
 - Schema readiness now checks the real vertical-pack/app-boot contract, including `saas_audit_events`, template/segment/trigger/flow seed columns, `saas_messages.msg_type`, quiet-hours `enabled`, and vertical pack `pack_version`.

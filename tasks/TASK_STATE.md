@@ -4,9 +4,32 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Prevent production 500s caused by PostgreSQL schema drift by adding an API readiness/schema gate while preserving current SaaS runtime behavior.
+Prevent production 500s/403 noise caused by PostgreSQL schema drift and Phase 24 multimodal Inbox read paths while preserving current SaaS runtime behavior.
 
 ## Status
+
+- Follow-up production bug:
+  - Browser console showed 500s and 403s after entering the app and opening conversations.
+  - Frontend code opens each conversation by requesting messages plus status/timeline/dedupe and Phase 24 read endpoints:
+    - `/saas/v1/media/search/runs?conversation_id=...&limit=8`.
+    - `/saas/v1/agents/multimodal-memory/events?conversation_id=...&limit=24`.
+  - Those endpoints depend on Phase 24 multimodal tables and dependency tables that older production schemas may not have, or may have in a partial shape.
+- Added Phase 24 drift repair:
+  - `072_saas_phase24_inbox_multimodal_drift_repair.sql` creates/adds missing columns for voice/vision analyses, Web/Image Search runs/results, multimodal memory events, Intelligence events, Knowledge sources and collective memory.
+  - Runtime `ensure_*` helpers in `media/router.py` and `agents/multimodal_memory.py` now add missing columns when a table already exists.
+  - `schema_readiness.py` now treats Phase 24 multimodal read tables as runtime-critical.
+  - `GET /saas/v1/media/search/runs` now returns `{ runs: [], access: disabled }` instead of a feature-gate 403 when Web/Image Search is not enabled during normal Inbox loading.
+- Validation passed:
+  - Backend `py_compile` for media router, multimodal memory, schema readiness and schema check.
+  - Docker Compose config.
+  - SQL UTF-8/BOM scan.
+  - Static readiness-vs-migrations table/column check.
+  - `git diff --check`.
+- Remaining acceptance:
+  - Apply migrations `069`-`072` or redeploy the new API image and let startup run `migrate -> schema_check`.
+  - Restart API/worker.
+  - Verify `/saas/v1/ready`, login, register, conversation open, `/media/search/runs`, `/agents/multimodal-memory/events`, `/dashboard/overview`, `/crm/config`, `/integrations`, and `/advisor/briefing`.
+  - If `/media/whatsapp/{media_id}` still returns 403, inspect JSON `detail.code`; that path can still fail legitimately from Meta token/permission/media-expiration issues.
 
 - Follow-up production bug:
   - `POST /saas/v1/auth/register` also returned 500.

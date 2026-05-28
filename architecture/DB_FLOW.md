@@ -225,3 +225,29 @@ Notes:
 - `/health` remains liveness only; `/ready` is the production traffic gate.
 - The contract catches pending migrations plus missing critical tables/columns after a migration was marked applied.
 - Update the contract when adding runtime-critical schema used by auth, registration, app boot, Inbox, Admin boot, billing lifecycle, workers or dashboards.
+
+## Migration 072 Phase 24 Inbox Multimodal Repair
+
+```mermaid
+flowchart TB
+  Inbox["Open Inbox conversation"] --> SearchRuns["GET media/search/runs"]
+  Inbox --> MemoryEvents["GET agents/multimodal-memory/events"]
+  Inbox --> MediaCards["Voice/Vision analysis cards"]
+  SearchRuns --> WebSearch["saas_web_search_intelligence_runs/results"]
+  MemoryEvents --> MMemory["saas_multimodal_memory_events"]
+  MediaCards --> VoiceVision["saas_voice_intelligence_analyses / saas_vision_intelligence_analyses"]
+  Dependencies["intelligence events + knowledge sources + collective memory"] --> MMemory
+  M072["072 drift repair"] --> WebSearch
+  M072 --> MMemory
+  M072 --> VoiceVision
+  M072 --> Dependencies
+  Readiness["schema_readiness"] --> WebSearch
+  Readiness --> MMemory
+  Readiness --> VoiceVision
+```
+
+Notes:
+
+- The repair is forward-only and idempotent.
+- It exists for production databases where Phase 24 migrations were marked applied or partially applied while the frontend already calls multimodal read endpoints.
+- Read-only Web/Image Search history now returns an empty disabled model when the feature is off; provider execution remains premium-gated.

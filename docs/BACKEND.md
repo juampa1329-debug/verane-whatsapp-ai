@@ -620,6 +620,23 @@ Safety notes:
 - Observability snapshots do not store raw media, base64, decrypted provider credentials or full customer conversation content.
 - Safe rollout does not mutate CRM, campaigns, workflows, billing, Meta runtime or agent ownership.
 
+## Phase 24 Inbox Multimodal Drift Repair
+
+Production repair added for Inbox conversation-open paths that read multimodal state.
+
+- `072_saas_phase24_inbox_multimodal_drift_repair.sql` repairs missing/partial Phase 24 tables used by:
+  - `GET /saas/v1/media/search/runs`.
+  - `GET /saas/v1/agents/multimodal-memory/events`.
+  - Voice/Vision Intelligence analysis cards.
+- Runtime `ensure_*` helpers in `media/router.py` and `agents/multimodal_memory.py` now add missing columns when a table exists in a partial shape.
+- `GET /saas/v1/media/search/runs` returns an empty list with disabled access metadata when Web/Image Search is not enabled, avoiding noisy feature-gate 403s during normal Inbox loading.
+- Schema readiness now includes Phase 24 multimodal tables so a deploy with missing runtime-critical tables fails readiness instead of serving 500s.
+
+Safety notes:
+
+- No Meta media download behavior, provider credential handling, customer-send path, CRM mutation, agent assignment, billing behavior or premium execution gate was changed.
+- A 403 from `/saas/v1/media/whatsapp/{media_id}` can still be valid when Meta rejects media access due to token/permission/asset/media-expiration issues.
+
 ## Phase 12 Reliability Backend
 
 Code-complete at repository level on 2026-05-27; validation is tracked in `tasks/TASK_STATE.md`.

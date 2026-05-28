@@ -4,31 +4,26 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Stabilize production Inbox/AI operations after the SaaS Coolify recovery: messages now arrive, but tenant diagnostics must expose why the general IA does not respond, and the narrow Inbox list must not visually overlap conversation cards.
+Improve production Inbox UX after message flow recovery: move the filter controls out of the left preview list and into the top of the conversation panel so conversation previews have more vertical room.
 
 ## Status
 
-- Current production symptom:
-  - User reports inbound messages now arrive normally.
-  - User clarified the affected conversation is not assigned to a specialist AI agent, so the Phase 8 one-agent-owner block is not the reason.
-  - Likely runtime causes to verify are: IA disabled, human takeover, trigger `block_ai`, no `saas_ai_pending_replies`, skipped/failed pending job, missing/unreadable tenant AI credential, provider/model/policy block, quota block, or outbound failure after generation.
-- Completed code update:
-  - `backend/app_saas/diagnostics/router.py` now reports AI credential runtime readability using `decrypt_secret` without returning raw secrets.
-  - Diagnostics now include recent AI pending jobs and recent AI Gateway runs/errors for the tenant.
-  - Tenant diagnostics UI now shows `API IA usable`, warns when stored encrypted credentials cannot be read by the deployed `SAAS_SECRET_KEY`, and lists recent AI pending/Gateway failures.
-  - `frontend/src/styles.css` now hardens conversation-list card sizing/wrapping to stop cramped/overlapping cards in the Inbox sidebar.
+- Completed current UI update:
+  - `frontend/src/App.jsx` now renders Inbox mode tabs, sync status, channel/search filters, AI-agent filter and smart queue chips inside a new `.inbox-top-filters` block at the top of `.inbox-thread`.
+  - `frontend/src/styles.css` now keeps `.inbox-list` as header plus scrollable preview list and adds responsive styles for the top filter bar.
+  - Existing filter state, handlers, polling, API calls, comment/DM mode switching, AI-agent filtering and queue chips were preserved.
 - Not changed:
-  - No webhook ingest, Meta integration, AI Gateway fallback semantics, pending-reply state machine, outbound dispatch, schema/migrations, billing, tenant data or agent ownership rule was changed.
+  - No backend API, DB schema, migrations, workers, webhooks, AI runtime, outbound dispatch, auth, billing, tenant data or agent ownership rule was changed.
 - Validation:
-  - `python -m py_compile saas-version/backend/app_saas/diagnostics/router.py` passed.
   - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
   - `git -C saas-version diff --check` passed.
 - Production acceptance after redeploy:
-  - Open `Configuracion -> Diagnostico`.
+  - Open Inbox and verify the filter bar appears above the conversation/thread area.
+  - Verify the left list shows more conversation preview rows and still filters correctly by channel, search, queue and AI agent.
+
+- Previous production AI diagnostic work remains relevant:
+  - Tenant diagnostics expose AI credential runtime readability, recent AI pending jobs and recent AI Gateway runs/errors.
   - If `API IA usable` is red and status is `unreadable_encrypted_secret`, restore the previous production `SAAS_SECRET_KEY` or re-save the tenant AI API key.
-  - If AI pending jobs show `skipped`/`failed`, inspect `last_error`.
-  - If AI Gateway recent runs show `missing_credential`, `policy_blocked`, `quota` or provider errors, fix provider credential/policy/quota/fallback.
-  - If AI generates but outbound is missing/failed, inspect outbound queue/errors.
 
 - New production blocker after correct SaaS image deploy:
   - The new container `skk088...` is now the correct SaaS image and runs `python -m app_saas.tools.migrate /app/migrations && python -m app_saas.tools.schema_check /app/migrations && uvicorn app_saas.main:app ...`.

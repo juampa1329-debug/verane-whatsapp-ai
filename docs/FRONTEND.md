@@ -116,6 +116,7 @@ Admin views detected:
 
 - `frontend/src/App.jsx` owns the operational Inbox for DMs and comments.
 - DM inbox supports channel/queue/search filtering, unread queues, mine/unassigned filters, SLA overdue, hot leads, human takeover, AI queue, message read state, and status-event timeline.
+- The Inbox filter controls render in the top area of the conversation/thread panel, not inside the left preview list, so the preview list keeps more vertical room for conversation cards.
 - Comment inbox is separated from DMs and uses `social/comments` APIs for Meta-style comment preview, AI suggestion, reply, and reaction.
 - Composer supports text, media upload, document/audio/video/image attachments, voice note recording, emojis, and WooCommerce product cards.
 - Polling is visibility-aware: active Inbox refreshes frequently, pauses/backoffs in background, avoids overlapping refreshes, and shows sync status/errors.
@@ -128,6 +129,7 @@ Admin views detected:
 - Inbox CRM side panel now renders tenant custom fields, dynamic pipeline stages, duplicate candidates with merge action, predictive intelligence, tasks, AI context and Meta status events. It intentionally does not render a full conversation timeline because the main Inbox thread is the canonical conversation history.
 - The predictive intelligence mini-card in the Inbox CRM side panel must span the full CRM mini-form width. Keep `.crm-predictive-card` in the full-width grid selector in `frontend/src/styles.css`; otherwise the card compresses into a narrow half column.
 - Conversation list cards must keep natural row height and truncate/wrap badges safely. Preserve `grid-auto-rows: max-content` and full-width `.conversation-item` behavior to avoid cards visually overlapping in narrow Inbox columns.
+- Preserve the left Inbox list grid as header plus scrollable list; moving filters back into `.inbox-list` compresses previews and can recreate cramped rows.
 - `CrmPanel.jsx` can create tenant custom fields, apply industry pipeline presets, add pipeline stages, and edit customer fichas with custom-field values.
 - Custom-field values are sent as `custom_fields` and persisted backend-side into `profile_json.custom_fields`.
 

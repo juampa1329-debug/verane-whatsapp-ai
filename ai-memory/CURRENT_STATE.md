@@ -25,6 +25,13 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Moved the tenant Inbox filters out of the left preview column and into the top of the conversation/thread panel:
+  - `frontend/src/App.jsx` now renders mode tabs, sync status, channel/search filters, AI-agent filter and queue chips inside `.inbox-top-filters`.
+  - `frontend/src/styles.css` keeps `.inbox-list` as header plus scrollable preview list and gives the thread panel a top-filter row before the conversation header/messages.
+  - This preserves existing filter state, handlers, API calls, polling behavior, comment/DM mode switching and AI-agent assignment filtering while improving visible conversation previews.
+- Validation passed: tenant frontend production build and SaaS diff whitespace check.
+- Not changed: backend APIs, DB schema, workers, webhook ingest, AI runtime, outbound sending, auth, billing, tenant data or agent ownership behavior.
+
 - Improved tenant diagnostics for "messages arrive but IA does not respond":
   - `diagnostics/overview` now returns AI credential runtime readability without exposing secrets, recent `saas_ai_pending_replies`, and recent `saas_ai_runs`.
   - Tenant `Configuracion -> Diagnostico` now shows "API IA usable", an explicit warning for unreadable encrypted credentials, recent AI pending jobs, and recent AI Gateway failures.

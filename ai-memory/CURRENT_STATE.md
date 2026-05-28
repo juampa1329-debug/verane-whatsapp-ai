@@ -25,6 +25,18 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Added production recovery for WhatsApp inbound when Meta still posts to a stale webhook endpoint key:
+  - `webhooks/router.py` still prefers exact `/saas/v1/webhooks/{provider}/{endpoint_key}` lookup.
+  - If the endpoint key is missing/inactive and the request is a Meta-style WhatsApp POST, the route can recover by matching payload WABA/Phone Number ID to an active connected WhatsApp integration and active webhook endpoint for the tenant.
+  - Stored webhook event headers now include `x-scentra-endpoint-fallback=payload_asset` and the originally requested endpoint key for diagnostics.
+  - This fallback does not apply to GET verification; Meta verification still needs the current callback URL and verify token.
+- Improved tenant diagnostics for webhook incidents:
+  - `/diagnostics/overview`, `/diagnostics/run`, and `/diagnostics/whatsapp/simulate-inbound` now return server-side timestamps.
+  - Diagnostics overview includes current callback URLs, endpoint last-seen timestamps, recent webhook received/processed times and stale-endpoint fallback markers.
+  - Client `Configuracion -> Diagnostico` now displays full date/time, current webhook callbacks and fallback indicators.
+- Not changed: Meta subscriptions, verify tokens, provider credentials, media proxy authorization, AI generation, outbound dispatch, queue semantics, DB migrations, billing or tenant data.
+- Production action after redeploy: send a real WhatsApp inbound, open `Configuracion -> Diagnostico`, confirm `Ultimos webhooks` has the exact timestamp. If it shows `fallback URL antigua`, update Meta Developers to the displayed current callback URL. If it stays empty while `Simular entrada` works, Meta is not reaching Scentra or WABA/subscribed_apps/fields are wrong.
+
 - Fixed a production deadlock class in SaaS Inbox Phase 24 read paths:
   - Production showed `psycopg2.errors.DeadlockDetected` on `GET /saas/v1/agents/multimodal-memory/events`, caused by the read path calling `ensure_multimodal_memory_tables() -> ensure_intelligence_tables() -> ensure_ml_training_tables()` and running `ALTER TABLE saas_intelligence_feature_values` during normal traffic.
   - `agents/multimodal_memory.py:list_multimodal_memory_events` is now read-only: it checks whether `saas_multimodal_memory_events` and required columns exist and returns `[]` if the optional Phase 24 table is missing/incomplete instead of running DDL.

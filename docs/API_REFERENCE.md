@@ -692,6 +692,8 @@ Billing webhook notes:
 - `POST /webhooks/events/process`
 - `GET|POST /webhooks/instagram`
 - `GET|POST /webhooks/{provider}/{endpoint_key}`
+- WhatsApp POST webhooks keep exact endpoint-key lookup first. If Meta posts to a stale key, the route can recover only for Meta-style WhatsApp POST payloads by matching payload WABA/Phone Number ID to an active connected integration and active endpoint. GET verification still requires the exact current endpoint key and verify token.
 - `GET /diagnostics/overview`
 - `POST /diagnostics/run`
 - `POST /diagnostics/whatsapp/simulate-inbound`
+- Diagnostics responses include server timestamps and recent webhook endpoint/callback metadata for production triage.

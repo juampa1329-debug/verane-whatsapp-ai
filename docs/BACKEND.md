@@ -69,15 +69,17 @@ Operational flow for a normal inbound WhatsApp message:
 
 Diagnostic endpoints:
 
-- `GET /saas/v1/diagnostics/overview`: tenant-safe overview of runtime, integrations, webhooks, queues, AI, social Meta and WhatsApp symptoms.
-- `POST /saas/v1/diagnostics/run?limit=50`: owner/admin/supervisor operation that processes pending webhooks, AI replies and outbound messages.
-- `POST /saas/v1/diagnostics/whatsapp/simulate-inbound`: inserts a synthetic Meta-style WhatsApp webhook and verifies whether Scentra can create/update Inbox records.
+- `GET /saas/v1/diagnostics/overview`: tenant-safe overview of runtime, integrations, webhooks, queues, AI, social Meta and WhatsApp symptoms. It includes `generated_at`, webhook callback URLs, endpoint `last_seen_at`, recent event timestamps and whether a WhatsApp POST used stale-endpoint fallback.
+- `POST /saas/v1/diagnostics/run?limit=50`: owner/admin/supervisor operation that processes pending webhooks, AI replies and outbound messages and returns `started_at`/`finished_at`.
+- `POST /saas/v1/diagnostics/whatsapp/simulate-inbound`: inserts a synthetic Meta-style WhatsApp webhook, returns `started_at`/`finished_at`, and verifies whether Scentra can create/update Inbox records.
 - `POST /saas/v1/internal/whatsapp/check-subscription`: verifies WABA `subscribed_apps` status when Meta delivery is suspected.
 
 Support interpretation:
 
 - If real WhatsApp messages do not appear in `saas_webhook_events` or `Ultimos webhooks`, troubleshoot Meta callback URL, verify token, WABA subscription and subscribed fields before AI runtime.
 - If synthetic inbound succeeds but real inbound is absent, the Scentra DB/worker path is healthy enough to process messages and the cut is external Meta delivery/subscription.
+- If Meta still posts to an old `/webhooks/{provider}/{endpoint_key}` URL whose endpoint key no longer exists, WhatsApp POSTs can be recovered by matching payload WABA/Phone Number ID to an active connected WhatsApp integration and active webhook endpoint. Diagnostics mark those events as `fallback URL antigua`.
+- GET verification still requires the exact current endpoint key and verify token; stale-endpoint fallback only applies to Meta-style POST payloads.
 - If messages are inserted but IA does not respond, inspect takeover, trigger `block_ai`, assigned-agent state, AI credentials/model/fallback, feature gates, quotas and `saas_ai_pending_replies`.
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
 

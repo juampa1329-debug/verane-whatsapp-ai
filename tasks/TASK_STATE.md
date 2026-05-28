@@ -4,9 +4,35 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Fix SaaS production Inbox 500/deadlock on Phase 24 multimodal read endpoints and keep WhatsApp message-flow diagnosis separate.
+Recover SaaS WhatsApp inbound when Meta still posts to an old webhook endpoint key, and make diagnostics timestamped enough to verify production delivery.
 
 ## Status
+
+- Current production symptom:
+  - Real WhatsApp messages still do not appear in the Inbox after prior UI/read-path fixes.
+  - User confirmed Meta webhook settings were not manually changed, so a likely failure mode is Meta still posting to a stale `/webhooks/{provider}/{endpoint_key}` URL after endpoint rows/keys changed during deployments or DB repairs.
+- Implemented fix:
+  - `backend/app_saas/webhooks/router.py` still uses exact endpoint lookup first.
+  - If exact endpoint lookup returns 404/inactive and the request is a Meta-style WhatsApp POST, the route now attempts tenant recovery by matching payload WABA/Phone Number ID against an active connected WhatsApp integration and an active webhook endpoint.
+  - Stored webhook headers include the originally requested endpoint key and `x-scentra-endpoint-fallback=payload_asset` when the fallback path is used.
+  - Existing token/signature/Meta-app-secret checks are preserved; no GET verification fallback was added.
+- Diagnostic/UI improvement:
+  - `backend/app_saas/diagnostics/router.py` now returns `generated_at` for overview and `started_at`/`finished_at` for processor/simulation actions.
+  - Diagnostics overview returns current callback URLs, endpoint last-seen timestamps, recent event received/processed timestamps, endpoint key and fallback marker.
+  - `frontend/src/App.jsx` shows full date/time, current webhook callback URLs, endpoint last seen, recent webhook processing time and stale-URL fallback markers in `Configuracion -> Diagnostico`.
+- Validation for this fix:
+  - `python -m py_compile backend/app_saas/diagnostics/router.py backend/app_saas/webhooks/router.py` passed.
+  - `npm --prefix frontend run build` passed with the existing large-bundle warning.
+  - `docker compose -f docker-compose.saas.yml config --quiet` passed.
+  - `git diff --check` passed for SaaS changes.
+- Not changed:
+  - No Meta subscription mutation, verify-token rotation, provider credential change, media proxy authorization change, AI generation, outbound dispatch, queue semantics, DB migration, billing logic or tenant data mutation was added.
+- Production acceptance after redeploy:
+  - Send one real WhatsApp inbound message.
+  - Open `Configuracion -> Diagnostico` and check `Ultimos webhooks`.
+  - If the event appears with `fallback URL antigua`, update Meta Developers to the current callback URL displayed in `Endpoints webhook`.
+  - If `Ultimos webhooks` remains empty while `Simular entrada` succeeds, Meta is not reaching Scentra at all or WABA `subscribed_apps`/fields/callback are wrong.
+  - If webhooks appear but media still returns 403, inspect the media proxy response `detail.code`; that is a separate Meta media token/permission/ownership/expiration problem.
 
 - Production incident:
   - `GET /saas/v1/agents/multimodal-memory/events?...` returned 500.

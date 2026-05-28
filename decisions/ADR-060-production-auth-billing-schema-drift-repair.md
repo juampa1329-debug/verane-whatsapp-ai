@@ -12,6 +12,7 @@ Backend logs showed PostgreSQL schema drift:
 
 - `saas_users.locked_until` did not exist during tenant login.
 - `saas_billing_subscriptions.payment_failed_notice_sent_at` did not exist during the embedded billing lifecycle worker.
+- Production manual SQL also showed `saas_billing_invoices` did not exist, confirming wider billing migration drift.
 
 The code expected columns introduced by earlier Phase 1 and Phase 9 migrations. A production database can still drift if an older migration version is marked as applied before all columns were present, because the migration runner skips already-applied versions.
 
@@ -25,6 +26,7 @@ The migration is idempotent and repairs:
 
 - tenant industry compatibility columns
 - Phase 1 login lockout, password reset, MFA and security-event schema
+- Phase 5 billing runtime tables
 - Phase 9 billing lifecycle notice columns and indexes
 
 Also coalesce nullable `plan_code` and `industry_code` in tenant auth/list responses to avoid response serialization failures on older tenant rows.
@@ -35,4 +37,3 @@ Also coalesce nullable `plan_code` and `industry_code` in tenant auth/list respo
 - Demo accounts can be restored immediately by running the same idempotent SQL directly against production PostgreSQL before redeploy.
 - Future deploys apply migration `069` automatically even when older drifted migration versions are already marked as applied.
 - This does not change auth policy, JWT structure, CAPTCHA behavior, password hashing, billing status semantics, frontend contracts or tenant isolation.
-

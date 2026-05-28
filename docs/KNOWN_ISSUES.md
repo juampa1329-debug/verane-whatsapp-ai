@@ -7,7 +7,7 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - `saas-version/docker-compose.saas.yml` has a local default `SAAS_JWT_SECRET=change-me-local-saas-secret`. Production must override it.
 - `saas-version/keys/saasprivate.key` exists. Treat it as secret material; do not expose, copy, or commit elsewhere without explicit verification.
 - API embedded worker and standalone `worker` service can both run. Queue processors must remain idempotent and concurrency-safe.
-- Verified production incident on 2026-05-28: tenant login 500 was caused by DB schema drift where `saas_users.locked_until` and `saas_billing_subscriptions.payment_failed_notice_sent_at` were missing. Migration `069_saas_auth_billing_schema_drift_repair.sql` repairs this permanently; until redeployed, run the provided idempotent SQL hotfix directly in production PostgreSQL.
+- Verified production incident on 2026-05-28: tenant login 500 was caused by DB schema drift where `saas_users.locked_until` and `saas_billing_subscriptions.payment_failed_notice_sent_at` were missing. Production also showed missing `saas_billing_invoices`, confirming broader billing migration drift. Migration `069_saas_auth_billing_schema_drift_repair.sql` repairs this permanently; until redeployed, run the provided idempotent SQL hotfix directly in production PostgreSQL.
 
 ## High
 

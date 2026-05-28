@@ -29,7 +29,7 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 - Production logs showed PostgreSQL schema drift, not a frontend/password issue:
   - `saas_users.locked_until` missing in tenant login.
   - `saas_billing_subscriptions.payment_failed_notice_sent_at` missing in billing lifecycle worker.
-- Added forward migration `069_saas_auth_billing_schema_drift_repair.sql` to repair auth, tenant, MFA/security-event and billing lifecycle columns/tables when older migrations were marked applied before all columns existed.
+- Added forward migration `069_saas_auth_billing_schema_drift_repair.sql` to repair auth, tenant, MFA/security-event and billing lifecycle columns/tables when older migrations were marked applied before all columns existed. It also recreates missing Phase 5 billing runtime tables such as invoices/checkout/provider-events if production drift skipped them.
 - Hardened tenant auth/tenant-list responses by using safe fallbacks for nullable `plan_code` and `industry_code`.
 - No auth policy, JWT payload contract, password hashing, CAPTCHA behavior, billing lifecycle semantics, tenant isolation, frontend contract or provider runtime was changed.
 - Emergency production SQL can be run manually before redeploy to restore demo account login immediately; the migration makes the repair permanent for future deploys.

@@ -16,7 +16,7 @@ Repair production login 500 caused by PostgreSQL schema drift in SaaS auth/billi
   - Run idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` SQL in Coolify/PostgreSQL to restore login for demo accounts without waiting for redeploy.
 - Code repair in progress/completed locally:
   - Added `saas-version/migrations/069_saas_auth_billing_schema_drift_repair.sql`.
-  - The migration repairs Phase 1 auth columns, tenant industry columns, password reset/security event/MFA tables and Phase 9 billing lifecycle columns/indexes.
+  - The migration repairs Phase 1 auth columns, tenant industry columns, password reset/security event/MFA tables, missing Phase 5 billing runtime tables and Phase 9 billing lifecycle columns/indexes.
   - Hardened `auth/router.py` and `tenants/router.py` to coalesce nullable `plan_code`/`industry_code` values in tenant membership responses.
 - Not changed:
   - No auth policy, JWT contract, CAPTCHA behavior, password hashing, billing state machine, frontend contract, provider runtime or tenant isolation was changed.

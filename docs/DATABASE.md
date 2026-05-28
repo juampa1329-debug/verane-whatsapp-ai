@@ -147,7 +147,7 @@ Applied:
 - `066_saas_revenue_memory_network_phase19_20.sql`: added as forward migration for reproducible Phase 19 Autonomous Revenue Engine and Phase 20 AI Enterprise Memory Network state.
 - `067_saas_multimodal_observability_rollout_phase24.sql`: added as forward migration for reproducible Phase 24.9 Observability and Phase 24.10 Safe Rollout state.
 - `068_saas_federated_learning_phase17.sql`: added as forward migration for reproducible Phase 17 federated policies, rounds, aggregate updates, aggregate results, global signals and default-off federated/global feature flags.
-- `069_saas_auth_billing_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier auth/billing migrations were marked applied but columns were missing. It restores Phase 1 login/MFA/security-event columns/tables, tenant industry columns and Phase 9 billing lifecycle notice columns/indexes.
+- `069_saas_auth_billing_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier auth/billing migrations were marked applied but columns or runtime billing tables were missing. It restores Phase 1 login/MFA/security-event columns/tables, tenant industry columns, Phase 5 billing runtime tables and Phase 9 billing lifecycle notice columns/indexes.
 
 Checks:
 

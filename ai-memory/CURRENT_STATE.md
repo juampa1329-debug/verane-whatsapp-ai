@@ -25,6 +25,28 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Stabilized production DB/polling pressure and AI delivery pacing:
+  - `backend/app_saas/db.py` now creates the SQLAlchemy engine with configurable pool settings from `SAAS_DB_POOL_SIZE`, `SAAS_DB_MAX_OVERFLOW`, `SAAS_DB_POOL_TIMEOUT_SEC`, and `SAAS_DB_POOL_RECYCLE_SEC`.
+  - `backend/app_saas/config.py` and `docker-compose.saas.yml` now default to less aggressive worker settings; Compose disables the API embedded worker by default when the standalone worker service exists.
+  - Tenant Inbox polling in `frontend/src/App.jsx` now has a lightweight refresh path: regular ticks refresh conversations/messages/status with longer intervals and avoid repeatedly loading heavy optional memory/search/multimodal/comment/agent reads.
+  - Failed WhatsApp media proxy renders are remembered in the frontend so repeated Meta 403 media failures show a controlled unavailable-media message instead of noisy repeated previews.
+  - Knowledge upload now prechecks the 8 MB backend limit and shows a clear Spanish client error before calling `/knowledge/upload`.
+  - WooCommerce product card CSS now keeps transparent product images from visually overlapping product text.
+  - Conversation AI keeps one contextual model call, then queues shorter delayed fragments with a best-effort WhatsApp typing indicator per fragment. The outbound worker defers additional due chunks for the same conversation inside one batch to avoid burst delivery after backlog.
+  - Product card CSS was hardened again with an isolated two-row card layout and opaque body so product media cannot bleed under title/price text.
+  - Outbound dispatch now repairs queued rows with missing `message_id` before provider delivery by creating/linking a local `saas_messages` row and queued status event. This makes template/trigger/broadcast-style outbound visible in the Inbox when WhatsApp receives it, including legacy/partial queue rows.
+- Operator documentation updated:
+  - `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md` now includes incident guidance for PostgreSQL pool exhaustion, polling behavior, WhatsApp media 403s, Knowledge file limits, WooCommerce product behavior, triggers/templates vs AI, and True AI / AI Premium gating.
+  - Backend/frontend/environment/worker/business/risk docs now describe the new pool, polling and AI chunk behavior.
+- Not changed:
+  - No database schema/migration, provider credential, Meta webhook URL/subscription, billing policy, auth contract, tenant data, AI provider routing policy, or trigger/campaign business rule was changed.
+  - AI still does not autonomously choose Meta templates; triggers/campaigns/backend queue templates and `block_ai` controls whether conversation AI should answer.
+- Validation status:
+  - Tenant frontend build passed.
+  - SaaS Compose config passed.
+  - Backend syntax compile with `py -3 -m py_compile` passed for touched backend modules.
+  - Diff whitespace check passed.
+
 - Fixed two production Inbox/AI runtime issues:
   - `ai_agent/service.py` now keeps the explicit pending inbound `last_message_id` as the reply target even if a human sends an outbound message before the worker processes the AI job. This prevents pending AI replies from being marked `latest_not_inbound` just because an operator typed a quick message like "Hola".
   - `_recent_messages` now loads `external_message_id`, allowing best-effort WhatsApp typing indicators to reference the real inbound provider message id instead of always skipping as `provider_message_id_missing`.

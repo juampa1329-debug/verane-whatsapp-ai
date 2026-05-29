@@ -33,6 +33,15 @@ Worker env vars:
 - `SAAS_INTELLIGENCE_PREDICTION_COOLDOWN_MINUTES`
 - `SAAS_AUTONOMOUS_OPS_ANALYSIS_LIMIT`
 
+Database pool env vars:
+
+- `SAAS_DB_POOL_SIZE`
+- `SAAS_DB_MAX_OVERFLOW`
+- `SAAS_DB_POOL_TIMEOUT_SEC`
+- `SAAS_DB_POOL_RECYCLE_SEC`
+
+Production note: these values are consumed by `app_saas/db.py` when creating the SQLAlchemy engine. They exist to avoid default `QueuePool` exhaustion under browser polling and worker load. Tune them with PostgreSQL `max_connections`, not in isolation.
+
 Optional ML env vars:
 
 - `SAAS_ML_ENABLED`
@@ -165,6 +174,10 @@ Important compose defaults:
 - `SAAS_JWT_SECRET` defaults to `change-me-local-saas-secret`; never use this in production.
 - `SAAS_CORS_ORIGINS` includes local and production Scentra domains.
 - API/worker services pass through Phase 1 security env vars for CAPTCHA, rate limits, lockout, reset expiry/path, and SMTP.
+- The Compose API service defaults `SAAS_EMBEDDED_WORKER_ENABLED=false` because a standalone `worker` service already exists. Enable the embedded worker only for single-container deployments.
+- The default worker idle interval is now `10` seconds and default batch size is `10` to reduce DB pressure in small VPS deployments.
+- API DB pool defaults are `SAAS_DB_POOL_SIZE=10`, `SAAS_DB_MAX_OVERFLOW=20`, `SAAS_DB_POOL_TIMEOUT_SEC=20`, and `SAAS_DB_POOL_RECYCLE_SEC=1800`.
+- Worker DB pool defaults are smaller: `SAAS_DB_POOL_SIZE=5`, `SAAS_DB_MAX_OVERFLOW=10`, `SAAS_DB_POOL_TIMEOUT_SEC=20`, and `SAAS_DB_POOL_RECYCLE_SEC=1800`.
 - `api` command applies migrations from `/app/migrations`, runs `app_saas.tools.schema_check /app/migrations`, and starts Uvicorn only if the schema readiness contract passes.
 - API Docker healthcheck calls `/saas/v1/ready`, not `/health`, so Coolify/Traefik should not route traffic to a container whose database schema is incomplete.
 - `admin-frontend` defaults to production API/client URLs unless `ADMIN_VITE_*` build vars override them.

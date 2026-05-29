@@ -12,6 +12,7 @@ File: `saas-version/backend/app_saas/main.py`.
 - CORS origins come from settings.
 - Request middleware adds request metadata and guards CORS error responses.
 - On startup, the API can launch an embedded worker loop when `settings.saas_embedded_worker_enabled` is true.
+- Database connections use a configurable SQLAlchemy `QueuePool` through `SAAS_DB_POOL_SIZE`, `SAAS_DB_MAX_OVERFLOW`, `SAAS_DB_POOL_TIMEOUT_SEC`, and `SAAS_DB_POOL_RECYCLE_SEC`. Production pool sizes must be balanced against PostgreSQL `max_connections`.
 
 ## Health And Readiness
 
@@ -63,8 +64,8 @@ Operational flow for a normal inbound WhatsApp message:
 3. `workers/ingest.py` normalizes WhatsApp `messages` payloads into `saas_conversations` and `saas_messages`.
 4. Ingest executes triggers and skips AI when a matched trigger uses `block_ai`.
 5. If AI is allowed, ingest schedules a pending conversation AI reply.
-6. AI processing generates a response through the AI Gateway.
-7. Outbound processing sends queued fragments/messages through Meta Cloud API.
+6. AI processing generates one response through the AI Gateway with CRM, memory, RAG and recent transcript context intact.
+7. Long AI responses are split after generation into delayed outbound fragments. The dispatch worker attempts a best-effort WhatsApp typing indicator before each fragment when a Meta inbound message id is available.
 8. Meta statuses return through webhook and are exposed in the Inbox status timeline.
 
 Diagnostic endpoints:
@@ -87,6 +88,8 @@ Support interpretation:
 - If IA generates but customers do not receive messages, inspect `saas_outbound_messages`, Meta token/phone number id/WABA, 24-hour session/template constraints and provider errors.
 - Meta delivery status updates are applied by `workers/ingest.py` from WhatsApp `statuses` events and should progress `sent -> delivered -> read` without regressing from late lower-rank events.
 - WooCommerce product sends keep the stored Inbox message as `product`; when the product has a public `image_url`, the outbound queue dispatches it to WhatsApp as an `image` link with caption so the customer receives a media bubble plus product details. If Meta rejects that remote image link, the dispatcher falls back to the formatted text caption instead of losing the reply.
+- 403 responses from `/media/whatsapp/{media_id}` usually mean Meta refused the media download because of token, permission, WABA ownership, media expiration or asset scope. That path is separate from AI generation and outbound text dispatch.
+- Outbound dispatch now repairs legacy/partial queued rows that have `saas_outbound_messages` but no linked `saas_messages` row. Before sending, it creates a local outbound message and queued status event, then links `message_id`, so templates/triggers/broadcast-style jobs that reach WhatsApp also appear in the tenant Inbox.
 
 ## Inbox Read Endpoints And Runtime DDL
 
@@ -231,6 +234,12 @@ Standalone worker:
 - Docker service name: `worker`
 
 Warning: API embedded loop and standalone worker can both be enabled. Any change to queue processors must preserve idempotency and locking assumptions.
+
+Production reliability note:
+
+- Compose disables the embedded API worker by default when the standalone `worker` service is present. Single-container deployments can re-enable it explicitly with `SAAS_EMBEDDED_WORKER_ENABLED=true`.
+- Worker batch size and idle delay are intentionally conservative by default to reduce PostgreSQL pressure on small VPS deployments.
+- Outbound dispatch defers extra due AI fragments for the same conversation within one worker batch so delayed chunks are not flushed all at once after backlog or worker pauses.
 
 ## Phase 2 Admin Operations
 

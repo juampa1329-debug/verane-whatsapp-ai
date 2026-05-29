@@ -95,6 +95,9 @@ Platform roles include:
 - Conversation AI keeps continuity through CRM context, conversation memory summary, facts, Knowledge/RAG, collective memory, approved multimodal context and a bounded recent-message transcript.
 - Humanized reply mode is enabled by default for conversation AI: output tokens are capped for short WhatsApp-style replies, recent raw transcript is compacted, responses are naturally chunked into delayed outbound fragments, and Meta typing indicator is attempted best-effort before generation.
 - Fragmented AI replies preserve the existing outbound queue, quota checks, status tracking and worker dispatch path; each fragment counts as one outbound message.
+- Conversation AI still uses one AI Gateway call with full context before splitting the answer. Splitting is a delivery/UX step, not multiple independent model calls, so the AI does not lose conversation memory between fragments.
+- Triggers, Meta templates, approved-template enforcement and `block_ai` are backend/runtime automation behavior. The LLM can recommend or write text, but it does not autonomously choose/send Meta templates unless backend trigger/campaign/outbound logic queues them.
+- Trigger, broadcast and legacy outbound jobs must be visible in the Inbox when they are sent. Dispatch creates a local `saas_messages` row for any queued outbound that reaches sending without `message_id`, then links the outbound row before provider delivery.
 - AI-written CRM internal notes are compacted before persistence: repeated `IA:` note units are deduplicated, non-AI human notes are preserved, and manual CRM saves also compact duplicated AI note lines.
 - Phase 24.1 extends the internal AI Gateway request shape with optional attachments for future multimodal calls; existing text-only callers remain compatible.
 - Phase 24.2 lets authorized tenant users analyze existing Inbox audio messages. The backend loads tenant-owned audio, runs premium/demo gating, calls Google/Gemini through the AI Gateway, stores transcript/summary/sentiment/intent output, and mirrors compact results to message payloads.
@@ -218,6 +221,7 @@ Platform roles include:
 ## Operational Logic
 
 - Webhook events, trigger messages, remarketing flows, AI replies, agent orchestration, outbound messages, Intelligence processing, reliability snapshots/dry-runs, billing lifecycle, and Meta token refresh are processed asynchronously.
+- Worker and browser polling must be tuned together. Active Inbox polling is intentionally lightweight and skips optional heavy reads on normal ticks; DB pool settings are configurable to avoid API-wide connection starvation.
 - WooCommerce product messages are stored/rendered as `product` in Scentra. For WhatsApp delivery, a product with public `image_url` is queued as an image-link media message with the formatted product caption; without a usable image URL it remains caption/text only. If Meta rejects the remote product image, dispatch falls back to text caption delivery rather than losing the reply.
 - Admin endpoints expose queue processing and dead-letter/observability controls.
 - Phase 3 admin health combines API/DB, worker heartbeats, Meta status, AI Gateway status, queue snapshots, channel diagnostics, Meta error history, and dead-letter candidates.

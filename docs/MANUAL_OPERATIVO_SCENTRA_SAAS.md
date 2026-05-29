@@ -534,3 +534,161 @@ Por las capturas, el mensaje enviado desde WhatsApp no aparece como nuevo mensaj
 8. Ejecutar `Verificar WABA subscribed_apps`.
 9. Ejecutar `Procesar pendientes`.
 10. Si el inbound entra pero no hay respuesta, revisar IA, triggers con `block_ai`, takeover humano y asignacion de agente.
+
+## 26. Incidente: app caida por pool PostgreSQL
+
+Sintoma en logs:
+
+`QueuePool limit of size 5 overflow 10 reached, connection timed out`
+
+Que significa:
+
+- la API intento abrir mas conexiones PostgreSQL de las disponibles en su pool;
+- cuando el pool se llena, endpoints simples como `/auth/refresh` tambien fallan;
+- en navegador puede verse como 500 o incluso como error CORS si el backend no responde sano.
+
+Fuentes de carga detectadas en codigo:
+
+- Inbox visible hacia polling cada 5-8 segundos.
+- Cada ciclo de Inbox podia pedir conversaciones, comentarios, agentes y hasta 7 endpoints de la conversacion abierta.
+- Advisor flotante refresca senales cada 30-60 segundos.
+- API puede ejecutar worker embebido.
+- Worker standalone tambien puede ejecutar las mismas colas.
+
+Politica operativa actualizada:
+
+- Inbox debe hacer polling ligero para mensajes/estados y reservar memoria, multimodal, dedupe y busqueda para apertura/manual refresh.
+- Worker embebido y worker standalone no deberian correr agresivos al mismo tiempo en produccion.
+- En Compose, si existe servicio `worker`, el API debe preferir `SAAS_EMBEDDED_WORKER_ENABLED=false`.
+- Para VPS pequeno, usar valores conservadores:
+  - `SAAS_WORKER_IDLE_SEC=10`
+  - `SAAS_WORKER_BATCH_SIZE=10`
+  - `SAAS_DB_POOL_SIZE=10`
+  - `SAAS_DB_MAX_OVERFLOW=20`
+
+## 27. Polling: que refresca cada cosa
+
+Cliente:
+
+- `Inbox`: refresca conversaciones y la conversacion seleccionada de forma periodica mientras la pestana esta visible.
+- `Advisor`: refresca senales globales si hay sesion activa; es mas frecuente cuando la ventana Advisor esta abierta.
+- `Settings`: carga varios bloques al entrar, pero no deberia hacer polling continuo.
+- `Intelligence`: algunas vistas tienen refresco interno de estado, especialmente realtime/preview.
+
+Backend:
+
+- `api-embedded-worker`: procesa webhooks, triggers, remarketing, IA, orquestador, outbound, billing, intelligence, reliability y tokens Meta cuando esta activo.
+- `worker`: hace lo mismo como proceso separado.
+- Si ambos estan activos, el diseno es idempotente, pero aumenta carga DB. En produccion pequena conviene elegir uno como principal.
+
+## 28. Errores 403 de media WhatsApp
+
+Rutas tipicas:
+
+- `/saas/v1/media/whatsapp/{media_id}?token=...`
+
+Que significa:
+
+- Scentra si conoce el `media_id`, pero al pedir el archivo a Meta, Meta responde sin permiso o no accesible;
+- causas comunes: token Meta vencido/revocado, WABA/phone number distinto, media expirada, media pertenece a otro activo, permisos `whatsapp_business_messaging` insuficientes.
+
+Accion:
+
+1. Ir a `Configuracion -> Diagnostico`.
+2. Revisar `Token Meta guardado` y salud del token.
+3. Probar con un audio/imagen nueva, no con media antigua.
+4. Si solo falla media vieja, probablemente expiro o ya no es accesible desde Meta.
+5. Si falla media nueva, revisar token/permisos/WABA.
+
+La UI debe evitar reintentar indefinidamente un media que ya fallo para no llenar la consola.
+
+## 29. Knowledge Base: `knowledge_file_too_large`
+
+El upload de Knowledge acepta archivos hasta 8 MB.
+
+Si aparece `knowledge_file_too_large`:
+
+- dividir el PDF;
+- exportar CSV/TXT mas pequeno;
+- quitar imagenes pesadas del PDF;
+- subir una URL publica si aplica;
+- resumir documentos extensos en varios archivos.
+
+La Knowledge Base no es almacenamiento bruto; su objetivo es texto util para RAG y respuestas IA.
+
+## 30. Productos WooCommerce en Inbox y WhatsApp
+
+En Scentra:
+
+- el mensaje se guarda como tipo `product`;
+- la tarjeta debe mostrar imagen completa en un bloque superior;
+- el cuerpo debe mostrar nombre, precio, chips y boton `Ver producto` sin superponerse sobre la imagen.
+- si la foto del producto tiene fondo transparente, la UI separa imagen y cuerpo en dos filas para que la foto no tape texto.
+
+En WhatsApp cliente:
+
+- si el producto tiene `image_url` publica, Scentra intenta enviarlo como imagen con caption;
+- el caption incluye nombre, categoria, aromas/atributos, precio, link del producto y foto real;
+- si Meta rechaza la imagen remota, Scentra envia el mismo contenido como texto fallback.
+
+Riesgo:
+
+- algunos formatos remotos de WooCommerce, como ciertos `.webp`, pueden no ser aceptados por Meta como media link. Para garantizar imagen siempre, se necesitara una etapa futura de descarga/conversion/subida controlada.
+
+## 31. IA, triggers y plantillas
+
+La IA conversacional no "activa plantillas" por decision propia.
+
+Orden real:
+
+1. Entra un mensaje por webhook.
+2. Backend/worker evalua triggers y flows.
+3. Si un trigger matchea y tiene `block_ai=true`, la IA no responde.
+4. Si el trigger envia plantilla o flujo, eso lo hace backend, no el LLM.
+5. Si no hay bloqueo, se agenda IA general o agente asignado.
+6. La IA genera texto usando contexto, memoria, CRM y Knowledge/RAG.
+7. Outbound envia la respuesta generada.
+
+Visibilidad en Inbox:
+
+- triggers internos, broadcasts y mensajes manuales deben crear un mensaje local en `saas_messages`;
+- si una cola outbound antigua llega sin `message_id`, el dispatch crea una burbuja local antes de enviar al proveedor;
+- por eso, si WhatsApp recibe una plantilla pero el Inbox no la muestra despues del redeploy, revisar si el envio salio desde una ruta externa/no registrada o si la conversacion activa no coincide con el destinatario.
+
+Plantillas:
+
+- Meta templates se usan en broadcasts, campanas, triggers y flujos.
+- Deben estar aprobadas por Meta para enviarse fuera de ventana o como broadcast.
+- La IA puede sugerir, pero no debe saltarse preflight, aprobacion ni reglas de Meta.
+
+## 32. True AI / AI Premium
+
+En codigo no existe una feature literal llamada `true_ai`. Lo mas cercano es el conjunto premium:
+
+- `ai_premium`
+- `ml_predictions`
+- `lead_scoring_ml`
+- `churn_prediction`
+- `smart_remarketing`
+- `ai_operational_intelligence`
+- `advanced_analytics`
+- features multimodales y agentes avanzados
+
+Por que puede no dejar activar:
+
+- el plan del tenant no incluye esa feature;
+- Admin no habilito el feature flag para empresa/plan;
+- esta en demo mode y no en full mode;
+- hay cuotas agotadas;
+- el proveedor/modelo requerido no tiene credencial usable;
+- el agente/workflow no aprobo preflight;
+- la accion requiere aprobacion humana.
+
+Como habilitar:
+
+1. Entrar al Admin SaaS.
+2. Abrir tenant.
+3. Revisar plan, feature flags y grants AI.
+4. Activar `ai_premium` o la feature especifica.
+5. Revisar cuotas/proveedor.
+6. Volver al cliente y refrescar la vista.

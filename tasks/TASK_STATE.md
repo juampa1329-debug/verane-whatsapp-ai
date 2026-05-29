@@ -4,11 +4,41 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Fix production Inbox AI response/status symptoms after message flow recovery: conversation has customer inbound messages, an operator outbound "Hola" stays at one check, browser shows protected-media 403s, and the AI does not answer while the card shows `IA: Advisor Agent`.
+Stabilize production after API pool exhaustion and heavy Inbox polling, explain polling/True AI, preserve AI context while sending shorter human-style reply fragments, and update the SaaS operator manual.
 
 ## Status
 
-- Completed current backend fix:
+- Completed current stabilization:
+  - Root cause from the backend log was SQLAlchemy/PostgreSQL pool exhaustion: `QueuePool limit of size 5 overflow 10 reached` during `/auth/refresh`.
+  - `backend/app_saas/db.py` now uses configurable DB pool env vars instead of the small SQLAlchemy defaults.
+  - `docker-compose.saas.yml` defaults the API embedded worker off when the standalone worker exists, lowers worker batch/idle defaults, and passes DB pool env vars to API/worker.
+  - Tenant Inbox polling now uses lightweight refreshes with longer intervals: selected conversation around 12s, list around 18s, hidden tab around 60s. Heavy optional reads are skipped on normal poll ticks.
+  - AI replies are still generated once with CRM/memory/RAG/recent transcript context, then split into shorter delayed outbound fragments. The outbound worker sends at most one multi-chunk fragment per conversation per batch and attempts WhatsApp typing before each fragment when Meta accepts the inbound message id.
+  - Failed WhatsApp media proxy previews are remembered and rendered as controlled unavailable-media text after Meta 403/media load failures.
+  - Knowledge uploads over 8 MB are blocked client-side with a clear `knowledge_file_too_large` explanation before the backend request.
+  - WooCommerce product card styling now prevents transparent product images from covering text.
+  - WooCommerce cards now isolate image/body rows with opaque body styling to prevent the product photo from bleeding behind title, price and CTA.
+  - Outbound dispatch now creates and links a local message before provider delivery when a queued outbound row has no `message_id`, so legacy/partial template or trigger sends that arrive in WhatsApp can appear in the conversation.
+- Manual/documentation:
+  - `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md` now explains the production pool incident, what polls and how often, 403 media errors, Knowledge file limits, WooCommerce product behavior, whether AI uses triggers/templates, and why True AI/AI Premium may not activate.
+  - Root memory/docs were synchronized for backend, frontend, environment, worker flow, business logic and known risks.
+- Not changed:
+  - No DB schema/migration, Meta webhook callback/subscription, provider credentials, AI Gateway provider fallback policy, auth contract, billing policy, trigger/campaign business logic, tenant data or prompt architecture was changed.
+- Validation:
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `py -3 -m py_compile` passed for touched backend modules.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SaaS diff whitespace check passed.
+- Production acceptance after redeploy:
+  - Confirm `/saas/v1/ready` is 200.
+  - Watch API logs for disappearance of `QueuePool limit` errors during login/refresh/Inbox use.
+  - Confirm only one worker mode is active for the deployment style: standalone worker for Compose/Coolify multi-service, embedded worker only for single-container deployments.
+  - Open Inbox and confirm polling no longer floods optional Phase 24/read endpoints every few seconds.
+  - Send one long AI reply and confirm chunks arrive separated with best-effort typing instead of one burst.
+  - Fire a trigger/template test and confirm the local conversation shows the queued/sent outbound bubble as well as the customer receiving it in WhatsApp.
+  - If `/media/whatsapp/{media_id}` still returns 403, inspect its JSON detail; that remains a Meta token/permission/ownership/expiration issue separate from this stabilization.
+
+- Previous completed backend fix:
   - `backend/app_saas/ai_agent/service.py` now processes the explicit pending inbound `last_message_id` even if a human/operator outbound message is newer in the thread.
   - Conversation memory now records the target inbound message id, not the newest outbound message.
   - `_recent_messages` now includes `external_message_id` so the WhatsApp typing indicator can use the real Meta inbound message id when available.

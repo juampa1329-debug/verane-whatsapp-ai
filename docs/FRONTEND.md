@@ -119,7 +119,8 @@ Admin views detected:
 - The Inbox filter controls render in the top area of the conversation/thread panel, not inside the left preview list, so the preview list keeps more vertical room for conversation cards.
 - Comment inbox is separated from DMs and uses `social/comments` APIs for Meta-style comment preview, AI suggestion, reply, and reaction.
 - Composer supports text, media upload, document/audio/video/image attachments, voice note recording, emojis, and WooCommerce product cards.
-- Polling is visibility-aware: active Inbox refreshes frequently, pauses/backoffs in background, avoids overlapping refreshes, and shows sync status/errors.
+- WooCommerce product cards use a two-row layout with isolated image and opaque body sections so transparent product photos cannot overlap product title, price, chips or CTA text.
+- Polling is visibility-aware and lightweight: active Inbox refreshes the selected conversation about every 12 seconds, the list about every 18 seconds, and hidden tabs about every 60 seconds. Poll ticks avoid overlapping refreshes and skip heavy optional reads such as memory, dedupe, search runs, multimodal events, comments and agents unless the user opens/forces that context.
 - Notifications are split into in-app sound and browser notifications; browser notifications require explicit permission and are stored under `scentra_browser_notifications`.
 - Conversation assignment is operable from the Inbox through assign-to-me and release actions.
 
@@ -175,6 +176,7 @@ Admin views detected:
 - `AiAgentsPanel.jsx` supports factory agents and a `Crear Custom Agent` action for tenant-defined agents.
 - Agent editor exposes `System prompt rellenable`, base template, variables JSON, rendered prompt preview, tool approvals, memory policy, and budget hard-stop controls.
 - Tenant Settings > IA exposes human response controls for compact WhatsApp replies: brief-context style, natural chunking, output-token cap, chunk size/delay, recent-message window, per-message history size and WhatsApp typing indicator toggle.
+- The default reply controls favor shorter, more human WhatsApp replies: about 180-character chunks, best-effort typing indicator, and longer spacing between chunks so several outbound fragments do not arrive as one burst.
 - `AiAgentsPanel.jsx` now includes the Phase 11 `Agent OS` tab for multi-agent coverage, memory layers, event subscriptions, inter-agent messages, tool-run traces and runtime observability.
 - Preflight can be run from the agent panel and activation errors surface as `agent_preflight_not_ready`.
 - Budget hard-stop errors surface as `ai_agent_budget_exceeded`.

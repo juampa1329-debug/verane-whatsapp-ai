@@ -95,6 +95,7 @@ flowchart LR
 - Billing lifecycle is interval-throttled by `SAAS_BILLING_LIFECYCLE_INTERVAL_MINUTES`.
 - Past-due suspension grace is controlled by `BILLING_PAST_DUE_GRACE_DAYS`.
 - The lifecycle processor must remain idempotent because API embedded workers and standalone workers can both run.
+- Compose defaults the API embedded worker off when the standalone worker service is present. Single-container deployments can still enable the embedded worker explicitly.
 
 ## Phase 11 Intelligence Worker Flow
 
@@ -120,6 +121,24 @@ flowchart LR
 - Revenue/memory worker paths do not send messages, mutate CRM/campaign/workflow runtime, call payment providers, publish prompts or share raw cross-tenant content.
 - Model metrics recompute after each tenant pipeline and remain tenant/model scoped.
 - Runtime knobs: `SAAS_INTELLIGENCE_WORKER_INTERVAL_MINUTES`, `SAAS_INTELLIGENCE_EVENT_LIMIT`, `SAAS_INTELLIGENCE_LOOKBACK_HOURS`, and `SAAS_INTELLIGENCE_PREDICTION_COOLDOWN_MINUTES`.
+
+## AI Outbound Fragment Flow
+
+```mermaid
+flowchart LR
+  AI["AI Gateway response"] --> Split["natural chunk split"]
+  Split --> Queue["saas_outbound_messages with staggered next_attempt_at"]
+  Queue --> Batch["outbound worker batch"]
+  Batch --> Typing["best-effort WhatsApp typing indicator"]
+  Typing --> Meta["Meta Cloud send"]
+  Batch --> Defer["defer extra chunks for same conversation"]
+  Defer --> Queue
+```
+
+- Conversation AI still makes one model call with CRM, memory, Knowledge/RAG, collective memory and recent transcript context.
+- Message fragmentation happens after generation, in the outbound queue, so context is not lost between fragments.
+- The outbound worker sends at most one multi-chunk AI fragment per conversation per batch and nudges additional due fragments forward to avoid burst delivery after backlog.
+- WhatsApp typing indicators are best-effort and require the original inbound Meta provider message id.
 
 ## Phase 12 Reliability Worker Flow
 

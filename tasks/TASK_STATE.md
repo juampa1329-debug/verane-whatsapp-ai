@@ -4,9 +4,31 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Implement transactional email templates, Admin/tenant user management, and internal notifications for SaaS.
+Polish SaaS Admin user-management, notification UX, transactional email branding, and tenant Inbox notification behavior.
 
 ## Status
+
+- Completed current polish:
+  - Transactional email templates now use the white Scentra header logo.
+  - Tenant Inbox keeps internal notifications visible after read; unread notices remain pinned and non-replyable until marked read.
+  - Admin `Usuarios` is reorganized into `Mi perfil`, `Admins plataforma`, and `Usuarios empresa` tabs.
+  - Tenant users in Admin can be searched by name, email, company, role or status.
+  - Admin `Notificaciones` now explains `Borrador asistido`, internal app delivery, optional email copy and audience selection.
+  - Notification targets now support `Para todos`, selected audience search, and compact aligned checkboxes for tenants, roles and users.
+  - Admin responsive CSS was adjusted for laptop, tablet and smartphone layouts.
+- Safety boundaries:
+  - Internal notifications remain outside customer conversations and cannot be replied to.
+  - No customer AI, triggers, remarketing, Meta webhooks, billing or DB schema behavior was changed.
+- Validation:
+  - `py -3 -m py_compile backend\app_saas\shared\email.py` passed.
+  - `npm --prefix frontend run build` passed with the existing large-bundle warning.
+  - `npm --prefix admin-frontend run build` passed.
+  - `docker compose -f docker-compose.saas.yml config --quiet` passed.
+  - Targeted diff whitespace checks passed.
+- Production acceptance after redeploy:
+  - Open Admin on laptop/tablet/mobile widths and verify `Usuarios` tabs, tenant-user search and notification target search.
+  - Send one internal notification to all, one to selected tenants/roles/users, and one with email copy.
+  - In the tenant app, verify unread notices appear pinned in Inbox and popup, then remain as read history after `Marcar leida`.
 
 - Completed implementation:
   - Added migration `075_saas_internal_notifications_user_management.sql` for internal notification tables and persisted user profile metadata.

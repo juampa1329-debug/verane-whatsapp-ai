@@ -32,8 +32,9 @@ Auth UX:
 
 Internal notification UX:
 
-- Tenant unread system notifications load from `/saas/v1/notifications`.
+- Tenant system notifications load from `/saas/v1/notifications` with unread plus recent history.
 - Unread notifications can appear as a top popup after login/navigation and as pinned pseudo-items above the Inbox conversation list.
+- Read notifications lose the pin but remain visible in the Inbox/history list, ordered by age with the rest of the conversation preview surface.
 - Notification pseudo-items are marked `Interno`/`Sin respuesta`; they do not open a customer thread and cannot be replied to.
 - `Marcar leída` calls `/saas/v1/notifications/{recipient_id}/read` and removes the popup/pin.
 - Tenant Settings includes real profile save and team user management backed by `/auth/profile` and `/auth/team*`.
@@ -89,7 +90,9 @@ Runtime config:
 Admin user/notification UX:
 
 - `Usuarios` manages the platform admin profile/password, platform admins, tenant users and role/status changes through `/saas/v1/admin/users/*`.
+- `Usuarios` is grouped by tabs: `Mi perfil`, `Admins plataforma`, and `Usuarios empresa`; tenant users include search by name/email/company/role/status.
 - `Notificaciones` loads target tenants/users/roles, prepares a template-assisted Spanish draft, sends targeted internal notifications and optionally sends email copies.
+- `Notificaciones` makes the internal-app delivery explicit, supports `Para todos` versus selected audience, target search, and aligned compact recipient checkboxes.
 - Admin notification history displays human labels for severity/category and recipient/read/email counts; it must not show raw table names or internal IDs as user-facing labels.
 
 Local storage key:
@@ -123,8 +126,8 @@ Admin views detected:
 - Tenant detail shows effective feature flags from plan/default/trial plus tenant overrides; changes create admin overrides.
 - Admin bootstrap UI is hidden outside localhost unless explicitly enabled by `VITE_ADMIN_BOOTSTRAP_ENABLED`.
 - Support impersonation opens the client app with a short-lived support token through `VITE_CLIENT_APP_BASE`.
-- Pending product requirement: Admin needs a real profile/user-management area for platform admin profile, password/email/2FA, platform admin creation and tenant user/role management.
-- Pending product requirement: Admin needs a communications/notifications area to send internal notices to selected users, roles, tenants or all users. Tenant frontend should show unread notices as login popups and pinned Inbox pseudo-items, not as customer conversations.
+- Admin `Usuarios` now provides real profile/password editing, platform admin creation/listing and tenant user creation/role/status management in tabbed sections.
+- Admin `Notificaciones` can send internal notices to all users or selected users, roles and tenants, with optional email copies. Tenant frontend shows unread notices as login popups and pinned Inbox pseudo-items, not as customer conversations.
 
 ## Phase 3 Admin Observability UI
 

@@ -16,9 +16,9 @@ Implement a dedicated internal notification domain:
 
 - Store system communications in `saas_system_notifications`.
 - Store per-user delivery/read/email state in `saas_system_notification_recipients`.
-- Show tenant notifications as non-replyable popups and pinned Inbox pseudo-items while unread.
+- Show tenant notifications as non-replyable popups and pinned Inbox pseudo-items while unread; after read, keep them as notification history sorted by age.
 - Keep internal notifications outside customer conversation/message tables.
-- Use branded Spanish HTML emails from `app_saas.shared.email` for reset password, welcome, access/role alerts and optional notification copies.
+- Use branded Spanish HTML emails from `app_saas.shared.email` with the white Scentra header logo for reset password, welcome, access/role alerts and optional notification copies.
 - Send bulk notification email copies after in-app notification rows are committed so SMTP does not hold a PostgreSQL transaction.
 
 ## Consequences
@@ -27,4 +27,3 @@ Implement a dedicated internal notification domain:
 - In-app delivery works even when SMTP is down or not configured.
 - Admin can target notifications by tenant, role or user while keeping copy human-readable.
 - Future notification work should extend this domain, not create synthetic customer conversations.
-

@@ -28,8 +28,8 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - No dedicated automated test suite was detected for SaaS during inspection; changes need targeted manual or added tests if user requests.
 - Password recovery is implemented and smoke-tested locally, but production email delivery depends on valid SMTP env vars. Without SMTP, production users will not receive reset links.
 - Email OTP MFA challenge enforcement is implemented in Phase 13 for tenant/admin login. TOTP/authenticator-app support is not implemented.
-- Internal system notifications are not implemented yet. Do not emulate them with customer CRM conversations because that could make AI/triggers/remarketing treat platform announcements as customer chats. Use a dedicated notification domain with per-recipient read/pin state.
-- Admin profile and tenant/platform user-management CRUD are incomplete. Tenant profile UI currently has local-only save behavior; real user/profile/invitation/role management needs a scoped backend/frontend implementation.
+- Internal system notifications and Admin/Tenant user-management CRUD are implemented at repository level, but production acceptance still requires redeploy testing for SMTP delivery, notification targeting, read/pin behavior and role/status updates.
+- Do not emulate future platform announcements with customer CRM conversations; extend the dedicated internal notification domain so AI/triggers/remarketing never treat platform notices as customer chats.
 
 ## Medium
 

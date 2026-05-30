@@ -63,7 +63,7 @@ All mounted under `/saas/v1`:
 
 Implemented SaaS runtime:
 
-- `app_saas.shared.email` sends Spanish HTML transactional emails with Scentra logo/favicon and plain-text fallback.
+- `app_saas.shared.email` sends Spanish HTML transactional emails with the white Scentra header logo/favicon and plain-text fallback.
 - Password recovery uses a reset link with a human-readable expiration date/time.
 - Welcome and access/role alert emails use role/status labels such as `Administrador`, `Agente`, `Activo` and `Inactivo`; user-facing copy must not expose table names or raw backend IDs.
 - `app_saas.notifications.router` stores internal communications in `saas_system_notifications` and `saas_system_notification_recipients`.

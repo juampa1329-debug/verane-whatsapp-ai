@@ -17,7 +17,7 @@ Scope: SaaS only. This file summarizes observed domain behavior from code struct
 - Admin support impersonation creates a short-lived tenant token and must stay audited.
 - Admin profile/user-management now has real persistence for platform admin profile/password updates, platform admin creation/update, tenant user creation/update and tenant user role/status management.
 - Tenant Settings profile/team management now persists through backend `/auth/profile` and `/auth/team*` endpoints.
-- Internal system notifications are a dedicated notification domain, not customer conversations. They appear as unread pinned pseudo-items above the tenant Inbox and as login/top popups, but they are non-replyable and ignored by customer AI, triggers, remarketing, CRM automation and agent orchestration.
+- Internal system notifications are a dedicated notification domain, not customer conversations. They appear as unread pinned pseudo-items above the tenant Inbox and as login/top popups. After read, they lose the pin but remain visible as notification history ordered by age. They are non-replyable and ignored by customer AI, triggers, remarketing, CRM automation and agent orchestration.
 - Transactional email covers password recovery, email OTP MFA, welcome emails, role/access alerts and optional internal notification copies. User-facing email copy must stay Spanish, branded and human-readable, without raw table names or internal IDs.
 
 ## Roles

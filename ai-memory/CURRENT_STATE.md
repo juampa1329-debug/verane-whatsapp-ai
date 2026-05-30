@@ -25,6 +25,21 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Polished SaaS Admin user-management and internal-notification UX:
+  - `app_saas.shared.email` now uses the white Scentra header logo from `https://scentra-ai.online/logo-blanco.png` for Spanish transactional templates.
+  - Tenant Inbox internal notifications now load unread plus recent history: unread notices stay pinned and non-replyable; after `Marcar leida`, they remain visible as history ordered by age instead of disappearing.
+  - Admin `Usuarios` is grouped into tabs: `Mi perfil`, `Admins plataforma`, and `Usuarios empresa`.
+  - Admin tenant-user management now includes search by name, email, company, role or status.
+  - Admin `Notificaciones` now explains the assisted draft, internal app delivery and optional email copy; it supports `Para todos`, selected audience search, and compact aligned recipient checkboxes.
+  - Admin CSS was hardened for responsive laptop/tablet/mobile layouts around users, notification targeting and compose grids.
+- Not changed:
+  - No backend route contract, DB migration/schema, Meta webhook/runtime, AI runtime, billing policy, auth token/session contract, provider credential or dependency was changed.
+- Validation status:
+  - `py -3 -m py_compile backend\app_saas\shared\email.py` passed.
+  - Tenant frontend production build passed with the existing Vite large-bundle warning.
+  - Admin frontend production build passed.
+  - SaaS Compose config and targeted diff whitespace checks passed.
+
 - Implemented transactional email templates, internal notifications, and user-management runtime for SaaS:
   - Added migration `075_saas_internal_notifications_user_management.sql` for `saas_users.profile_json`, `saas_system_notifications`, and `saas_system_notification_recipients`.
   - Added backend `app_saas.notifications` router with tenant unread/history/read endpoints plus Admin target, history, template-assisted draft, and send endpoints.

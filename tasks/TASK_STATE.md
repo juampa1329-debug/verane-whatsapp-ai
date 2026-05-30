@@ -4,9 +4,121 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Stabilize production after API pool exhaustion and heavy Inbox polling, explain polling/True AI, preserve AI context while sending shorter human-style reply fragments, and update the SaaS operator manual.
+Persist the current SaaS product context for transactional email, Admin profile/user management, and internal notifications before implementation.
 
 ## Status
+
+- Completed memory capture for the new product direction:
+  - Created `ai-memory/INTERNAL_COMMS_USER_MANAGEMENT_PLAN.md`.
+  - Recorded that production SMTP/email has been configured externally by the user with Oracle-hosted mail infrastructure.
+  - Preserved the intended email scope: password recovery, MFA/security notices, alerts, notifications and transactional system emails.
+  - Captured the requirement for a real Admin profile/user-management section: admin profile, password/email/2FA, platform admins, tenant users, roles and invitations.
+  - Captured the requirement for platform/admin internal notifications that can target specific users, roles, tenants or all users.
+  - Captured the UX rule: internal notifications should show as login popup and pinned Inbox pseudo-item while unread, then move to history after read.
+  - Captured the safety boundary: internal notifications must not be stored/processed as customer conversations unless explicitly approved, must not be replyable, must not trigger customer AI/triggers/remarketing, and must not count as Meta/customer messages.
+- Planned next implementation shape:
+  - Add backend `notifications` domain and forward migration for `saas_system_notifications` plus `saas_system_notification_recipients`.
+  - Add tenant endpoints for listing unread/history and marking read.
+  - Add admin endpoints for composing/sending notifications, then AI-assisted draft generation with human approval.
+  - Add tenant popup/pinned Inbox pseudo-row and Admin `Notificaciones/Comunicaciones` view.
+  - Add profile/user-management APIs/UI after notification baseline or as a separate scoped task.
+- Not changed:
+  - No SaaS runtime code, DB schema, SMTP config, auth behavior, AI behavior, Inbox behavior, workers, Meta integrations, tenant data or dependencies were changed.
+- Validation:
+  - Documentation/memory-only change; no build or backend compile is required.
+
+- Completed Admin deploy fix:
+  - Coolify build failed with `sh: 1: vite: Permission denied` during `RUN npm run build`.
+  - Verified `admin-frontend/node_modules` and `admin-frontend/dist` were tracked in Git; those local artifacts were entering the Docker context and overwriting container-installed dependencies.
+  - Added `admin-frontend/.dockerignore` to exclude `node_modules`, `dist`, `.env`, and logs from the Admin Docker build context.
+  - Updated `saas-version/.gitignore` to ignore admin local env/dependency/build artifacts.
+  - Removed tracked `admin-frontend/node_modules`, `admin-frontend/dist`, and `admin-frontend/.env` from the Git index with `--cached`; local files were not deleted.
+  - Updated `saas-version/infra/coolify-production.md` with the correct Admin Coolify config: base directory `/admin-frontend`, Dockerfile `/Dockerfile`, exposed port `80`.
+- Validation:
+  - `npm --prefix saas-version/admin-frontend run build` passed.
+  - `git -C saas-version diff --check` passed.
+  - `git -C saas-version ls-files admin-frontend/node_modules` returned zero tracked files.
+  - `git -C saas-version ls-files admin-frontend/dist` returned zero tracked files.
+  - Local `docker build` could not run because Docker Desktop daemon was unavailable on this machine.
+- Production acceptance after redeploy:
+  - Coolify Admin resource should use `Base Directory=/admin-frontend`, `Dockerfile Location=/Dockerfile`, `Ports Exposes=80`.
+  - Redeploy should no longer fail with `vite: Permission denied`.
+
+- Completed follow-up UX clarification:
+  - `frontend/src/App.jsx` now stops empty login submissions with clear Spanish messages before calling the API.
+  - `formatApiError`/`friendlyApiError` now map the real auth/security codes returned by the backend into actionable Spanish messages, including wrong credentials, rate limit, account lockout, CAPTCHA configuration/provider/availability, MFA code/challenge, expired recovery token, current-password mismatch, tenant membership and database-busy cases.
+  - The login form now shows a visible security hint explaining that repeated failed attempts can temporarily block access and that `Recuperar clave` is the safer path when the user is unsure.
+- Safety note:
+  - Login still does not confirm whether a specific email exists; the message remains intentionally generic about correo/clave to avoid account enumeration.
+- Not changed:
+  - No rate-limit thresholds, lockout policy, backend auth logic, password hashing, JWT/session payload, CAPTCHA policy, DB schema, tenant data, dependencies, billing, Meta/webhook or AI runtime was changed.
+- Validation:
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `git -C saas-version diff --check` passed.
+  - `git diff --check -- docs/FRONTEND.md ai-memory/CURRENT_STATE.md tasks/TASK_STATE.md` passed.
+
+- Completed current UX/security fix:
+  - The attached backend log showed multiple `POST /saas/v1/auth/login` 401 responses followed by `429 Too Many Requests`.
+  - The screenshot showed the raw code `rate_limit_exceeded`; this was confusing for users even though the backend security behavior was expected.
+  - `frontend/src/App.jsx` now translates auth errors into Spanish operator/user messages:
+    - wrong credentials -> "Correo o clave incorrectos..."
+    - rate limit -> "Demasiados intentos..." with retry time when provided
+    - temporary account lockout -> clear lockout message
+    - CAPTCHA and database-busy states -> controlled Spanish messages
+  - Auth forms now use an `authSubmitting` guard and disabled submit labels to avoid rapid duplicate submissions.
+  - `shared/security_events.py` now includes `Retry-After` on 429 responses.
+- Not changed:
+  - Rate-limit thresholds, failed-login lockout thresholds, password hashing, JWT/session payload, CAPTCHA policy, tenant membership checks, registration side effects, billing, Meta/webhook flow, AI runtime, DB schema and dependencies were not changed.
+- Validation:
+  - `py -3 -m py_compile saas-version/backend/app_saas/shared/security_events.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed with the existing Vite large-bundle warning.
+  - `git -C saas-version diff --check` passed.
+- Operational note:
+  - For the affected user, verify the email/password first. If they are locked out due to previous attempts, they can wait for the rate-limit window or use Recuperar clave. An admin/operator can also clear the relevant `saas_security_events`/login lock in PostgreSQL if immediate access is required.
+
+- Completed current production fix:
+  - Root cause came from the pasted backend log: registration failed before creating a user because `db_session()` could not acquire a PostgreSQL connection: `QueuePool limit of size 10 overflow 20 reached`.
+  - `auth/register` now minimizes DB hold time: rate-limit check is short, CAPTCHA verification is outside the DB transaction, Argon2 hash generation happens before the create transaction, and only account/tenant/trial creation remains transactional.
+  - `shared/security_events.py` now caches security-event schema readiness and avoids hot-path runtime DDL when `saas_security_events` already exists. Fallback DDL is serialized with a PostgreSQL advisory lock.
+  - `main.py` now translates SQLAlchemy pool timeouts into controlled `503 database_busy` responses with correlation id and CORS headers instead of generic `500 internal_server_error`.
+- Not changed:
+  - No frontend behavior, auth token shape, password hashing algorithm, CAPTCHA enablement policy, rate-limit thresholds, tenant/trial creation semantics, billing lifecycle, Meta/webhook flow, AI provider/runtime, dependencies or schema migration was changed.
+- Validation:
+  - `py -3 -m py_compile saas-version/backend/app_saas/auth/router.py saas-version/backend/app_saas/shared/security_events.py saas-version/backend/app_saas/main.py` passed.
+  - Full SaaS diff/compose checks and git push are pending in the current turn.
+- Production acceptance after redeploy:
+  - Confirm `/saas/v1/ready` returns 200.
+  - Create a new demo account from the public app and verify it returns tokens plus owner tenant membership.
+  - Watch API logs for absence of `POST /saas/v1/auth/register` 500 and for fewer repeated security-event runtime DDL statements.
+  - If a new overload occurs, the frontend should receive `503 database_busy` with a correlation id instead of a CORS-looking generic 500.
+
+- Completed current production fix:
+  - Root cause came from the pasted backend log: `GET /saas/v1/intelligence/recommendations` failed with PostgreSQL `DeadlockDetected` while `ensure_intelligence_tables()` attempted `ALTER TABLE saas_intelligence_model_registry` during normal read traffic.
+  - Added migration `074_saas_intelligence_runtime_ddl_deadlock_repair.sql` so startup migrations repair the Intelligence model rollout columns and feature-value version columns before the app serves requests.
+  - Expanded `schema_readiness.py` to include `saas_intelligence_feature_values`, `saas_intelligence_model_registry`, `saas_intelligence_model_rollout_events` and their critical columns.
+  - Hardened `intelligence/service.py` so runtime schema checks are cached and defensive DDL is serialized with a process RLock plus PostgreSQL advisory transaction lock; once ready, Intelligence read endpoints skip repeated `ALTER TABLE`.
+- Not changed:
+  - No frontend behavior, route contract, tenant data, provider credentials, AI Gateway behavior, Meta webhook/subscription flow, Inbox runtime, billing policy, dependencies or worker queue business logic was changed.
+- Validation:
+  - `py -3 -m py_compile saas-version/backend/app_saas/intelligence/service.py saas-version/backend/app_saas/shared/schema_readiness.py` passed.
+  - `docker compose -f saas-version/docker-compose.saas.yml config --quiet` passed.
+  - SQL migration BOM scan passed.
+  - `git -C saas-version diff --check` passed.
+- Production acceptance after redeploy:
+  - Confirm the API startup applies migration `074` and `/saas/v1/ready` returns 200.
+  - Open `Inteligencia` and verify `/intelligence/recommendations`, `/intelligence/features`, `/intelligence/model-metrics`, `/trust-center/*`, and `/ecosystem/*` return 200/controlled auth responses instead of 500.
+  - Watch backend logs for absence of `DeadlockDetected` and repeated `ALTER TABLE saas_intelligence_model_registry`/`saas_intelligence_feature_values` during page load.
+
+- Completed current documentation task:
+  - Created `docs/MANUAL_COMPLETO_SCENTRA_SAAS.md` as the detailed Spanish SaaS manual.
+  - The manual covers the tenant app shell, login/register/recovery, Dashboard, Inbox, CRM mini ficha, comments, WooCommerce product cards, Clientes CRM, Etiquetas, Campanas/triggers/remarketing, Broadcast, Ads, AI Agents, Intelligence, AI Ecosystem, Workflow Composer, Trust AI, all Ajustes tabs, Floating Advisor, Admin SaaS views, backend workers, AI provider behavior, premium gating, common errors and operational checklists.
+  - Updated `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md` with a pointer to the new detailed manual.
+  - Updated `ai-memory/CURRENT_STATE.md` for memory continuity.
+- Not changed:
+  - No SaaS frontend runtime, backend logic, database migration, dependency, environment setting, worker behavior, provider credential, tenant data or deployment config was changed.
+- Validation:
+  - Documentation-only change; app build and backend compile are not required.
+  - Pending whitespace/diff validation before final response.
 
 - Completed current stabilization:
   - Root cause from the backend log was SQLAlchemy/PostgreSQL pool exhaustion: `QueuePool limit of size 5 overflow 10 reached` during `/auth/refresh`.

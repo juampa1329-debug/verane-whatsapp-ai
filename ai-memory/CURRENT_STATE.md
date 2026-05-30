@@ -25,6 +25,83 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Captured the next product/operations context for transactional email, Admin profile/user management, and internal notifications:
+  - The user has configured a production email channel outside the codebase using Oracle-hosted mail infrastructure.
+  - Email is intended for password recovery, MFA/security notices, alerts, notifications and transactional system emails.
+  - Added `ai-memory/INTERNAL_COMMS_USER_MANAGEMENT_PLAN.md` as the durable planning memory.
+  - Next implementation should add a dedicated internal notification domain rather than storing system messages as customer conversations.
+  - Internal notifications should appear as login popup and unread pinned pseudo-items above the tenant Inbox, then move to history after read.
+  - Internal notifications must be non-replyable and invisible to customer-facing AI, triggers, remarketing, CRM automation and agent orchestration.
+  - Admin still needs a real profile/user-management area for platform admins and tenant users/roles.
+- Not changed:
+  - No code, DB migration, SMTP env var, auth policy, frontend runtime, worker, AI runtime, Meta runtime or tenant data was changed in this memory operation.
+
+- Fixed the Admin Coolify Docker build failure reported as `sh: 1: vite: Permission denied`:
+  - Root cause: `admin-frontend/node_modules`, `admin-frontend/dist`, and local `.env` were tracked in the SaaS repo/build context; Docker installed Linux dependencies, then `COPY . .` overwrote them with local Windows dependencies, leaving `vite` non-executable in Linux.
+  - `saas-version/.gitignore` now ignores admin local env/dependency/build artifacts.
+  - `saas-version/admin-frontend/.dockerignore` now excludes `node_modules`, `dist`, `.env`, and logs from Docker build context.
+  - Tracked admin `node_modules`, `dist`, and `.env` were removed from the Git index with `--cached`, leaving local files intact.
+  - `saas-version/infra/coolify-production.md` documents the correct Admin Dockerfile-only Coolify config: base `/admin-frontend`, Dockerfile `/Dockerfile`, exposed port `80`.
+- Validation status:
+  - Admin Vite build passed locally.
+  - Git no longer lists tracked `admin-frontend/node_modules` or `admin-frontend/dist`.
+  - Docker build check could not run locally because Docker Desktop daemon was unavailable.
+
+- Clarified tenant auth error UX after production `rate_limit_exceeded`/wrong-password confusion:
+  - `frontend/src/App.jsx` now validates empty login email/password before sending the request.
+  - Login errors now explain the likely cause and next safe action for wrong credentials, rate limits, temporary lockout, CAPTCHA provider/config/availability problems, MFA challenge/code issues, expired reset tokens, membership issues and database saturation.
+  - The login form shows a persistent hint that repeated failed attempts can temporarily block access and recommends `Recuperar clave` before continuing to guess.
+- Not changed:
+  - No backend auth policy, rate-limit threshold, failed-login lockout duration, password hashing, JWT/session contract, CAPTCHA enablement, tenant data, DB schema, dependencies or provider runtime was changed.
+
+- Improved tenant login lockout/rate-limit handling after a user saw raw `rate_limit_exceeded`:
+  - Backend log showed repeated `POST /saas/v1/auth/login` 401 responses followed by `429 Too Many Requests`; this is the Phase 1 auth rate limit working after failed login attempts, not a backend crash.
+  - `frontend/src/App.jsx` now maps auth/security errors to human Spanish messages: invalid credentials, temporary lockout, rate limit with retry time, CAPTCHA failures and database busy.
+  - Auth forms now use a shared `authSubmitting` guard and disabled button labels to prevent duplicate login/register/recovery/reset submits while a request is in flight.
+  - `shared/security_events.py` now includes `Retry-After` headers on 429 rate-limit responses.
+- Not changed:
+  - No rate-limit thresholds, failed-login lockout policy, password hashing, JWT/session behavior, tenant data, registration contract, CAPTCHA enablement, billing, Meta, AI, DB schema or dependencies were changed.
+- Validation status:
+  - Backend `py_compile` passed for `shared/security_events.py`.
+  - Tenant frontend production build passed with the existing large-bundle warning.
+  - SaaS diff whitespace check passed.
+
+- Fixed a production `POST /saas/v1/auth/register` 500 caused by PostgreSQL pool exhaustion:
+  - Backend log showed `sqlalchemy.exc.TimeoutError: QueuePool limit of size 10 overflow 20 reached` at `auth/router.py:register` while trying to open `db_session()`.
+  - Registration now keeps the same security semantics but reduces DB connection hold time: rate-limit check uses a short DB section, CAPTCHA validation runs outside the DB transaction, Argon2 password hashing runs before the create transaction, and only the user/tenant/membership/trial/vertical-pack work stays inside the creation transaction.
+  - `shared/security_events.py` no longer runs `CREATE TABLE/CREATE INDEX IF NOT EXISTS` on every auth rate-limit/security-event call when the table already exists; it performs a cheap schema check, caches readiness per process, and serializes fallback DDL with a PostgreSQL advisory transaction lock.
+  - `main.py` now returns controlled `503 database_busy` with correlation id for SQLAlchemy pool timeouts instead of generic 500, preserving CORS headers for the frontend.
+- Not changed:
+  - No auth token payload, password hashing algorithm, CAPTCHA policy, rate-limit thresholds, tenant/trial creation contract, billing behavior, Meta/webhook runtime, AI runtime, frontend flow, dependencies or database schema was changed.
+- Validation status:
+  - Backend `py_compile` passed for touched auth/main/security-event modules.
+  - Full SaaS validation passed and commit `54bfc6b` was pushed to `main`.
+
+- Fixed a production `Inteligencia` page 500/deadlock incident:
+  - Backend log showed `psycopg2.errors.DeadlockDetected` on `GET /saas/v1/intelligence/recommendations`, caused by `ensure_intelligence_tables()` running `ALTER TABLE saas_intelligence_model_registry` during parallel Intelligence/Trust/Ecosystem reads.
+  - Added migration `074_saas_intelligence_runtime_ddl_deadlock_repair.sql` to repair Intelligence feature-value version columns and model-registry rollout columns during startup migrations.
+  - `app_saas.shared.schema_readiness` now treats `saas_intelligence_feature_values`, `saas_intelligence_model_registry`, and `saas_intelligence_model_rollout_events` plus the rollout/version columns as critical readiness schema.
+  - `intelligence/service.py` now caches Intelligence/ML training schema readiness and serializes defensive runtime DDL with a process RLock plus PostgreSQL advisory transaction lock, so once the schema is ready, read endpoints do not repeatedly execute `ALTER TABLE`.
+- Not changed:
+  - No frontend route, API response contract, tenant data, AI provider behavior, Inbox/Meta/webhook runtime, billing policy, prompt behavior, worker queue semantics or dependencies were changed.
+- Validation status:
+  - Backend `py_compile` passed for touched Intelligence/schema readiness modules.
+  - SaaS Compose config passed.
+  - SQL migration BOM scan passed.
+  - SaaS diff whitespace check passed.
+- Production action:
+  - Redeploy the API so migration `074` runs before Uvicorn and `/saas/v1/ready` verifies the repaired schema; then reopen `Inteligencia` and confirm the fan-out endpoints return 200 instead of deadlocking.
+
+- Added a comprehensive SaaS user/admin/operator manual:
+  - New `docs/MANUAL_COMPLETO_SCENTRA_SAAS.md` documents the client app, Admin app, buttons, metrics, processing flows, AI/agent behavior, diagnostics, workers, billing, premium gates, common errors and operational checklists.
+  - `docs/MANUAL_OPERATIVO_SCENTRA_SAAS.md` now points to the complete manual as the detailed reference.
+  - Documentation is derived from the active SaaS code paths under `saas-version/`: tenant React app, Admin React app, FastAPI routers, worker domains and existing memory docs.
+- Not changed:
+  - No product logic, frontend runtime, backend route, migration, dependency, env var, worker behavior, provider credential, tenant data or deployment config was changed.
+- Validation status:
+  - Documentation-only change; no app build was required.
+  - Pending check: Markdown/diff whitespace validation before final response.
+
 - Stabilized production DB/polling pressure and AI delivery pacing:
   - `backend/app_saas/db.py` now creates the SQLAlchemy engine with configurable pool settings from `SAAS_DB_POOL_SIZE`, `SAAS_DB_MAX_OVERFLOW`, `SAAS_DB_POOL_TIMEOUT_SEC`, and `SAAS_DB_POOL_RECYCLE_SEC`.
   - `backend/app_saas/config.py` and `docker-compose.saas.yml` now default to less aggressive worker settings; Compose disables the API embedded worker by default when the standalone worker service exists.

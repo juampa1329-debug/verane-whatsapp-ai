@@ -25,6 +25,11 @@ Runtime config:
 - `VITE_CAPTCHA_ENABLED`: optional Turnstile UI toggle.
 - `VITE_TURNSTILE_SITE_KEY`: Turnstile site key when captcha is enabled.
 
+Auth UX:
+
+- Login/register/recovery/reset forms share an in-flight guard so the submit button is disabled while the request is being processed.
+- API auth errors are translated into Spanish user-facing messages for invalid credentials, rate limits, temporary lockout, CAPTCHA failures, MFA/reset-token problems, membership issues and database saturation. Login copy explains the cause and next safe action without revealing whether a specific email exists. Keep this mapping in `formatApiError` when adding new backend auth error codes.
+
 Local storage keys:
 
 - `scentra_ai_access_token`
@@ -104,6 +109,8 @@ Admin views detected:
 - Tenant detail shows effective feature flags from plan/default/trial plus tenant overrides; changes create admin overrides.
 - Admin bootstrap UI is hidden outside localhost unless explicitly enabled by `VITE_ADMIN_BOOTSTRAP_ENABLED`.
 - Support impersonation opens the client app with a short-lived support token through `VITE_CLIENT_APP_BASE`.
+- Pending product requirement: Admin needs a real profile/user-management area for platform admin profile, password/email/2FA, platform admin creation and tenant user/role management.
+- Pending product requirement: Admin needs a communications/notifications area to send internal notices to selected users, roles, tenants or all users. Tenant frontend should show unread notices as login popups and pinned Inbox pseudo-items, not as customer conversations.
 
 ## Phase 3 Admin Observability UI
 

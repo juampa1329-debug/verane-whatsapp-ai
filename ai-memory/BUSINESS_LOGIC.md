@@ -15,6 +15,8 @@ Scope: SaaS only. This file summarizes observed domain behavior from code struct
 - Tenant privacy exports and delete requests live under `/compliance`; delete requests are review records and do not hard-delete data automatically.
 - Production first platform admin is created with `app_saas.tools.create_platform_admin` or Compose profile `platform-admin-seed`; HTTP bootstrap is local-only.
 - Admin support impersonation creates a short-lived tenant token and must stay audited.
+- Future Admin profile/user-management work should add real persistence for platform admin profile updates and tenant user/role management. Tenant Settings currently has a profile UI, but `saveProfileLocal` is local-only; password change and email OTP 2FA are real backend flows.
+- Future internal system notifications should be a dedicated notification domain, not customer conversations. They may appear as unread pinned pseudo-items above the tenant Inbox and as login popups, but they must be non-replyable and ignored by customer AI, triggers, remarketing, CRM automation and agent orchestration.
 
 ## Roles
 

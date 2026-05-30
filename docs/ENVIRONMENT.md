@@ -81,6 +81,12 @@ Password recovery email:
 - `SMTP_FROM_EMAIL`
 - `SMTP_STARTTLS`
 
+Transactional email scope:
+
+- The same SMTP channel is used by password recovery, email OTP MFA and security notices today.
+- The user intends this production email channel to also support future system notifications, alerts and transactional emails.
+- Future internal notification delivery should reuse these SMTP settings for optional email copies, but SMTP delivery must not be required for in-app notification persistence.
+
 Phase 13 MFA/security notices:
 
 - Email OTP MFA uses the same SMTP settings as password recovery.
@@ -191,6 +197,7 @@ Important compose defaults:
 - Dockerfile-only deployments must still build from the SaaS source. If Coolify imports `juampa1329-debug/Scentra-AI` directly, the SaaS is already at repo root: use base directory `/` and Dockerfile `/backend/Dockerfile`. If Coolify imports the monorepo `juampa1329-debug/verane-whatsapp-ai`, use base directory `/saas-version` and Dockerfile `/backend/Dockerfile`.
 - Do not mix those modes. `lstat .../saas-version/backend: no such file or directory` means Coolify is using the direct `Scentra-AI` repo and the base directory must be `/`.
 - `saas-version/backend/Dockerfile` now runs the same startup gate as Compose by default: `migrate -> schema_check -> uvicorn`. Do not paste that command into the VPS host shell; it must run inside the container/Coolify app where Python and `app_saas` exist.
+- Admin Dockerfile-only deployments should use the admin frontend as build context: base directory `/admin-frontend`, Dockerfile `/Dockerfile`, exposed port `80`. The admin context excludes `node_modules`, `dist`, and `.env`; otherwise local Windows dependencies can overwrite container-installed Linux dependencies and produce `vite: Permission denied`.
 
 Voice Intelligence runtime:
 

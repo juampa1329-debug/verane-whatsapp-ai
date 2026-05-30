@@ -25,6 +25,21 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Implemented transactional email templates, internal notifications, and user-management runtime for SaaS:
+  - Added migration `075_saas_internal_notifications_user_management.sql` for `saas_users.profile_json`, `saas_system_notifications`, and `saas_system_notification_recipients`.
+  - Added backend `app_saas.notifications` router with tenant unread/history/read endpoints plus Admin target, history, template-assisted draft, and send endpoints.
+  - Password reset, welcome, account/role alerts, and Admin-sent notifications now use Spanish HTML email templates with Scentra logo/favicon, readable role/status/category labels, and reset-link expiration copy.
+  - Bulk notification email copies are sent after in-app rows are committed, avoiding SMTP network calls inside the PostgreSQL transaction.
+  - Tenant frontend now shows unread internal notifications as a login/top popup and pinned pseudo-items above Inbox conversations until read; they are not customer conversations and cannot be replied to.
+  - Tenant settings now has real profile update and team user/role management backed by `/auth/profile`, `/auth/team`, and `/auth/team/*`.
+  - Admin frontend now has `Usuarios` and `Notificaciones` views for platform admins, tenant users, roles, profile/password, targeted internal notifications and optional email copies.
+- Not changed:
+  - No Meta webhook/runtime, WhatsApp/Instagram dispatch, customer conversation schema, AI reply flow, trigger/remarketing worker, billing contract, provider credentials or dependencies were changed.
+- Validation status:
+  - Backend `py_compile` passed for touched email/notification/auth/admin/main/readiness modules.
+  - Tenant and Admin Vite production builds passed.
+  - SaaS Compose config and diff whitespace checks passed.
+
 - Captured the next product/operations context for transactional email, Admin profile/user management, and internal notifications:
   - The user has configured a production email channel outside the codebase using Oracle-hosted mail infrastructure.
   - Email is intended for password recovery, MFA/security notices, alerts, notifications and transactional system emails.

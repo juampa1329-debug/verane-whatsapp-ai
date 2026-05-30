@@ -18,10 +18,13 @@ File: `saas-version/backend/app_saas/main.py`.
 
 - `/saas/v1/health` is liveness only and should stay lightweight.
 - `/saas/v1/ready` checks PostgreSQL connectivity plus the SaaS schema readiness contract from `app_saas.shared.schema_readiness`.
-- The readiness contract verifies migration application state and critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths.
+- The readiness contract verifies migration application state and critical runtime tables/columns used by auth, registration, billing lifecycle, Inbox, CRM, campaigns, verticalization, Advisor and Intelligence boot paths, including Intelligence feature-value and model-registry rollout columns that previously caused runtime DDL deadlocks.
 - `app_saas.tools.schema_check` runs the same contract as a CLI gate after migrations and before Uvicorn in Docker.
 - Production deploys should route traffic only to containers that pass `/ready`; a container with pending migrations or missing critical schema must remain unhealthy instead of serving user-facing 500s.
 - Tenant registration keeps user/tenant/membership/trial creation mandatory. Industry vertical-pack seeding runs in a savepoint so non-critical seed drift records `auth.register` warning `vertical_pack_apply_failed` instead of blocking account creation.
+- Tenant registration is optimized to avoid holding DB connections during external CAPTCHA verification or Argon2 password hashing. Auth security-event schema checks are cached so normal login/register/rate-limit calls do not run DDL in hot paths once migrations have created `saas_security_events`.
+- SQLAlchemy pool timeouts are returned as controlled `503 database_busy` responses with correlation id and CORS headers instead of generic route-level 500s.
+- Auth rate-limit responses remain `429` and now include `Retry-After` plus `detail.retry_after_seconds`; the client maps this to a friendly lockout message instead of showing raw `rate_limit_exceeded`.
 
 ## Router Modules
 
@@ -54,6 +57,26 @@ All mounted under `/saas/v1`:
 - `social`: `/social/*`
 - `billing`: `/billing/*`
 - `webhooks`: `/webhooks/*`
+- `notifications`: `/notifications/*`, `/admin/notifications/*`
+
+## Internal Notifications And Transactional Email
+
+Implemented SaaS runtime:
+
+- `app_saas.shared.email` sends Spanish HTML transactional emails with Scentra logo/favicon and plain-text fallback.
+- Password recovery uses a reset link with a human-readable expiration date/time.
+- Welcome and access/role alert emails use role/status labels such as `Administrador`, `Agente`, `Activo` and `Inactivo`; user-facing copy must not expose table names or raw backend IDs.
+- `app_saas.notifications.router` stores internal communications in `saas_system_notifications` and `saas_system_notification_recipients`.
+- Tenant endpoints list unread/history notifications and mark them read.
+- Admin endpoints load target users/tenants/roles, prepare a template-assisted draft, send targeted notifications and list notification history.
+- Internal notifications are not customer conversations and must remain excluded from customer AI, triggers, remarketing, CRM automation and agent orchestration.
+- Bulk notification email copies are sent after notification rows commit, so SMTP latency does not hold a PostgreSQL transaction.
+
+User-management endpoints:
+
+- Tenant users: `/auth/profile`, `/auth/team`, `/auth/team/users`, `/auth/team/memberships/{membership_id}`.
+- Platform admins and tenant users from Admin: `/admin/auth/profile`, `/admin/auth/password/change`, `/admin/users/platform`, `/admin/users/tenants`.
+- User-created, role-changed and important access alerts notify only the implicated user plus tenant admins when applicable.
 
 ## WhatsApp Message Flow And Diagnostics
 
@@ -97,6 +120,7 @@ Support interpretation:
 - `GET /saas/v1/agents/multimodal-memory/events` is an optional Phase 24 read surface; it should return an empty `events` array when `saas_multimodal_memory_events` is absent/incomplete rather than calling `ensure_multimodal_memory_tables`.
 - `GET /saas/v1/media/search/runs` is an optional Phase 24 read surface; it should return an empty `runs` array when Web/Image Search tables are absent/incomplete rather than running `_ensure_web_image_search_tables`.
 - Mutation/execution endpoints can keep defensive ensure helpers, but frequently-polled Inbox reads should stay read-only to avoid PostgreSQL `AccessExclusiveLock` deadlocks under concurrent browser requests.
+- Intelligence read surfaces such as `/intelligence/recommendations`, `/intelligence/features`, `/intelligence/model-metrics`, Trust Center and AI Ecosystem can fan out in parallel when the `Inteligencia` page opens. `intelligence/service.py` now caches runtime schema readiness and serializes defensive DDL with a PostgreSQL advisory transaction lock; startup migration `074` repairs the known missing rollout/feature columns so normal reads do not repeatedly run `ALTER TABLE`.
 
 ## Module Map
 

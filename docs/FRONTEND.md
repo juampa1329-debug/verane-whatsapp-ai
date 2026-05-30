@@ -30,6 +30,14 @@ Auth UX:
 - Login/register/recovery/reset forms share an in-flight guard so the submit button is disabled while the request is being processed.
 - API auth errors are translated into Spanish user-facing messages for invalid credentials, rate limits, temporary lockout, CAPTCHA failures, MFA/reset-token problems, membership issues and database saturation. Login copy explains the cause and next safe action without revealing whether a specific email exists. Keep this mapping in `formatApiError` when adding new backend auth error codes.
 
+Internal notification UX:
+
+- Tenant unread system notifications load from `/saas/v1/notifications`.
+- Unread notifications can appear as a top popup after login/navigation and as pinned pseudo-items above the Inbox conversation list.
+- Notification pseudo-items are marked `Interno`/`Sin respuesta`; they do not open a customer thread and cannot be replied to.
+- `Marcar leída` calls `/saas/v1/notifications/{recipient_id}/read` and removes the popup/pin.
+- Tenant Settings includes real profile save and team user management backed by `/auth/profile` and `/auth/team*`.
+
 Local storage keys:
 
 - `scentra_ai_access_token`
@@ -77,6 +85,12 @@ Runtime config:
 - `VITE_CAPTCHA_ENABLED`: optional Turnstile UI toggle.
 - `VITE_TURNSTILE_SITE_KEY`: Turnstile site key when captcha is enabled.
 - `VITE_ADMIN_BOOTSTRAP_ENABLED`: optional local bootstrap UI toggle; production should keep it disabled and use the seed command/service.
+
+Admin user/notification UX:
+
+- `Usuarios` manages the platform admin profile/password, platform admins, tenant users and role/status changes through `/saas/v1/admin/users/*`.
+- `Notificaciones` loads target tenants/users/roles, prepares a template-assisted Spanish draft, sends targeted internal notifications and optionally sends email copies.
+- Admin notification history displays human labels for severity/category and recipient/read/email counts; it must not show raw table names or internal IDs as user-facing labels.
 
 Local storage key:
 

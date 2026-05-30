@@ -18,6 +18,9 @@ Behavior:
 - Migration runner applies SQL files from `saas-version/migrations`.
 - Schema readiness is checked by `app_saas.shared.schema_readiness` and CLI `app_saas.tools.schema_check`; Docker runs this check after migrations and before API startup.
 - Migration `073_saas_billing_invoice_amount_cents_repair.sql` repairs production/bootstrap drift where `saas_billing_invoices` exists without the runtime/readiness compatibility column `amount_cents`.
+- Migration `074_saas_intelligence_runtime_ddl_deadlock_repair.sql` repairs Intelligence feature/model rollout columns during startup so read endpoints do not need to run `ALTER TABLE` under concurrent browser traffic.
+- Migration `075_saas_internal_notifications_user_management.sql` adds persisted user profile metadata and dedicated internal notification tables for non-customer SaaS communications.
+- `saas_security_events` is created by migrations `038`/`069`; runtime security-event checks now cache verified columns and avoid hot-path DDL during normal login/register/rate-limit traffic.
 
 ## Migration Timeline
 
@@ -88,6 +91,8 @@ Behavior:
 - `070_saas_crm_intelligence_schema_drift_repair.sql`: production drift repair for missing CRM, integrations, campaign, verticalization and Intelligence runtime columns/tables used by registration, Inbox, dashboard and Advisor boot.
 - `071_saas_app_boot_schema_drift_repair.sql`: production drift repair for missing base Inbox conversation/message/outbound columns, vertical-pack seed columns/indexes, audit events, campaign preflight support and Advisor insight/recommendation runtime tables used by app boot and registration-adjacent flows.
 - `072_saas_phase24_inbox_multimodal_drift_repair.sql`: production drift repair for Phase 24 Inbox multimodal read paths: voice/vision analyses, web/image search runs/results, multimodal memory events and dependency tables.
+- `073_saas_billing_invoice_amount_cents_repair.sql`: production drift repair for missing invoice `amount_cents` compatibility/readiness column.
+- `074_saas_intelligence_runtime_ddl_deadlock_repair.sql`: production drift repair for Intelligence feature-value version columns and model-registry rollout columns that must exist before Intelligence read pages fan out.
 - Phase 24.7 added no migration; Inbox reference UX reuses Web/Image Search, multimodal memory and CRM outbound tables.
 
 ## Important Table Families
@@ -158,6 +163,9 @@ Applied:
 - `070_saas_crm_intelligence_schema_drift_repair.sql`: added as forward repair migration for production databases where earlier CRM/campaign/verticalization/Intelligence migrations were marked applied but app-boot and registration columns/tables were missing. It restores missing Inbox conversation fields, CRM labels/tasks/pipeline/custom-field/timeline tables, campaign template/segment/trigger/flow/quiet-hours tables, vertical pack audit state, integration list columns, and Intelligence predictions/recommendations.
 - `071_saas_app_boot_schema_drift_repair.sql`: added as forward repair migration for production databases still missing base Inbox columns/tables from earlier app-boot migrations, including `takeover`, `last_message_text`, `unread_count`, message `msg_type`/media fields, outbound queue fields, vertical pack seed columns/indexes, `saas_audit_events`, campaign preflight support, A/B event support, and Advisor insights/recommendations.
 - `072_saas_phase24_inbox_multimodal_drift_repair.sql`: added as forward repair migration for production databases where Phase 24 tables or columns are missing/partial while the Inbox calls multimodal read endpoints.
+- `073_saas_billing_invoice_amount_cents_repair.sql`: added as forward repair migration for production databases where invoice readiness expected `amount_cents` but older billing tables only stored total/due/paid amount fields.
+- `074_saas_intelligence_runtime_ddl_deadlock_repair.sql`: added as forward repair migration for production databases where earlier Phase 11 migrations were marked applied but Intelligence model rollout columns or feature-value version columns were missing/partial.
+- `075_saas_internal_notifications_user_management.sql`: added as forward migration for user profile metadata plus internal system notifications and per-recipient read/email state. These notifications are not customer conversations.
 
 Checks:
 

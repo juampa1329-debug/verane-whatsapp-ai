@@ -4,9 +4,34 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Persist the current SaaS product context for transactional email, Admin profile/user management, and internal notifications before implementation.
+Implement transactional email templates, Admin/tenant user management, and internal notifications for SaaS.
 
 ## Status
+
+- Completed implementation:
+  - Added migration `075_saas_internal_notifications_user_management.sql` for internal notification tables and persisted user profile metadata.
+  - Added backend notification router under `/saas/v1` with tenant read/unread endpoints and Admin target/draft/send/history endpoints.
+  - Added Spanish HTML templates for welcome, reset password, access/role alerts and internal notification email copies using the public Scentra logo/favicon.
+  - Reset password emails include a human-readable expiration date/time.
+  - User-created, role-changed and access-status alerts are sent only to the implicated user and tenant admins where applicable.
+  - Admin notification emails and in-app messages use readable Spanish labels; technical table names/IDs are not exposed in the user-facing copy.
+  - Tenant app displays internal notifications as non-replyable popups and pinned Inbox pseudo-items while unread.
+  - Tenant app now supports real profile save plus team user creation/role activation from Settings.
+  - Admin app now includes `Usuarios` and `Notificaciones` views for platform admins, tenant users, role/status changes, profile/password and targeted internal communications.
+- Safety boundaries:
+  - Internal notifications are not stored as customer conversations.
+  - They are invisible to customer-facing AI, triggers, remarketing, CRM automation, Meta webhooks and agent orchestration.
+  - Bulk email copies are sent after the in-app notification transaction commits, so SMTP delays do not hold DB locks.
+- Validation:
+  - `py -3 -m py_compile backend/app_saas/shared/email.py backend/app_saas/notifications/router.py backend/app_saas/auth/router.py backend/app_saas/admin/router.py backend/app_saas/main.py backend/app_saas/shared/schema_readiness.py` passed.
+  - `npm --prefix frontend run build` passed with the existing large-bundle warning.
+  - `npm --prefix admin-frontend run build` passed.
+  - `docker compose -f docker-compose.saas.yml config --quiet` passed.
+  - `git diff --check` passed.
+- Production acceptance after redeploy:
+  - Confirm migration `075` applies before Uvicorn and `/saas/v1/ready` returns 200.
+  - Test password recovery email, tenant user creation email, Admin-created tenant user email, and Admin notification with/without email copy.
+  - Open tenant Inbox and verify unread internal notifications stay pinned until read and never open a replyable customer thread.
 
 - Completed memory capture for the new product direction:
   - Created `ai-memory/INTERNAL_COMMS_USER_MANAGEMENT_PLAN.md`.

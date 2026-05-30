@@ -2,7 +2,7 @@
 
 Scope: SaaS only.
 
-Status: planning/memory only. No runtime implementation exists yet.
+Status: implemented baseline runtime. Keep this file as product memory and extension guide.
 
 ## Captured Operator Context
 
@@ -41,9 +41,9 @@ Required capabilities:
 
 Current code notes:
 
-- Tenant Settings has a profile UI in `frontend/src/App.jsx`, but `saveProfileLocal` is local-only and says persistence is missing.
+- Tenant Settings profile/team management persists through `/auth/profile` and `/auth/team*`.
 - Tenant password change and email OTP 2FA are already real backend flows.
-- Admin Security exists, but there is no complete Admin profile/user-management section yet.
+- Admin `Usuarios` supports Admin profile/password, platform admins, tenant users and role/status changes.
 
 ### Internal Notifications / System Inbox
 
@@ -83,18 +83,18 @@ Recommended architecture:
 - Tenant app should render unread internal notifications as pseudo-items above the Inbox conversation list, not as real CRM conversation rows.
 - Admin app should get a new `Notificaciones` or `Comunicaciones` view.
 
-Suggested tenant APIs:
+Implemented tenant APIs:
 
 - `GET /saas/v1/notifications`
-- `GET /saas/v1/notifications/unread`
-- `POST /saas/v1/notifications/{notification_id}/read`
+- `POST /saas/v1/notifications/{recipient_id}/read`
+- `POST /saas/v1/notifications/read-all`
 
-Suggested admin APIs:
+Implemented admin APIs:
 
 - `GET /saas/v1/admin/notifications`
+- `GET /saas/v1/admin/notifications/targets`
 - `POST /saas/v1/admin/notifications/draft-ai`
 - `POST /saas/v1/admin/notifications`
-- `POST /saas/v1/admin/notifications/{notification_id}/send`
 
 Safety requirements:
 
@@ -106,14 +106,20 @@ Safety requirements:
 - AI drafting must not auto-send.
 - AI drafting must not include tenant secrets, customer private content or decrypted provider keys.
 
-## Implementation Order Recommendation
+## Implemented Baseline
 
-1. Add durable schema and backend notification APIs.
-2. Add tenant notification popup and pinned Inbox pseudo-row.
-3. Add Admin notification center without AI drafting.
-4. Add optional email delivery using SMTP.
-5. Add AI-assisted draft generation with explicit human approval.
-6. Add profile/user-management CRUD and invitation flow.
+1. Durable schema and backend notification APIs were added in migration `075`.
+2. Tenant notification popup and pinned Inbox pseudo-row were added.
+3. Admin notification center was added with human approval before send.
+4. Optional email copy uses SMTP and branded Spanish templates.
+5. Draft generation is currently template-assisted and explicitly marked as non-autonomous.
+6. Profile/user-management CRUD and welcome/alert email flow were added.
+
+## Future Extension Recommendation
+
+1. Add a real AI Gateway-backed draft option after deciding which tenant/provider credentials should fund platform notification drafting.
+2. Add notification recipient filters by plan/segment when product needs it.
+3. Add notification history/search page in the tenant app beyond the unread pinned Inbox behavior.
 
 ## Risk Notes
 

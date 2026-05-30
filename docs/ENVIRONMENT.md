@@ -84,8 +84,9 @@ Password recovery email:
 Transactional email scope:
 
 - The same SMTP channel is used by password recovery, email OTP MFA and security notices today.
-- The user intends this production email channel to also support future system notifications, alerts and transactional emails.
-- Future internal notification delivery should reuse these SMTP settings for optional email copies, but SMTP delivery must not be required for in-app notification persistence.
+- The same SMTP channel also supports welcome emails, role/access alerts, and optional email copies for internal Admin notifications.
+- Email templates are rendered by `app_saas.shared.email` in Spanish with Scentra branding from `https://scentra-ai.online/favicon.png` and `https://scentra-ai.online/scentra-logo.png`.
+- Internal notification delivery reuses these SMTP settings for optional email copies, but SMTP delivery is not required for in-app notification persistence.
 
 Phase 13 MFA/security notices:
 

@@ -77,6 +77,7 @@ User-management endpoints:
 - Tenant users: `/auth/profile`, `/auth/team`, `/auth/team/users`, `/auth/team/memberships/{membership_id}`.
 - Platform admins and tenant users from Admin: `/admin/auth/profile`, `/admin/auth/password/change`, `/admin/users/platform`, `/admin/users/tenants`.
 - User-created, role-changed and important access alerts notify only the implicated user plus tenant admins when applicable.
+- Tenant and Admin profile update endpoints store user timezone in existing `saas_users.profile_json.timezone`. The default UI timezone is `America/Bogota`; no extra schema column is required for timezone preferences.
 
 ## WhatsApp Message Flow And Diagnostics
 

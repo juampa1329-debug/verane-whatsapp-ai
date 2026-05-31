@@ -17,6 +17,10 @@ This is a compact map for agent navigation. Inspect router files for schemas, pa
 - `POST /auth/password/forgot`
 - `POST /auth/password/reset`
 - `POST /auth/password/change`
+- `PATCH /auth/profile`
+- `GET /auth/team`
+- `POST /auth/team/users`
+- `PATCH /auth/team/memberships/{membership_id}`
 - `GET /auth/security`
 - `PATCH /auth/security/2fa`
 - `POST /auth/refresh`
@@ -28,6 +32,7 @@ Tenant Auth notes:
 - Tenant login can return `{mfa_required: true, challenge_token, method: "email_otp"}` before issuing access/refresh tokens.
 - `POST /auth/login/verify-otp` verifies the email OTP challenge and returns MFA-verified access/refresh tokens.
 - `PATCH /auth/security/2fa` currently supports `email_otp` and `none`; TOTP/authenticator apps are not implemented.
+- `PATCH /auth/profile` accepts profile fields including `full_name`, `phone`, `position`, `bio`, `avatar_url` and `timezone`. `timezone` is profile metadata stored in `saas_users.profile_json`; the UI defaults to `America/Bogota`.
 
 ## Platform Admin
 
@@ -35,6 +40,8 @@ Tenant Auth notes:
 - `POST /admin/auth/login`
 - `POST /admin/auth/login/verify-otp`
 - `GET /admin/auth/me`
+- `PATCH /admin/auth/profile`
+- `POST /admin/auth/password/change`
 - `GET /admin/auth/security`
 - `PATCH /admin/auth/security/2fa`
 - `GET /admin/feature-flags/catalog`
@@ -133,6 +140,7 @@ Admin Security/Compliance notes:
 - Admin login can return `{mfa_required: true, challenge_token, method: "email_otp"}` before issuing a platform token.
 - `POST /admin/auth/login/verify-otp` verifies the email OTP challenge and returns a platform token with MFA verification claim.
 - `GET /admin/auth/security` and `PATCH /admin/auth/security/2fa` manage the current platform admin email OTP preference.
+- `PATCH /admin/auth/profile` accepts Admin profile metadata including `timezone`; Admin UI uses it to format dates and defaults to `America/Bogota`.
 - `GET /admin/security/compliance` feeds the Admin `Security` view with 2FA, webhook signature, security-event and privacy-request metrics.
 - `GET /admin/audit/export.csv` exports recent audit rows as CSV for platform review.
 

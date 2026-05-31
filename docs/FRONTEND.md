@@ -29,6 +29,15 @@ Auth UX:
 
 - Login/register/recovery/reset forms share an in-flight guard so the submit button is disabled while the request is being processed.
 - API auth errors are translated into Spanish user-facing messages for invalid credentials, rate limits, temporary lockout, CAPTCHA failures, MFA/reset-token problems, membership issues and database saturation. Login copy explains the cause and next safe action without revealing whether a specific email exists. Keep this mapping in `formatApiError` when adding new backend auth error codes.
+- General frontend errors still keep backend machine codes for support, but tenant/Admin users see Spanish modal copy with a likely cause, suggested next action and collapsible technical detail. Keep new user-facing errors mapped through `friendlyApiError`/`readableErrorNotice` instead of rendering raw endpoint codes.
+- Auth/nav branding uses the public Scentra assets already used in transactional emails: `https://scentra-ai.online/favicon.png` and `https://scentra-ai.online/logo-blanco.png`.
+
+Timezone UX:
+
+- Tenant UI defaults to `America/Bogota` and stores the selected profile timezone in `scentra_user_timezone`.
+- `todayLabel`, conversation time labels, diagnostics, Intelligence date labels and compact date/time helpers format through the selected timezone.
+- Settings profile sends `timezone` to `/auth/profile`; backend stores it in `saas_users.profile_json.timezone`.
+- If a stored timezone is unsupported by the browser, the UI falls back to Colombia time.
 
 Internal notification UX:
 
@@ -43,6 +52,7 @@ Local storage keys:
 
 - `scentra_ai_access_token`
 - `scentra_ai_refresh_token`
+- `scentra_user_timezone`
 
 Navigation surfaces detected in `App.jsx`:
 
@@ -91,13 +101,17 @@ Admin user/notification UX:
 
 - `Usuarios` manages the platform admin profile/password, platform admins, tenant users and role/status changes through `/saas/v1/admin/users/*`.
 - `Usuarios` is grouped by tabs: `Mi perfil`, `Admins plataforma`, and `Usuarios empresa`; tenant users include search by name/email/company/role/status.
+- `Mi perfil` includes `Zona horaria`; Admin date labels use `scentra_admin_timezone` and default to `America/Bogota`.
 - `Notificaciones` loads target tenants/users/roles, prepares a template-assisted Spanish draft, sends targeted internal notifications and optionally sends email copies.
 - `Notificaciones` makes the internal-app delivery explicit, supports `Para todos` versus selected audience, target search, and aligned compact recipient checkboxes.
 - Admin notification history displays human labels for severity/category and recipient/read/email counts; it must not show raw table names or internal IDs as user-facing labels.
+- Admin billing provider settings show payment brand logo chips for Wompi, Mercado Pago, Visa and Mastercard. The chips load public logo URLs with text fallback; provider credentials remain stored/handled by backend provider settings.
+- Admin errors use the same friendly modal pattern as the tenant app: Spanish explanation, suggested action and collapsible technical detail.
 
 Local storage key:
 
 - `scentra_admin_access_token`
+- `scentra_admin_timezone`
 
 Admin views detected:
 

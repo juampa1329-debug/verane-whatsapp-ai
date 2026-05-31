@@ -4,9 +4,28 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Implement Admin-managed Wompi and Mercado Pago configuration with test mode.
+Polish SaaS branding, payment-logo UX, timezone handling and human-readable frontend errors.
 
 ## Status
+
+- Completed current frontend/admin UX polish:
+  - Tenant and Admin apps now reuse Scentra public favicon/white logo assets in auth and navigation branding.
+  - Tenant billing/footer and Admin billing provider settings show image logo chips for Wompi, Mercado Pago, Visa and Mastercard with text fallback.
+  - Tenant and Admin profile forms now include `Zona horaria`; the UI defaults to `America/Bogota`, persists the selected timezone locally, and sends it to profile endpoints.
+  - Backend tenant/admin profile updates store `timezone` in existing `saas_users.profile_json` without a schema migration.
+  - Tenant/Admin date labels now format with the selected timezone instead of relying only on browser autodetection.
+  - Frontend error banners now also open a friendly Spanish modal with a suggested next action and collapsible technical detail.
+  - User-facing predictive labels avoid raw `Churn`; the UI now uses `Riesgo de abandono` / `Abandono`.
+- Not changed:
+  - No database migration, dependency, payment provider runtime, checkout/webhook logic, AI runtime, Meta/WhatsApp flow, auth token contract or backend machine error codes were changed.
+- Validation:
+  - `py -3 -m py_compile saas-version\backend\app_saas\auth\schemas.py saas-version\backend\app_saas\auth\router.py saas-version\backend\app_saas\admin\schemas.py saas-version\backend\app_saas\admin\router.py` passed.
+  - `npm --prefix saas-version\frontend run build` passed with the existing Vite large-bundle warning.
+  - `npm --prefix saas-version\admin-frontend run build` passed.
+  - `git -C saas-version diff --check` passed.
+- Risks:
+  - Payment brand logos are loaded from public external URLs with text fallback; production can later localize approved brand assets if hotlink reliability or brand compliance requires it.
+  - Backend stores timezone as profile metadata and frontend normalizes/falls back to Colombia time; deeper timezone validation can be added later if custom timezone entry becomes free-form.
 
 - Completed Admin-managed billing providers:
   - Added `076_saas_admin_billing_provider_settings.sql`.

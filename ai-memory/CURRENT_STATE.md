@@ -25,6 +25,22 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Polished SaaS branding, payment-logo UX, timezone handling and frontend error presentation:
+  - Tenant and Admin apps now use Scentra public favicon/white logo assets in auth/navigation branding.
+  - Tenant billing/footer and Admin billing provider settings show image chips for Wompi, Mercado Pago, Visa and Mastercard with text fallback.
+  - Tenant and Admin profile forms include `Zona horaria`; UI defaults to `America/Bogota`, persists the selected timezone locally, and sends it through profile update endpoints.
+  - Backend tenant/admin profile updates store `timezone` in the existing `saas_users.profile_json` field, avoiding a migration and preserving compatibility.
+  - Tenant/Admin date labels now format with the selected timezone.
+  - Error banners now also open a Spanish modal with an understandable explanation, suggested action and collapsible technical detail.
+  - User-facing predictive labels were changed from raw `Churn` to `Riesgo de abandono` / `Abandono`.
+- Not changed:
+  - No DB migration, dependency, checkout/webhook runtime, payment credential storage, AI runtime, Meta/WhatsApp flow, auth token contract or backend machine error codes were changed.
+- Validation status:
+  - Backend `py_compile` passed for touched auth/admin modules.
+  - Tenant frontend build passed with the existing Vite large-bundle warning.
+  - Admin frontend build passed.
+  - SaaS diff whitespace check passed.
+
 - Implemented Admin-managed Wompi/Mercado Pago billing provider settings:
   - Added migration `076_saas_admin_billing_provider_settings.sql` for encrypted test/live provider settings.
   - Added `billing/provider_settings.py` and wired checkout/webhook runtime to prefer DB settings while preserving env fallback when no DB row exists.

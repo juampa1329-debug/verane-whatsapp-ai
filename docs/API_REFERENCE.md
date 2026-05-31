@@ -224,6 +224,7 @@ Vertical notes:
 - `GET /campaigns/ab-report`
 - `GET|POST /campaigns/templates`
 - `PATCH /campaigns/templates/{template_id}`
+- CRM template `blocks_json` accepts typed sequence blocks for `text`, `image`, `video`, `audio`, `document`/`file`. Document blocks should carry `media_id` from `/media/upload`, optional `filename`, `mime_type`, and optional `caption`; triggers/flows enqueue them through the normal outbound media dispatcher.
 - `POST /campaigns/segments/preview`
 - `GET|POST /campaigns/segments`
 - `PATCH /campaigns/segments/{segment_id}`

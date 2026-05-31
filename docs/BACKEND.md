@@ -330,6 +330,7 @@ Code-complete at repo level on 2026-05-25; local validation passed. Later Phase 
 - Trigger creation/update/copy and flow creation/update recalculate preflight and block activation when high-severity checks fail.
 - Trigger conditions include words/comments/templates/tags/schedules plus CRM stage, payment status, customer type, and intent.
 - `workers/triggers.py` and `workers/remarketing.py` enforce quiet hours, cooldown, A/B variant selection, event telemetry, and `block_ai` handoff.
+- CRM template blocks are rendered by the trigger worker as typed outbound jobs. Text blocks enqueue text, image/video/document blocks keep their caption plus `media_id`/media URL metadata, and document blocks use the existing WhatsApp `document` dispatch path with optional filename. If a media block has no media but has caption text, it falls back to a text outbound instead of silently dropping the customer response.
 - `workers/dispatch.py` revalidates approved Meta templates at dispatch time so queued/retried template broadcasts cannot send if approval was lost.
 
 ## Phase 8 AI Agents Backend

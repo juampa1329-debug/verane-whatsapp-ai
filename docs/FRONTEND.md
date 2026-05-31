@@ -181,6 +181,7 @@ Admin views detected:
 ## Phase 7 Client Campaigns UI
 
 - `CampaignsPanel.jsx` exposes global quiet hours, campaign preflight, flow preflight, flow A/B variant configuration, flow A/B reporting, and manual remarketing tick.
+- CRM template sequences support text, image, video, audio and document/PDF-style blocks. Document blocks upload through `/media/upload`, store `media_id`, `filename` and optional caption, and preview as document chips in the template chat preview.
 - `SaasTriggerBuilderPanel.jsx` exposes trigger simulator, preflight, quiet hours, A/B variants, A/B report, version history, and rollback restore.
 - Trigger condition UI supports words, comments, templates, tags, schedules, CRM stage, payment status, customer type, and intent.
 

@@ -25,6 +25,27 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Implemented CRM template document/PDF blocks for triggers and remarketing:
+  - `frontend/src/CampaignsPanel.jsx` now exposes `+ Documento` in CRM template sequences.
+  - Document blocks use the existing `/saas/v1/media/upload` path and persist `media_id`, `filename`, `mime_type`, optional caption and preview metadata.
+  - `workers/triggers.py` now renders CRM template sequences as typed blocks rather than text-only bodies.
+  - Trigger and remarketing sends can enqueue text, image, video, audio and document blocks through the existing outbound queue; document blocks use WhatsApp `document` dispatch with optional filename/caption.
+  - Trigger simulation/preflight counts rendered typed blocks in `would_queue`.
+  - Added `decisions/ADR-070-crm-template-document-blocks.md`.
+- Not changed:
+  - No migration, dependency, provider credential, Meta webhook/subscription, auth, billing, AI prompt/routing, broadcast Meta-template approval logic, tenant data or per-block delay behavior was changed.
+- Validation status:
+  - Backend `py_compile` passed for `workers/triggers.py`.
+  - Tenant frontend production build passed with the existing Vite large-bundle warning.
+
+- Documented production billing provider setup:
+  - `docs/ENVIRONMENT.md` now lists the exact SaaS billing webhook URLs for Wompi, MercadoPago and Stripe.
+  - Added the required current-code env vars for Wompi: `WOMPI_ENVIRONMENT`, `WOMPI_PUBLIC_KEY`, `WOMPI_PRIVATE_KEY`, `WOMPI_INTEGRITY_KEY`, `WOMPI_EVENTS_KEY`.
+  - Added the required current-code env vars for MercadoPago: `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`.
+  - Clarified that Wompi checkout currently requires plan currency `COP`, that provider webhooks verify signatures before billing mutation, and that approved provider events activate subscription/invoice/payment records.
+- Not changed:
+  - No billing runtime code, provider signature behavior, checkout flow, plan schema, email templates or frontend UI was changed.
+
 - Polished SaaS Admin user-management and internal-notification UX:
   - `app_saas.shared.email` now uses the white Scentra header logo from `https://scentra-ai.online/logo-blanco.png` for Spanish transactional templates.
   - Tenant Inbox internal notifications now load unread plus recent history: unread notices stay pinned and non-replyable; after `Marcar leida`, they remain visible as history ordered by age instead of disappearing.

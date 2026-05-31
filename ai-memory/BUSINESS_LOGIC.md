@@ -53,6 +53,7 @@ Platform roles include:
 
 - Campaigns include templates, segments, campaign items, triggers, and flows.
 - Trigger/remarketing processing is handled by workers.
+- CRM message templates can contain text, image, video, audio and document blocks. Trigger and remarketing workers render these blocks into the existing outbound queue; documents are sent through WhatsApp as `document` media with optional filename/caption when a tenant-owned `media_id` or safe media URL exists.
 - Phase 7 trigger conditions cover words/comments/templates/tags/schedules plus CRM stage, payment status, customer type, and intent.
 - Trigger and flow activation is gated by preflight; failed high-severity checks block activation.
 - Global quiet hours live in `saas_campaign_quiet_hours`; trigger/flow-local quiet hours remain in JSON fields.

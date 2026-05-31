@@ -4,9 +4,38 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Polish SaaS Admin user-management, notification UX, transactional email branding, and tenant Inbox notification behavior.
+Implement CRM template document/PDF blocks for triggers and remarketing.
 
 ## Status
+
+- Completed CRM template document support:
+  - `frontend/src/CampaignsPanel.jsx` now supports `+ Documento` blocks in CRM template sequences.
+  - Document blocks upload through `/saas/v1/media/upload`, store `media_id`, `filename`, `mime_type`, optional caption and preview as document chips.
+  - `workers/triggers.py` now renders template sequences into typed outbound blocks instead of text-only bodies.
+  - Triggers and remarketing can enqueue image/video/audio/document blocks through the existing outbound dispatcher; document blocks use WhatsApp `document` media with optional filename/caption.
+  - Trigger simulation/preflight `would_queue` now counts rendered typed blocks, not only text/caption blocks.
+  - Added ADR `ADR-070-crm-template-document-blocks.md`.
+- Safety boundaries:
+  - No DB migration, dependency, Meta credential, provider runtime, billing policy, auth, AI prompt, webhook, broadcast Meta-template approval logic or tenant data was changed.
+  - Per-block delay behavior was not changed; this task only adds document support and typed media dispatch for CRM templates.
+- Validation:
+  - `py -3 -m py_compile saas-version\backend\app_saas\workers\triggers.py` passed.
+  - `npm --prefix saas-version/frontend run build` passed with the existing large-bundle warning.
+
+- Previous billing-provider documentation remains pending for implementation:
+  - Wompi/MercadoPago runtime exists through env variables today; Admin UI provider configuration was analyzed but not implemented in this task.
+
+- Completed billing-provider documentation:
+  - Reviewed current billing code in `backend/app_saas/billing/service.py`, `billing/router.py`, `workers/billing.py`, `config.py` and Compose env passthrough.
+  - `docs/ENVIRONMENT.md` now includes production webhook URLs and provider variables for Wompi, MercadoPago and Stripe.
+  - Documented Wompi current-code requirements: `WOMPI_ENVIRONMENT`, `WOMPI_PUBLIC_KEY`, `WOMPI_PRIVATE_KEY`, `WOMPI_INTEGRITY_KEY`, `WOMPI_EVENTS_KEY`, and COP plan currency.
+  - Documented MercadoPago current-code requirements: `MERCADOPAGO_ACCESS_TOKEN` and `MERCADOPAGO_WEBHOOK_SECRET`.
+- Findings:
+  - Wompi and MercadoPago checkout/webhook runtime exists in code; production still needs real credentials, webhook configuration and sandbox/live payment smoke tests.
+  - Billing lifecycle sends plain-text owner notices for expired trial/payment required and suspension when SMTP is configured.
+  - Current branded HTML email templates are used for reset password, welcome/access/role alerts and Admin notification copies; billing notices still use `send_plain_email`.
+- Not changed:
+  - No billing runtime code, UI, migrations, provider signature logic, checkout behavior, email templates or dependencies were changed.
 
 - Completed current polish:
   - Transactional email templates now use the white Scentra header logo.

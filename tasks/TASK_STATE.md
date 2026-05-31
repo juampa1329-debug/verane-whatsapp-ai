@@ -4,9 +4,32 @@ Scope: SaaS only. Active root: `saas-version/`.
 
 ## Current Task
 
-Implement CRM template document/PDF blocks for triggers and remarketing.
+Implement Admin-managed Wompi and Mercado Pago configuration with test mode.
 
 ## Status
+
+- Completed Admin-managed billing providers:
+  - Added `076_saas_admin_billing_provider_settings.sql`.
+  - Added encrypted DB-backed provider settings for Wompi and Mercado Pago.
+  - Runtime checkout/webhook code now resolves DB provider settings first and preserves env fallback when no DB row exists.
+  - Admin `Facturacion` exposes friendly provider cards with habilitar, modo prueba, predeterminado and debug switches.
+  - Wompi fields are split into prueba/produccion public/private/event/integrity keys.
+  - Mercado Pago fields are split into prueba/produccion access token and webhook secret.
+  - Tenant Settings > Plan shows Wompi/Mercado Pago/payment badges near checkout.
+- Safety boundaries:
+  - No dependency, Stripe runtime, provider webhook route, billing lifecycle, plan semantics, tenant data, Meta runtime, auth or AI behavior was changed.
+  - Secrets remain masked in Admin responses; blank secret inputs preserve existing encrypted values.
+  - Coolify/env provider variables remain a compatibility fallback until a provider is saved in Admin.
+- Validation:
+  - `python -m py_compile saas-version\backend\app_saas\billing\provider_settings.py saas-version\backend\app_saas\billing\service.py saas-version\backend\app_saas\admin\router.py saas-version\backend\app_saas\admin\schemas.py` passed.
+  - `npm --prefix saas-version\admin-frontend run build` passed.
+  - `npm --prefix saas-version\frontend run build` passed with the existing large-bundle warning.
+- Production acceptance after redeploy:
+  - Open Admin > Facturacion and save Wompi in modo prueba with test keys.
+  - Copy `/saas/v1/billing/webhooks/wompi` into Wompi sandbox webhooks.
+  - Create a checkout from tenant Settings > Plan and confirm it uses sandbox.
+  - Repeat for Mercado Pago sandbox token/webhook secret.
+  - Switch one provider to predeterminado only after sandbox webhook confirms payment and plan activation.
 
 - Completed CRM template document support:
   - `frontend/src/CampaignsPanel.jsx` now supports `+ Documento` blocks in CRM template sequences.

@@ -444,6 +444,13 @@ Admin views detected:
 - Admin `AdminApp.jsx` exposes `Trust AI` backed by `/saas/v1/admin/trust-center/overview` for aggregate tenant risks, incidents, source signals and recent governance audit records.
 - `frontend/src/i18n.js` and `admin-frontend/src/i18n.js` include the new navigation labels.
 
+## Billing Provider UI
+
+- Admin `Facturacion` now includes `Pasarelas de pago` cards for Wompi and Mercado Pago.
+- Each card has switches for habilitar, modo prueba, proveedor predeterminado and debug temporal.
+- Credentials are split into Prueba and Produccion sections. Secret inputs are not prefilled; leaving them blank preserves the encrypted backend value.
+- Tenant Settings > Plan now shows a payment trust footer with Wompi, Mercado Pago and accepted payment badges before checkout history.
+
 ## Frontend Safety Rules
 
 - Do not change API paths without checking backend routers under `app_saas`.

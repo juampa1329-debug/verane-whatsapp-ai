@@ -122,6 +122,39 @@ Billing:
 - Stripe, MercadoPago, and Wompi provider vars are present in config/compose.
 - Production provider webhooks require provider-specific secrets: `STRIPE_WEBHOOK_SECRET`, `MERCADOPAGO_WEBHOOK_SECRET`, and `WOMPI_EVENTS_KEY`.
 
+Billing provider setup for production:
+
+- Runtime checkout endpoint: tenant users call `POST /saas/v1/billing/checkout`.
+- Provider webhook endpoints:
+  - Wompi: `https://api.scentra-ai.online/saas/v1/billing/webhooks/wompi`
+  - MercadoPago: `https://api.scentra-ai.online/saas/v1/billing/webhooks/mercadopago`
+  - Stripe: `https://api.scentra-ai.online/saas/v1/billing/webhooks/stripe`
+- Default provider selector:
+  - `BILLING_DEFAULT_PROVIDER=wompi` uses Wompi when checkout payload says `provider=auto`.
+  - Valid values in code: `manual`, `stripe`, `mercadopago`, `wompi`.
+- Common billing URLs:
+  - `BILLING_SUCCESS_URL=https://app.scentra-ai.online/?billing=success`
+  - `BILLING_CANCEL_URL=https://app.scentra-ai.online/?billing=cancelled`
+- Wompi variables required by current code:
+  - `WOMPI_ENVIRONMENT=production` or `sandbox`.
+  - `WOMPI_PUBLIC_KEY`: public checkout key.
+  - `WOMPI_PRIVATE_KEY`: private API key used to fetch transaction details when needed.
+  - `WOMPI_INTEGRITY_KEY`: integrity secret used to sign Web Checkout links.
+  - `WOMPI_EVENTS_KEY`: event/signature secret used to verify Wompi webhooks.
+  - Current Wompi checkout path only accepts plan currency `COP`; plans charged by Wompi must have `currency='COP'`.
+- MercadoPago variables required by current code:
+  - `MERCADOPAGO_ACCESS_TOKEN`: production or sandbox access token used to create preferences and fetch payments.
+  - `MERCADOPAGO_WEBHOOK_SECRET`: webhook signature secret used to verify `x-signature`.
+  - Current code does not use MercadoPago public key in backend checkout.
+- Stripe variables required by current code:
+  - `STRIPE_SECRET_KEY`
+  - `STRIPE_WEBHOOK_SECRET`
+- Provider behavior:
+  - Wompi creates a Web Checkout URL with `public-key`, `amount-in-cents`, `currency`, `reference`, `signature:integrity`, `redirect-url`, and owner email/name when available.
+  - MercadoPago creates a checkout preference and stores its `init_point` or `sandbox_init_point`.
+  - Approved provider webhooks activate the tenant subscription, update tenant plan/status, create a paid invoice and payment row.
+  - Failed/rejected provider webhooks mark the checkout/subscription as failed or past due and can notify the tenant owner by email when SMTP is configured.
+
 ## Frontend Env
 
 Client app:
@@ -244,3 +277,12 @@ Multimodal Memory runtime:
 - Encryption key is derived from `SAAS_SECRET_KEY` or `SAAS_JWT_SECRET`.
 - `SAAS_SECRET_KEY` must be stable across redeploys. Do not replace it with a Meta token or a newly generated value after tenants have saved provider credentials; existing encrypted AI/TTS/search keys will become unreadable and the AI Gateway will behave as if credentials are missing.
 - `saas-version/keys/saasprivate.key` exists in the tree; treat as sensitive until ownership/purpose is verified.
+
+## Billing Provider Runtime
+
+- Wompi and Mercado Pago can now be configured from SaaS Admin > Facturacion > Pasarelas de pago.
+- Admin-stored credentials are encrypted in PostgreSQL and split by mode: prueba and produccion.
+- Coolify/env vars remain fallback only: `BILLING_DEFAULT_PROVIDER`, `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`, `WOMPI_ENVIRONMENT`, `WOMPI_PUBLIC_KEY`, `WOMPI_PRIVATE_KEY`, `WOMPI_INTEGRITY_KEY`, `WOMPI_EVENTS_KEY`.
+- If a provider has no DB row, runtime preserves the env-based behavior.
+- If Admin saves a provider row and disables it, checkout for that provider is blocked even if env fallback exists.
+- The Admin UI exposes each provider webhook URL; external provider dashboards must still be configured to call `/saas/v1/billing/webhooks/{provider}`.

@@ -684,6 +684,16 @@ Billing webhook notes:
 - MercadoPago requires `x-signature`, `x-request-id`, and `MERCADOPAGO_WEBHOOK_SECRET` outside local mode.
 - Wompi requires event checksum/signature data and `WOMPI_EVENTS_KEY` outside local mode.
 - Provider webhooks are unauthenticated externally but must pass provider signature checks before billing state changes.
+
+Admin billing provider settings:
+
+- `GET /admin/billing/providers/settings`
+- `PATCH /admin/billing/providers/{provider}`
+- Supported Admin-managed providers: `wompi`, `mercadopago`.
+- Requires platform role `superadmin`, `platform_admin`, or `billing_admin`.
+- PATCH supports friendly fields such as `title`, `is_enabled`, `is_default`, `test_mode`, `debug_logging`, plus separate test/live credentials.
+- Secret fields are write-only in practice: empty or masked values preserve the existing encrypted value; responses return only masked state.
+- Runtime keeps Coolify/env fallback for providers without a saved DB row.
 - `GET|POST /webhooks/endpoints`
 - `POST /webhooks/endpoints/{endpoint_id}/rotate-token`
 - `POST /webhooks/endpoints/{endpoint_id}/rotate-signature`

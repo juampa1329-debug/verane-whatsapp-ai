@@ -166,6 +166,7 @@ Applied:
 - `073_saas_billing_invoice_amount_cents_repair.sql`: added as forward repair migration for production databases where invoice readiness expected `amount_cents` but older billing tables only stored total/due/paid amount fields.
 - `074_saas_intelligence_runtime_ddl_deadlock_repair.sql`: added as forward repair migration for production databases where earlier Phase 11 migrations were marked applied but Intelligence model rollout columns or feature-value version columns were missing/partial.
 - `075_saas_internal_notifications_user_management.sql`: added as forward migration for user profile metadata plus internal system notifications and per-recipient read/email state. These notifications are not customer conversations.
+- `076_saas_admin_billing_provider_settings.sql`: added as forward migration for Admin-managed Wompi/Mercado Pago settings, test/live credentials, default-provider switch, debug flag and encrypted secret columns.
 
 Checks:
 

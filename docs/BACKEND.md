@@ -726,6 +726,14 @@ Code-complete at repository level on 2026-05-27; validation is tracked in `tasks
 - Embedded and standalone workers call `process_due_reliability`; the worker records snapshots at most every 15 minutes and runs only enabled retention dry-runs.
 - This phase intentionally does not throttle providers, pause campaigns, mutate queues, repair Meta subscriptions or change WhatsApp/Instagram runtime.
 
+## Admin Billing Provider Settings
+
+- Admin backend exposes `/saas/v1/admin/billing/providers/settings` and `/saas/v1/admin/billing/providers/{provider}` for Wompi/Mercado Pago configuration.
+- Runtime checkout/webhook code resolves provider credentials from `saas_billing_provider_settings` first and falls back to env vars only when no DB row exists.
+- Saved provider secrets are encrypted with `shared/secrets.py`; responses expose masked secret state only.
+- `is_enabled`, `test_mode` and `is_default` are persisted per provider. Test mode selects sandbox/test credentials and, for Mercado Pago checkout, prefers `sandbox_init_point`.
+- Existing Stripe env behavior is intentionally unchanged.
+
 ## Backend Safety Rules
 
 - Do not infer behavior from root `backend/`.

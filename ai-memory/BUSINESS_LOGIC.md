@@ -228,6 +228,9 @@ Platform roles include:
 - Webhook events, trigger messages, remarketing flows, AI replies, agent orchestration, outbound messages, Intelligence processing, reliability snapshots/dry-runs, billing lifecycle, and Meta token refresh are processed asynchronously.
 - Worker and browser polling must be tuned together. Active Inbox polling is intentionally lightweight and skips optional heavy reads on normal ticks; DB pool settings are configurable to avoid API-wide connection starvation.
 - WooCommerce product messages are stored/rendered as `product` in Scentra. For WhatsApp delivery, a product with public `image_url` is queued as an image-link media message with the formatted product caption; without a usable image URL it remains caption/text only. If Meta rejects the remote product image, dispatch falls back to text caption delivery rather than losing the reply.
+- Billing checkout provider selection now supports Admin-managed Wompi and Mercado Pago configuration. Saved DB settings take priority per provider; env vars remain fallback only when that provider has never been saved in Admin.
+- Wompi/Mercado Pago provider rows include active, default and test-mode controls. Test mode uses the test/sandbox credentials; production mode uses live credentials.
+- Secret fields are write-only from Admin UX: blank keeps the existing encrypted value, and responses return masked state.
 - Admin endpoints expose queue processing and dead-letter/observability controls.
 - Phase 3 admin health combines API/DB, worker heartbeats, Meta status, AI Gateway status, queue snapshots, channel diagnostics, Meta error history, and dead-letter candidates.
 - Dead-letter retry can requeue outbound, webhook, trigger, AI pending, remarketing, and agent orchestration sources.

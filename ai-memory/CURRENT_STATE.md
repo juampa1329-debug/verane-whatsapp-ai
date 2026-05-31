@@ -25,6 +25,19 @@ Only inspect those if the user explicitly changes scope or asks for cross-system
 
 ## Latest Memory Operation
 
+- Implemented Admin-managed Wompi/Mercado Pago billing provider settings:
+  - Added migration `076_saas_admin_billing_provider_settings.sql` for encrypted test/live provider settings.
+  - Added `billing/provider_settings.py` and wired checkout/webhook runtime to prefer DB settings while preserving env fallback when no DB row exists.
+  - Added Admin endpoints `GET /admin/billing/providers/settings` and `PATCH /admin/billing/providers/{provider}`.
+  - Admin `Facturacion` now has Wompi/Mercado Pago cards with active, test-mode, default and debug switches plus separate prueba/produccion credentials.
+  - Tenant Settings > Plan now shows Wompi/Mercado Pago/payment-method badges near checkout.
+- Not changed:
+  - Stripe remains env-only, existing Wompi/MercadoPago env fallback remains compatible, no provider SDK/dependency was added, and no billing lifecycle/webhook activation semantics were weakened.
+- Validation status:
+  - Backend `py_compile` passed for touched billing/admin modules.
+  - Admin frontend build passed.
+  - Tenant frontend build passed with the existing Vite large-bundle warning.
+
 - Implemented CRM template document/PDF blocks for triggers and remarketing:
   - `frontend/src/CampaignsPanel.jsx` now exposes `+ Documento` in CRM template sequences.
   - Document blocks use the existing `/saas/v1/media/upload` path and persist `media_id`, `filename`, `mime_type`, optional caption and preview metadata.

@@ -131,6 +131,7 @@ Scope: SaaS only. These are risks observed from repository structure/code, not c
 - `GET /saas/v1/media/search/runs` no longer returns feature-gate 403 for disabled Web/Image Search during normal Inbox boot; it returns an empty read model. Execution endpoints remain premium-gated.
 - 403s from `/saas/v1/media/whatsapp/{media_id}` are still possible and usually indicate Meta token/permission/WABA/media-expiration issues rather than PostgreSQL drift. Check the JSON `detail.code` and Meta hint before changing code.
 - Inbox media previews now suppress repeated failed `/media/whatsapp/{media_id}` renders after an image/audio/video load error and show a controlled unavailable-media message. This improves console noise but does not repair the underlying Meta media permission/expiration condition.
+- Admin-managed Wompi/Mercado Pago settings depend on stable `SAAS_SECRET_KEY`; rotating it makes encrypted provider secrets unreadable. Keep Coolify/env fallback available during first rollout and verify provider webhooks in test mode before switching a provider to production/default.
 
 ## Agent Cautions
 
